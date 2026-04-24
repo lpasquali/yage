@@ -371,7 +371,7 @@ BOOTSTRAP_EPHEMERAL_KIND_CONFIG=""
 BOOTSTRAP_KIND_CONFIG_EPHEMERAL=false
 BOOTSTRAP_CAPI_MANIFEST_EPHEMERAL=false
 BOOTSTRAP_CAPI_MANIFEST_USER_SET=false
-# When CAPI_MANIFEST is unset, manifest is stored on kind in a Secret (no ~/.cluster-api file).
+# When CAPI_MANIFEST is unset, manifest is stored on kind in a Secret (no ~/.bootstrap-capi file).
 BOOTSTRAP_CAPI_USE_SECRET=false
 # Local bootstrap snapshot file (if present, its mtime is compared to the last pushed workload to decide whether to re-run clusterctl).
 PROXMOX_BOOTSTRAP_CONFIG_FILE="${PROXMOX_BOOTSTRAP_CONFIG_FILE:-}"
@@ -2879,7 +2879,7 @@ EOF
 }
 
 write_embedded_terraform_files() {
-  local state_dir="${HOME}/.cluster-api/proxmox-identity-terraform"
+  local state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
   mkdir -p "$state_dir"
 
   cat > "${state_dir}/${PROXMOX_IDENTITY_TF}" <<'EOF'
@@ -3040,7 +3040,7 @@ EOF
 apply_proxmox_identity_terraform() {
   local state_dir endpoint api_token
   local -a tf_vars
-  state_dir="${HOME}/.cluster-api/proxmox-identity-terraform"
+  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
   endpoint="${PROXMOX_URL}"
   api_token="${PROXMOX_ADMIN_USERNAME}=${PROXMOX_ADMIN_TOKEN}"
 
@@ -3097,7 +3097,7 @@ infer_proxmox_identity_from_token_ids() {
 
 resolve_recreate_proxmox_identity_context() {
   local state_dir tf_file
-  state_dir="${HOME}/.cluster-api/proxmox-identity-terraform"
+  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
   tf_file="${state_dir}/terraform.tfstate"
   if [[ -f "$tf_file" ]]; then
     local -a tf_in=()
@@ -3140,7 +3140,7 @@ validate_cluster_set_id_format() {
 
 proxmox_identity_terraform_state_rm_all() {
   local state_dir addr
-  state_dir="${HOME}/.cluster-api/proxmox-identity-terraform"
+  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
   [[ -f "${state_dir}/terraform.tfstate" ]] || { warn "No Terraform state to clear at ${state_dir}."; return 0; }
   log "Removing all resources from Proxmox identity Terraform state (PVE may be empty; next apply is create-only)..."
   while IFS= read -r addr; do
@@ -3200,7 +3200,7 @@ rollout_restart_proxmox_csi_on_workload() {
 # Paired with recreate_identities_resync_and_rollout_capmox (after capmox-system is installed) and optionally recreate_identities_workload_csi_secrets (after a workload CAPI manifest exists).
 recreate_proxmox_identities_terraform() {
   local state_dir
-  state_dir="${HOME}/.cluster-api/proxmox-identity-terraform"
+  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
   command -v terraform >/dev/null 2>&1 || die "terraform is required for --recreate-proxmox-identities."
   ensure_proxmox_admin_config
   if [[ -z "$PROXMOX_URL" || -z "$PROXMOX_ADMIN_USERNAME" || -z "$PROXMOX_ADMIN_TOKEN" ]]; then
@@ -3522,7 +3522,7 @@ check_proxmox_admin_api_connectivity() {
 
 generate_configs_from_terraform_outputs() {
   local state_dir csi_api_url capi_token_id capi_token_secret csi_token_id csi_token_secret
-  state_dir="${HOME}/.cluster-api/proxmox-identity-terraform"
+  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
   csi_api_url="$(proxmox_api_json_url)"
 
   capi_token_id="$(terraform -chdir="$state_dir" output -raw capi_token_id)"
@@ -4320,7 +4320,7 @@ EOF
 }
 
 # Workload CAPI manifest on kind: ConfigMap in CAPI_MANIFEST_CONFIGMAP_NAMESPACE; name is a stable short hash
-# of kind + workload namespace + workload name (stays under DNS label length). No file under ~/.cluster-api/ unless
+# of kind + workload namespace + workload name (stays under DNS label length). No file under ~/.bootstrap-capi/ unless
 # CAPI_MANIFEST or --capi-manifest is set to a local path.
 capi_manifest_try_load_from_secret() {
   is_true "${BOOTSTRAP_CAPI_USE_SECRET:-false}" || return 0
@@ -4432,7 +4432,7 @@ capi_manifest_push_to_secret() {
     die "Failed to store workload manifest in Secret ${ns}/${name} (key ${key})."
   fi
   kubectl --context "$ctx" -n "$ns" label secret "$name" "app.kubernetes.io/managed-by=bootstrap-capi" --overwrite >/dev/null 2>&1 || true
-  log "Wrote workload manifest to Secret ${ns}/${name} (key ${key}). No persistent file under ~/.cluster-api — debug via k9s or kubectl get secret -n ${ns} ${name} -o yaml."
+  log "Wrote workload manifest to Secret ${ns}/${name} (key ${key}). No persistent file under ~/.bootstrap-capi — debug via k9s or kubectl get secret -n ${ns} ${name} -o yaml."
   capi_bootstrap_touch_workload_gencode_stamp
 }
 
@@ -7584,7 +7584,7 @@ delete_workload_cluster_before_kind_deletion() {
 purge_generated_artifacts() {
   local state_dir
 
-  state_dir="${HOME}/.cluster-api/proxmox-identity-terraform"
+  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
 
   log "Purging generated files and Terraform state..."
 

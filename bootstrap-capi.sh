@@ -230,7 +230,7 @@
 #   WORKLOAD_POSTSYNC_NAMESPACE     Namespace for PostSync Jobs that use the rollout script pattern (default: workload-smoke)
 #   RECREATE_PROXMOX_IDENTITIES       true: same as --recreate-proxmox-identities (re-run Terraform, refresh Secrets)
 #   PROXMOX_IDENTITY_RECREATE_SCOPE  capi | csi | both (default: both)
-#   PROXMOX_IDENTITY_RECREATE_STATE_RM  true: terraform state rm all then apply (empty PVE; full recreate)
+#   PROXMOX_IDENTITY_RECREATE_STATE_RM  true: tofu state rm all then apply (empty PVE; full recreate)
 #   PROXMOX_CSI_CONFIG_PROVIDER      proxmox-csi config.features.provider (default: proxmox)
 #   PROXMOX_CSI_TOPOLOGY_LABELS      Inject kubelet node-labels for CSI topology (default: true)
 #   PROXMOX_TOPOLOGY_REGION          topology.kubernetes.io/region (default: PROXMOX_REGION)
@@ -413,7 +413,7 @@ bootstrap_sync_capi_controller_images_to_clusterctl_version() {
 }
 IPAM_IMAGE="${IPAM_IMAGE:-registry.k8s.io/capi-ipam-ic/cluster-api-ipam-in-cluster-controller:v1.0.3}"
 IPAM_REPO="${IPAM_REPO:-https://github.com/kubernetes-sigs/cluster-api-ipam-provider-in-cluster.git}"
-TERRAFORM_VERSION="${TERRAFORM_VERSION:-1.9.8}"
+OPENTOFU_VERSION="${OPENTOFU_VERSION:-1.8.5}"
 # Workload GitOps (single path): management runs CAPI + CAPMOX + **caaph-system** (Cluster API add-on provider Helm).
 # On the **provisioned** workload: (1) CAAPH **HelmChartProxy** installs **Cilium**. (2) **Argo CD Operator** is installed
 # with `kubectl apply -k` to the workload API (argoproj-labs ships kustomize, not a supported Helm chart for HCP).
@@ -2823,38 +2823,38 @@ ensure_system_dependencies() {
   log "System-wide dependencies check complete."
 }
 
-ensure_terraform() {
+ensure_opentofu() {
   local have os arch zip_path url
-  if command -v terraform >/dev/null 2>&1; then
+  if command -v tofu >/dev/null 2>&1; then
     have="$(
-      terraform version -json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("terraform_version",""))' 2>/dev/null || true
+      tofu version -json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("terraform_version",""))' 2>/dev/null || true
     )"
-    if _versions_match "$have" "$TERRAFORM_VERSION"; then
+    if _versions_match "$have" "$OPENTOFU_VERSION"; then
       return
     fi
-    warn "terraform (${have:-unknown}) does not match TERRAFORM_VERSION=${TERRAFORM_VERSION} — reinstalling..."
+    warn "tofu (${have:-unknown}) does not match OPENTOFU_VERSION=${OPENTOFU_VERSION} — reinstalling..."
   else
-    warn "terraform not found — installing..."
+    warn "tofu not found — installing..."
   fi
 
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   arch="$(_arch)"
-  zip_path="/tmp/terraform_${TERRAFORM_VERSION}_${os}_${arch}.zip"
-  url="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_${os}_${arch}.zip"
+  zip_path="/tmp/tofu_${OPENTOFU_VERSION}_${os}_${arch}.zip"
+  url="https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}/tofu_${OPENTOFU_VERSION}_${os}_${arch}.zip"
 
   curl -fsSL "$url" -o "$zip_path" \
-    || die "Failed to download Terraform from ${url} (check TERRAFORM_VERSION=${TERRAFORM_VERSION} and network)."
+    || die "Failed to download OpenTofu from ${url} (check OPENTOFU_VERSION=${OPENTOFU_VERSION} and network)."
   python3 - "$zip_path" <<'PY'
 import sys, zipfile
 
 zip_path = sys.argv[1]
 with zipfile.ZipFile(zip_path) as archive:
-    with archive.open("terraform") as src, open("/tmp/terraform.bin", "wb") as dst:
+    with archive.open("tofu") as src, open("/tmp/tofu.bin", "wb") as dst:
         dst.write(src.read())
 PY
 
-  RUN_PRIVILEGED install -m 0755 /tmp/terraform.bin /usr/local/bin/terraform
-  rm -f "$zip_path" /tmp/terraform.bin
+  RUN_PRIVILEGED install -m 0755 /tmp/tofu.bin /usr/local/bin/tofu
+  rm -f "$zip_path" /tmp/tofu.bin
 }
 
 install_bpg_proxmox_provider() {
@@ -2873,8 +2873,8 @@ terraform {
 }
 EOF
 
-  log "Installing Terraform provider bpg/proxmox..."
-  TF_PLUGIN_CACHE_DIR="$plugin_cache" terraform -chdir="$tmp_dir" init -backend=false -upgrade >/dev/null
+  log "Installing OpenTofu provider bpg/proxmox..."
+  TF_PLUGIN_CACHE_DIR="$plugin_cache" tofu -chdir="$tmp_dir" init -backend=false -upgrade >/dev/null
   rm -rf "$tmp_dir"
 }
 
@@ -3050,7 +3050,7 @@ apply_proxmox_identity_terraform() {
   PROXMOX_VE_ENDPOINT="$endpoint" \
   PROXMOX_VE_API_TOKEN="$api_token" \
   PROXMOX_VE_INSECURE="$PROXMOX_ADMIN_INSECURE" \
-  terraform -chdir="$state_dir" init -upgrade
+  tofu -chdir="$state_dir" init -upgrade
 
   tf_vars=(
     -var "cluster_set_id=${PROXMOX_IDENTITY_SUFFIX}"
@@ -3063,7 +3063,7 @@ apply_proxmox_identity_terraform() {
   PROXMOX_VE_ENDPOINT="$endpoint" \
   PROXMOX_VE_API_TOKEN="$api_token" \
   PROXMOX_VE_INSECURE="$PROXMOX_ADMIN_INSECURE" \
-  terraform -chdir="$state_dir" apply -auto-approve "${tf_vars[@]}"
+  tofu -chdir="$state_dir" apply -auto-approve "${tf_vars[@]}"
 }
 
 # Infer PROXMOX_IDENTITY_SUFFIX / user ids from token IDs (user@pve!prefix-suffix) when Terraform state is missing.
@@ -3141,13 +3141,13 @@ validate_cluster_set_id_format() {
 proxmox_identity_terraform_state_rm_all() {
   local state_dir addr
   state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
-  [[ -f "${state_dir}/terraform.tfstate" ]] || { warn "No Terraform state to clear at ${state_dir}."; return 0; }
+  [[ -f "${state_dir}/terraform.tfstate" ]] || { warn "No OpenTofu state to clear at ${state_dir}."; return 0; }
   log "Removing all resources from Proxmox identity Terraform state (PVE may be empty; next apply is create-only)..."
   while IFS= read -r addr; do
     [[ -n "$addr" ]] || continue
-    terraform -chdir="$state_dir" state rm "$addr" </dev/null \
+    tofu -chdir="$state_dir" state rm "$addr" </dev/null \
       || warn "state rm failed for ${addr}"
-  done < <(terraform -chdir="$state_dir" state list 2>/dev/null || true)
+  done < <(tofu -chdir="$state_dir" state list 2>/dev/null || true)
 }
 
 # CAPMOX controller reads url/token/secret from this Secret; also invoked from sync_proxmox_bootstrap_literal_credentials_to_kind.
@@ -3201,7 +3201,7 @@ rollout_restart_proxmox_csi_on_workload() {
 recreate_proxmox_identities_terraform() {
   local state_dir
   state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
-  command -v terraform >/dev/null 2>&1 || die "terraform is required for --recreate-proxmox-identities."
+  command -v tofu >/dev/null 2>&1 || die "OpenTofu (tofu) is required for --recreate-proxmox-identities."
   ensure_proxmox_admin_config
   if [[ -z "$PROXMOX_URL" || -z "$PROXMOX_ADMIN_USERNAME" || -z "$PROXMOX_ADMIN_TOKEN" ]]; then
     die "Recreate: need PROXMOX_URL, PROXMOX_ADMIN_USERNAME, PROXMOX_ADMIN_TOKEN (set env, kind Secret ${PROXMOX_BOOTSTRAP_SECRET_NAMESPACE}/${PROXMOX_BOOTSTRAP_ADMIN_SECRET_NAME}, or PROXMOX_ADMIN_CONFIG to a legacy file)."
@@ -3217,13 +3217,13 @@ recreate_proxmox_identities_terraform() {
   PROXMOX_VE_ENDPOINT="$PROXMOX_URL" \
   PROXMOX_VE_API_TOKEN="${PROXMOX_ADMIN_USERNAME}=${PROXMOX_ADMIN_TOKEN}" \
   PROXMOX_VE_INSECURE="$PROXMOX_ADMIN_INSECURE" \
-  terraform -chdir="$state_dir" init -upgrade
+  tofu -chdir="$state_dir" init -upgrade
   if is_true "$PROXMOX_IDENTITY_RECREATE_STATE_RM"; then
     proxmox_identity_terraform_state_rm_all
     PROXMOX_VE_ENDPOINT="$PROXMOX_URL" \
     PROXMOX_VE_API_TOKEN="${PROXMOX_ADMIN_USERNAME}=${PROXMOX_ADMIN_TOKEN}" \
     PROXMOX_VE_INSECURE="$PROXMOX_ADMIN_INSECURE" \
-    terraform -chdir="$state_dir" apply -auto-approve \
+    tofu -chdir="$state_dir" apply -auto-approve \
       -var "cluster_set_id=${PROXMOX_IDENTITY_SUFFIX}" \
       -var "csi_user_id=${PROXMOX_CSI_USER_ID}" \
       -var "csi_token_prefix=${PROXMOX_CSI_TOKEN_PREFIX}" \
@@ -3268,7 +3268,7 @@ recreate_proxmox_identities_terraform() {
     PROXMOX_VE_ENDPOINT="$PROXMOX_URL" \
     PROXMOX_VE_API_TOKEN="${PROXMOX_ADMIN_USERNAME}=${PROXMOX_ADMIN_TOKEN}" \
     PROXMOX_VE_INSECURE="$PROXMOX_ADMIN_INSECURE" \
-    terraform -chdir="$state_dir" apply -auto-approve \
+    tofu -chdir="$state_dir" apply -auto-approve \
       -var "cluster_set_id=${PROXMOX_IDENTITY_SUFFIX}" \
       -var "csi_user_id=${PROXMOX_CSI_USER_ID}" \
       -var "csi_token_prefix=${PROXMOX_CSI_TOKEN_PREFIX}" \
@@ -3525,10 +3525,10 @@ generate_configs_from_terraform_outputs() {
   state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
   csi_api_url="$(proxmox_api_json_url)"
 
-  capi_token_id="$(terraform -chdir="$state_dir" output -raw capi_token_id)"
-  capi_token_secret="$(terraform -chdir="$state_dir" output -raw capi_token_secret)"
-  csi_token_id="$(terraform -chdir="$state_dir" output -raw csi_token_id)"
-  csi_token_secret="$(terraform -chdir="$state_dir" output -raw csi_token_secret)"
+  capi_token_id="$(tofu -chdir="$state_dir" output -raw capi_token_id)"
+  capi_token_secret="$(tofu -chdir="$state_dir" output -raw capi_token_secret)"
+  csi_token_id="$(tofu -chdir="$state_dir" output -raw csi_token_id)"
+  csi_token_secret="$(tofu -chdir="$state_dir" output -raw csi_token_secret)"
 
   capi_token_secret="$(normalize_proxmox_token_secret "$capi_token_secret" "$capi_token_id")"
   csi_token_secret="$(normalize_proxmox_token_secret "$csi_token_secret" "$csi_token_id")"
@@ -3621,7 +3621,7 @@ _get_all_bootstrap_variables_as_yaml() {
   local _n
   local -a _bootstrap_cfg_snapshot_vars=(
     KIND_VERSION KUBECTL_VERSION CLUSTERCTL_VERSION
-    TERRAFORM_VERSION
+    OPENTOFU_VERSION
     CILIUM_CLI_VERSION CILIUM_VERSION CILIUM_WAIT_DURATION
     CILIUM_INGRESS CILIUM_KUBE_PROXY_REPLACEMENT
     CILIUM_LB_IPAM CILIUM_LB_IPAM_POOL_CIDR CILIUM_LB_IPAM_POOL_START CILIUM_LB_IPAM_POOL_STOP CILIUM_LB_IPAM_POOL_NAME
@@ -3899,7 +3899,7 @@ SNAPSHOT = frozenset(
         "OTEL_ENABLED", "GRAFANA_ENABLED", "BACKSTAGE_ENABLED", "KEYCLOAK_ENABLED",
         "EXP_CLUSTER_RESOURCE_SET", "CLUSTER_TOPOLOGY", "EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION",
         "CLUSTER_SET_ID", "PROXMOX_IDENTITY_SUFFIX",
-        "TERRAFORM_VERSION",
+        "OPENTOFU_VERSION",
         "IPAM_IMAGE",
         "ARGOCD_VERSION", "ARGOCD_CLI_VERSION",
         "WORKLOAD_GITOPS_MODE", "WORKLOAD_APP_OF_APPS_GIT_URL", "WORKLOAD_APP_OF_APPS_GIT_PATH", "WORKLOAD_APP_OF_APPS_GIT_REF",
@@ -7505,7 +7505,7 @@ destroy_proxmox_identity_terraform_state() {
     return 0
   }
 
-  command -v terraform >/dev/null 2>&1 || die "terraform is required to destroy existing Proxmox identity resources during purge."
+  command -v tofu >/dev/null 2>&1 || die "OpenTofu (tofu) is required to destroy existing Proxmox identity resources during purge."
 
   # Admin credentials should be loaded from the central config secret.
 
@@ -7541,12 +7541,12 @@ destroy_proxmox_identity_terraform_state() {
   PROXMOX_VE_ENDPOINT="$endpoint" \
   PROXMOX_VE_API_TOKEN="$api_token" \
   PROXMOX_VE_INSECURE="$PROXMOX_ADMIN_INSECURE" \
-  terraform -chdir="$state_dir" init -upgrade >/dev/null
+  tofu -chdir="$state_dir" init -upgrade >/dev/null
 
   PROXMOX_VE_ENDPOINT="$endpoint" \
   PROXMOX_VE_API_TOKEN="$api_token" \
   PROXMOX_VE_INSECURE="$PROXMOX_ADMIN_INSECURE" \
-  terraform -chdir="$state_dir" destroy -auto-approve -input=false "${tf_vars[@]}"
+  tofu -chdir="$state_dir" destroy -auto-approve -input=false "${tf_vars[@]}"
 
   log "Terraform-managed Proxmox identity resources destroyed."
 }
@@ -8109,8 +8109,8 @@ else
 fi
 
 # --- Terraform + bpg/proxmox provider -----------------------------------------
-ensure_terraform
-require_cmd terraform
+ensure_opentofu
+require_cmd tofu
 if is_true "$PHASE1_SKIP_HEAVY_MAINTENANCE"; then
   log "Skipping bpg/proxmox provider install (reuse path — cache from a previous run should already exist)."
 else
@@ -8136,7 +8136,7 @@ log "Phase 2: Running bootstrap..."
 # from environment variables / existing config files first; fall back to
 # Terraform to create the Proxmox users/tokens when necessary.
 # When --recreate-proxmox-identities: replace tokens via Terraform (-replace) instead of apply-only; then post-capmox + post-manifest hooks re-sync Secrets and roll out controllers.
-RECREATE_TERRAFORM_DONE=false
+RECREATE_OPENTOFU_DONE=false
 phase0_identity_bootstrap=false
 if ! { _clusterctl_cfg_file_present || have_clusterctl_creds_in_env; }; then
   phase0_identity_bootstrap=true
@@ -8191,7 +8191,7 @@ if is_true "$phase0_identity_bootstrap"; then
 
     if is_true "$RECREATE_PROXMOX_IDENTITIES"; then
       recreate_proxmox_identities_terraform
-      RECREATE_TERRAFORM_DONE=true
+      RECREATE_OPENTOFU_DONE=true
     else
       apply_proxmox_identity_terraform
       generate_configs_from_terraform_outputs
@@ -8199,7 +8199,7 @@ if is_true "$phase0_identity_bootstrap"; then
   fi
 fi
 
-if is_true "$RECREATE_PROXMOX_IDENTITIES" && ! is_true "$RECREATE_TERRAFORM_DONE"; then
+if is_true "$RECREATE_PROXMOX_IDENTITIES" && ! is_true "$RECREATE_OPENTOFU_DONE"; then
   if [[ -z "$PROXMOX_URL" || -z "$PROXMOX_ADMIN_USERNAME" || -z "$PROXMOX_ADMIN_TOKEN" ]]; then
     ensure_proxmox_admin_config
   fi
@@ -8207,7 +8207,7 @@ if is_true "$RECREATE_PROXMOX_IDENTITIES" && ! is_true "$RECREATE_TERRAFORM_DONE
   resolve_available_cluster_set_id_for_roles || true
   check_proxmox_admin_api_connectivity
   recreate_proxmox_identities_terraform
-  RECREATE_TERRAFORM_DONE=true
+  RECREATE_OPENTOFU_DONE=true
 fi
 
 # --- 1. Ensure clusterctl credentials exist -----------------------------------

@@ -83,8 +83,8 @@ func Run(cfg *config.Config) int {
 		}
 	}
 	if !cfg.NoDeleteKind {
-		if err := installer.Terraform(cfg); err != nil {
-			logx.Die("ensure_terraform failed: %v", err)
+		if err := installer.OpenTofu(cfg); err != nil {
+			logx.Die("ensure_opentofu failed: %v", err)
 		}
 	}
 

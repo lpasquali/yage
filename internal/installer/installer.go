@@ -281,33 +281,36 @@ func SystemDependencies() error {
 	return nil
 }
 
-// Terraform mirrors ensure_terraform(): downloads the HashiCorp zip and
-// extracts the terraform binary into /usr/local/bin.
-func Terraform(cfg *config.Config) error {
-	if shell.CommandExists("terraform") {
-		have := terraformJSONVersion()
-		if versionx.Match(have, cfg.TerraformVersion) {
+// OpenTofu mirrors ensure_opentofu(): downloads the OpenTofu release zip
+// and extracts the `tofu` binary into /usr/local/bin.
+//
+// `tofu version -json` emits the same schema Terraform did, including the
+// `terraform_version` key — we reuse the existing parser for that reason.
+func OpenTofu(cfg *config.Config) error {
+	if shell.CommandExists("tofu") {
+		have := tofuJSONVersion()
+		if versionx.Match(have, cfg.OpenTofuVersion) {
 			return nil
 		}
-		logx.Warn("terraform (%s) does not match TERRAFORM_VERSION=%s — reinstalling...", orUnknown(have), cfg.TerraformVersion)
+		logx.Warn("tofu (%s) does not match OPENTOFU_VERSION=%s — reinstalling...", orUnknown(have), cfg.OpenTofuVersion)
 	} else {
-		logx.Warn("terraform not found — installing...")
+		logx.Warn("tofu not found — installing...")
 	}
 	osName := sysinfo.OS()
 	arch := sysinfo.Arch()
-	url := fmt.Sprintf("https://releases.hashicorp.com/terraform/%s/terraform_%s_%s_%s.zip",
-		cfg.TerraformVersion, cfg.TerraformVersion, osName, arch)
-	zipPath := filepath.Join(os.TempDir(), fmt.Sprintf("terraform_%s_%s_%s.zip", cfg.TerraformVersion, osName, arch))
+	url := fmt.Sprintf("https://github.com/opentofu/opentofu/releases/download/v%s/tofu_%s_%s_%s.zip",
+		cfg.OpenTofuVersion, cfg.OpenTofuVersion, osName, arch)
+	zipPath := filepath.Join(os.TempDir(), fmt.Sprintf("tofu_%s_%s_%s.zip", cfg.OpenTofuVersion, osName, arch))
 	if err := downloadTo(url, zipPath); err != nil {
-		logx.Die("Failed to download Terraform from %s (check TERRAFORM_VERSION=%s and network).", url, cfg.TerraformVersion)
+		logx.Die("Failed to download OpenTofu from %s (check OPENTOFU_VERSION=%s and network).", url, cfg.OpenTofuVersion)
 	}
 	defer os.Remove(zipPath)
-	bin := filepath.Join(os.TempDir(), "terraform.bin")
-	if err := extractZipMember(zipPath, "terraform", bin); err != nil {
+	bin := filepath.Join(os.TempDir(), "tofu.bin")
+	if err := extractZipMember(zipPath, "tofu", bin); err != nil {
 		return err
 	}
 	defer os.Remove(bin)
-	return shell.RunPrivileged("install", "-m", "0755", bin, "/usr/local/bin/terraform")
+	return shell.RunPrivileged("install", "-m", "0755", bin, "/usr/local/bin/tofu")
 }
 
 // --- helpers ---
@@ -391,9 +394,11 @@ func clusterctlGitVersion() string {
 	return d.ClientVersionCap.GitVersion
 }
 
-func terraformJSONVersion() string {
-	out, _, _ := shell.Capture("terraform", "version", "-json")
+func tofuJSONVersion() string {
+	out, _, _ := shell.Capture("tofu", "version", "-json")
 	var d struct {
+		// OpenTofu emits `terraform_version` in this schema for
+		// compatibility; that's the key we parse.
 		TerraformVersion string `json:"terraform_version"`
 	}
 	_ = json.Unmarshal([]byte(out), &d)

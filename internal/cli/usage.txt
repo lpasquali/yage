@@ -229,7 +229,7 @@
 #   WORKLOAD_POSTSYNC_NAMESPACE     Namespace for PostSync Jobs that use the rollout script pattern (default: workload-smoke)
 #   RECREATE_PROXMOX_IDENTITIES       true: same as --recreate-proxmox-identities (re-run Terraform, refresh Secrets)
 #   PROXMOX_IDENTITY_RECREATE_SCOPE  capi | csi | both (default: both)
-#   PROXMOX_IDENTITY_RECREATE_STATE_RM  true: terraform state rm all then apply (empty PVE; full recreate)
+#   PROXMOX_IDENTITY_RECREATE_STATE_RM  true: tofu state rm all then apply (empty PVE; full recreate)
 #   PROXMOX_CSI_CONFIG_PROVIDER      proxmox-csi config.features.provider (default: proxmox)
 #   PROXMOX_CSI_TOPOLOGY_LABELS      Inject kubelet node-labels for CSI topology (default: true)
 #   PROXMOX_TOPOLOGY_REGION          topology.kubernetes.io/region (default: PROXMOX_REGION)

@@ -29,7 +29,7 @@ type Config struct {
 	ArgoCDOperatorVersion string
 	KyvernoCLIVersion string
 	CmctlVersion      string
-	TerraformVersion  string
+	OpenTofuVersion   string
 
 	// ---- Cilium ----
 	CiliumWaitDuration                string
@@ -356,7 +356,7 @@ func Load() *Config {
 	c.ArgoCDOperatorVersion = getenv("ARGOCD_OPERATOR_VERSION", "v0.16.0")
 	c.KyvernoCLIVersion = getenv("KYVERNO_CLI_VERSION", "v1.17.1")
 	c.CmctlVersion = getenv("CMCTL_VERSION", "v2.4.1")
-	c.TerraformVersion = getenv("TERRAFORM_VERSION", "1.9.8")
+	c.OpenTofuVersion = getenv("OPENTOFU_VERSION", "1.8.5")
 
 	// --- Cilium (lines 342-356) ---
 	c.CiliumWaitDuration = getenv("CILIUM_WAIT_DURATION", "10m0s")

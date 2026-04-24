@@ -123,9 +123,10 @@ func MergeProxmoxBootstrapSecretsFromKind(cfg *config.Config) {
 		}
 	}
 
-	// Post-merge defaults (reapply_workload_git_defaults, etc.) are
-	// applied by the bootstrap orchestrator after this returns —
-	// mirroring the bash call site.
+	// Bash tail: reapply_workload_git_defaults + sync CAPI controller
+	// image refs to the (possibly merged) ClusterctlVersion.
+	cfg.ReapplyWorkloadGitDefaults()
+	cfg.SyncCAPIControllerImagesToClusterctlVersion()
 }
 
 // applyConfigYAML fetches the bootstrap-config Secret, parses the

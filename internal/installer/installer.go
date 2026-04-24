@@ -281,6 +281,64 @@ func SystemDependencies() error {
 	return nil
 }
 
+// HasArm64Image reports whether an image has an arm64 variant in its
+// Docker manifest list. Replaces the bash `docker manifest inspect |
+// python3` pipeline with native Go JSON parsing. Returns false on any
+// error (docker missing, network, image absent).
+func HasArm64Image(image string) bool {
+	if !shell.CommandExists("docker") {
+		return false
+	}
+	out, _, err := shell.Capture("docker", "manifest", "inspect", image)
+	if err != nil || out == "" {
+		return false
+	}
+	type entry struct {
+		Platform struct {
+			Architecture string `json:"architecture"`
+		} `json:"platform"`
+	}
+	var m struct {
+		Manifests    []entry `json:"manifests"`
+		ManifestsAlt []entry `json:"Manifests"`
+	}
+	_ = json.Unmarshal([]byte(out), &m)
+	for _, x := range append(m.Manifests, m.ManifestsAlt...) {
+		if x.Platform.Architecture == "arm64" {
+			return true
+		}
+	}
+	return false
+}
+
+// BuildIfNoArm64 ports build_if_no_arm64(). If an arm64 variant exists in
+// the registry (and BUILD_ALL is false), returns nil without building —
+// the registry image is used. Otherwise clones repo @ tag into dir,
+// docker-builds image, and loads it into the named kind cluster.
+func BuildIfNoArm64(cfg *config.Config, image, repo, tag, dir, cluster string) error {
+	if cluster == "" {
+		cluster = cfg.KindClusterName
+	}
+	if !cfg.BuildAll {
+		if HasArm64Image(image) {
+			logx.Log("arm64 image available in registry: %s — skipping local pull/build/load.", image)
+			return nil
+		}
+		logx.Warn("No arm64 image found for %s — building from source...", image)
+	} else {
+		logx.Warn("BUILD_ALL enabled — building %s from source even though a registry image may exist.", image)
+	}
+	_ = os.RemoveAll(dir)
+	if err := shell.Run("git", "clone", "--filter=blob:none", "--branch", tag, "--depth", "1", repo, dir); err != nil {
+		return err
+	}
+	if err := shell.Run("docker", "build", "-t", image, dir); err != nil {
+		return err
+	}
+	logx.Log("Loading locally built image %s into kind cluster '%s'...", image, cluster)
+	return shell.Run("kind", "load", "docker-image", image, "--name", cluster)
+}
+
 // OpenTofu mirrors ensure_opentofu(): downloads the OpenTofu release zip
 // and extracts the `tofu` binary into /usr/local/bin.
 //

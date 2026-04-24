@@ -1,0 +1,438 @@
+// Package installer ports install_binary and every ensure_* helper from
+// bootstrap-capi.sh (lines ~1994-2858). These functions install or upgrade
+// third-party CLIs to pinned versions, mirroring the bash behavior:
+//
+//   - If the binary is missing, install.
+//   - If the binary is present and versionx.Match reports the pinned version,
+//     do nothing.
+//   - Otherwise warn about the mismatch and reinstall.
+//
+// The underlying download primitive is installBinary, equivalent to:
+//
+//	install_binary <name> <url>
+//
+// which curls the URL into /tmp and then `install`s it into /usr/local/bin
+// with the privilege-escalation helper.
+package installer
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/logx"
+	"github.com/lpasquali/bootstrap-capi/internal/shell"
+	"github.com/lpasquali/bootstrap-capi/internal/sysinfo"
+	"github.com/lpasquali/bootstrap-capi/internal/versionx"
+)
+
+// installBinary downloads url into a temp file then installs it into
+// /usr/local/bin/<name> with mode 0755, using sudo if required.
+// Mirrors install_binary() in bash.
+func installBinary(name, url string) error {
+	logx.Log("Installing %s...", name)
+	tmp := filepath.Join(os.TempDir(), name+".bin")
+	if err := downloadTo(url, tmp); err != nil {
+		return fmt.Errorf("download %s: %w", url, err)
+	}
+	defer os.Remove(tmp)
+	dest := filepath.Join("/usr/local/bin", name)
+	return shell.RunPrivileged("install", "-m", "0755", tmp, dest)
+}
+
+// downloadTo fetches url with a single HTTP GET, writing to path atomically
+// (via a .partial swap). Matches curl -fsSL behavior.
+func downloadTo(url, path string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
+	}
+	part := path + ".partial"
+	f, err := os.Create(part)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		os.Remove(part)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(part)
+		return err
+	}
+	return os.Rename(part, path)
+}
+
+// installTarballMember fetches url (a .tar.gz) and extracts the single
+// `member` into /usr/local/bin via sudo tar. Equivalent to:
+//
+//	curl -fsSL URL | sudo tar -xz -C /usr/local/bin MEMBER
+//
+// tarStripComponents lets callers strip a leading directory component when
+// the tarball wraps its binary in one.
+func installTarballMember(url, member string, tarStripComponents int) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
+	}
+	argv := []string{"tar", "-xz", "-C", "/usr/local/bin"}
+	if tarStripComponents > 0 {
+		argv = append(argv, fmt.Sprintf("--strip-components=%d", tarStripComponents))
+	}
+	argv = append(argv, member)
+	argv = shell.Privileged(argv...)
+
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Stdin = resp.Body
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	return shell.RunPrivileged("chmod", "+x", filepath.Join("/usr/local/bin", filepath.Base(member)))
+}
+
+// Kind mirrors ensure_kind(): install kind pinned to cfg.KindVersion.
+func Kind(cfg *config.Config) error {
+	if shell.CommandExists("kind") {
+		have := firstVersionOn("kind", "--version", "2>&1")
+		if versionx.Match(have, cfg.KindVersion) {
+			return nil
+		}
+		logx.Warn("kind (%s) does not match KIND_VERSION=%s — reinstalling...", orUnknown(have), cfg.KindVersion)
+	} else {
+		logx.Warn("kind not found — installing...")
+	}
+	url := fmt.Sprintf(
+		"https://github.com/kubernetes-sigs/kind/releases/download/%s/kind-%s-%s",
+		cfg.KindVersion, sysinfo.OS(), sysinfo.Arch(),
+	)
+	return installBinary("kind", url)
+}
+
+// Kubectl mirrors ensure_kubectl(): installs from dl.k8s.io.
+func Kubectl(cfg *config.Config) error {
+	if shell.CommandExists("kubectl") {
+		have := kubectlClientGitVersion()
+		if versionx.Match(have, cfg.KubectlVersion) {
+			return nil
+		}
+		logx.Warn("kubectl (%s) does not match KUBECTL_VERSION=%s — reinstalling...", orUnknown(have), cfg.KubectlVersion)
+	} else {
+		logx.Warn("kubectl not found — installing...")
+	}
+	url := fmt.Sprintf(
+		"https://dl.k8s.io/release/%s/bin/%s/%s/kubectl",
+		cfg.KubectlVersion, sysinfo.OS(), sysinfo.Arch(),
+	)
+	return installBinary("kubectl", url)
+}
+
+// Clusterctl mirrors ensure_clusterctl().
+func Clusterctl(cfg *config.Config) error {
+	if shell.CommandExists("clusterctl") {
+		have := clusterctlGitVersion()
+		if versionx.Match(have, cfg.ClusterctlVersion) {
+			return nil
+		}
+		logx.Warn("clusterctl (%s) does not match CLUSTERCTL_VERSION=%s — reinstalling...", orUnknown(have), cfg.ClusterctlVersion)
+	} else {
+		logx.Warn("clusterctl not found — installing...")
+	}
+	url := fmt.Sprintf(
+		"https://github.com/kubernetes-sigs/cluster-api/releases/download/%s/clusterctl-%s-%s",
+		cfg.ClusterctlVersion, sysinfo.OS(), sysinfo.Arch(),
+	)
+	return installBinary("clusterctl", url)
+}
+
+// CiliumCLI mirrors ensure_cilium_cli().
+func CiliumCLI(cfg *config.Config) error {
+	if shell.CommandExists("cilium") {
+		have := firstVersionOn("cilium", "version", "2>&1")
+		if versionx.Match(have, cfg.CiliumCLIVersion) {
+			return nil
+		}
+		logx.Warn("cilium CLI (%s) does not match CILIUM_CLI_VERSION=%s — reinstalling...", orUnknown(have), cfg.CiliumCLIVersion)
+	} else {
+		logx.Warn("cilium CLI not found — installing...")
+	}
+	tarball := fmt.Sprintf("cilium-%s-%s.tar.gz", sysinfo.OS(), sysinfo.Arch())
+	url := fmt.Sprintf("https://github.com/cilium/cilium-cli/releases/download/%s/%s", cfg.CiliumCLIVersion, tarball)
+	if err := installTarballMember(url, "cilium", 0); err != nil {
+		logx.Die("Failed to install cilium CLI (curl or tar: check CILIUM_CLI_VERSION=%s and network).", cfg.CiliumCLIVersion)
+	}
+	return nil
+}
+
+// ArgoCDCLI mirrors ensure_argocd_cli(). Linux-only.
+func ArgoCDCLI(cfg *config.Config) error {
+	if runtime.GOOS != "linux" {
+		logx.Die("argocd CLI install is supported on Linux only (amd64/arm64), not %s.", runtime.GOOS)
+	}
+	if shell.CommandExists("argocd") {
+		have := firstVersionOn("argocd", "version", "--client", "2>&1")
+		if versionx.Match(have, cfg.ArgoCDCLIVersion) {
+			return nil
+		}
+		logx.Warn("argocd CLI (%s) does not match ARGOCD_CLI_VERSION=%s — reinstalling...", orUnknown(have), cfg.ArgoCDCLIVersion)
+	} else {
+		logx.Warn("argocd CLI not found — installing...")
+	}
+	arch := sysinfo.Arch()
+	switch arch {
+	case "amd64", "arm64":
+	default:
+		logx.Die("Unsupported architecture for argocd CLI on Linux: %s (need amd64 or arm64).", arch)
+	}
+	url := fmt.Sprintf("https://github.com/argoproj/argo-cd/releases/download/%s/argocd-linux-%s", cfg.ArgoCDCLIVersion, arch)
+	return installBinary("argocd", url)
+}
+
+// KyvernoCLI mirrors ensure_kyverno_cli(). Linux-only; amd64 uses x86_64 in
+// the asset name.
+func KyvernoCLI(cfg *config.Config) error {
+	if runtime.GOOS != "linux" {
+		logx.Die("kyverno CLI install is supported on Linux only (amd64/arm64), not %s.", runtime.GOOS)
+	}
+	if shell.CommandExists("kyverno") {
+		have := firstVersionOn("kyverno", "version", "2>&1")
+		if versionx.Match(have, cfg.KyvernoCLIVersion) {
+			return nil
+		}
+		logx.Warn("kyverno CLI (%s) does not match KYVERNO_CLI_VERSION=%s — reinstalling...", orUnknown(have), cfg.KyvernoCLIVersion)
+	} else {
+		logx.Warn("kyverno CLI not found — installing...")
+	}
+	var kyArch string
+	switch sysinfo.Arch() {
+	case "amd64":
+		kyArch = "x86_64"
+	case "arm64":
+		kyArch = "arm64"
+	default:
+		logx.Die("Unsupported architecture for kyverno CLI on Linux: %s (need amd64 or arm64).", sysinfo.Arch())
+	}
+	tarball := fmt.Sprintf("kyverno-cli_%s_linux_%s.tar.gz", cfg.KyvernoCLIVersion, kyArch)
+	url := fmt.Sprintf("https://github.com/kyverno/kyverno/releases/download/%s/%s", cfg.KyvernoCLIVersion, tarball)
+	if err := installTarballMember(url, "kyverno", 0); err != nil {
+		logx.Die("Failed to install kyverno CLI (check KYVERNO_CLI_VERSION=%s and network).", cfg.KyvernoCLIVersion)
+	}
+	return nil
+}
+
+// Cmctl mirrors ensure_cmctl(). Linux-only.
+func Cmctl(cfg *config.Config) error {
+	if runtime.GOOS != "linux" {
+		logx.Die("cmctl install is supported on Linux only (amd64/arm64), not %s.", runtime.GOOS)
+	}
+	if shell.CommandExists("cmctl") {
+		have := firstVersionOn("cmctl", "version", "2>&1")
+		if versionx.Match(have, cfg.CmctlVersion) {
+			return nil
+		}
+		logx.Warn("cmctl (%s) does not match CMCTL_VERSION=%s — reinstalling...", orUnknown(have), cfg.CmctlVersion)
+	} else {
+		logx.Warn("cmctl (cert-manager) not found — installing...")
+	}
+	arch := sysinfo.Arch()
+	if arch != "amd64" && arch != "arm64" {
+		logx.Die("Unsupported architecture for cmctl on Linux: %s (need amd64 or arm64).", arch)
+	}
+	tarball := fmt.Sprintf("cmctl_linux_%s.tar.gz", arch)
+	url := fmt.Sprintf("https://github.com/cert-manager/cmctl/releases/download/%s/%s", cfg.CmctlVersion, tarball)
+	if err := installTarballMember(url, "cmctl", 0); err != nil {
+		logx.Die("Failed to install cmctl (check CMCTL_VERSION=%s and network).", cfg.CmctlVersion)
+	}
+	return nil
+}
+
+// SystemDependencies mirrors ensure_system_dependencies(): git, curl, python3.
+// Python3 is still required for the unported bash→Python inline scripts; as
+// those get ported over, python3 can be removed from this list.
+func SystemDependencies() error {
+	logx.Log("Checking and installing system-wide dependencies...")
+	for _, p := range []string{"git", "curl", "python3"} {
+		if shell.CommandExists(p) {
+			continue
+		}
+		logx.Warn("%s not found — installing...", p)
+		if err := installSystemPackage(p); err != nil {
+			return err
+		}
+	}
+	logx.Log("System-wide dependencies check complete.")
+	return nil
+}
+
+// Terraform mirrors ensure_terraform(): downloads the HashiCorp zip and
+// extracts the terraform binary into /usr/local/bin.
+func Terraform(cfg *config.Config) error {
+	if shell.CommandExists("terraform") {
+		have := terraformJSONVersion()
+		if versionx.Match(have, cfg.TerraformVersion) {
+			return nil
+		}
+		logx.Warn("terraform (%s) does not match TERRAFORM_VERSION=%s — reinstalling...", orUnknown(have), cfg.TerraformVersion)
+	} else {
+		logx.Warn("terraform not found — installing...")
+	}
+	osName := sysinfo.OS()
+	arch := sysinfo.Arch()
+	url := fmt.Sprintf("https://releases.hashicorp.com/terraform/%s/terraform_%s_%s_%s.zip",
+		cfg.TerraformVersion, cfg.TerraformVersion, osName, arch)
+	zipPath := filepath.Join(os.TempDir(), fmt.Sprintf("terraform_%s_%s_%s.zip", cfg.TerraformVersion, osName, arch))
+	if err := downloadTo(url, zipPath); err != nil {
+		logx.Die("Failed to download Terraform from %s (check TERRAFORM_VERSION=%s and network).", url, cfg.TerraformVersion)
+	}
+	defer os.Remove(zipPath)
+	bin := filepath.Join(os.TempDir(), "terraform.bin")
+	if err := extractZipMember(zipPath, "terraform", bin); err != nil {
+		return err
+	}
+	defer os.Remove(bin)
+	return shell.RunPrivileged("install", "-m", "0755", bin, "/usr/local/bin/terraform")
+}
+
+// --- helpers ---
+
+// firstVersionOn runs `name args...` and extracts the first "vX.Y.Z"-looking
+// token from stdout+stderr, matching the bash idiom:
+//
+//	cmd --version 2>&1 | grep -oE 'v?[0-9][0-9.]+' | head -1
+func firstVersionOn(name string, args ...string) string {
+	// strip the 2>&1 shell sentinel if present in args
+	cleaned := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "2>&1" {
+			continue
+		}
+		cleaned = append(cleaned, a)
+	}
+	c := exec.Command(name, cleaned...)
+	out, _ := c.CombinedOutput()
+	return firstSemverish(string(out))
+}
+
+func firstSemverish(s string) string {
+	// Match "v?[0-9][0-9.]+" non-greedy; Go's regexp is fine here but we
+	// implement a tiny scanner to avoid the dependency cost.
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == 'v' && i+1 < len(s) && isDigit(s[i+1]) {
+			return readSemver(s[i:])
+		}
+		if isDigit(c) {
+			return readSemver(s[i:])
+		}
+	}
+	return ""
+}
+
+func readSemver(s string) string {
+	end := 0
+	if s[0] == 'v' {
+		end = 1
+	}
+	for end < len(s) {
+		c := s[end]
+		if !(isDigit(c) || c == '.') {
+			break
+		}
+		end++
+	}
+	return s[:end]
+}
+
+func isDigit(b byte) bool { return b >= '0' && b <= '9' }
+
+func kubectlClientGitVersion() string {
+	out, _, _ := shell.Capture("kubectl", "version", "-o", "json")
+	var d struct {
+		ClientVersion struct {
+			GitVersion string `json:"gitVersion"`
+		} `json:"clientVersion"`
+	}
+	_ = json.Unmarshal([]byte(out), &d)
+	return d.ClientVersion.GitVersion
+}
+
+func clusterctlGitVersion() string {
+	out, _, _ := shell.Capture("clusterctl", "version", "-o", "json")
+	var d struct {
+		ClientVersion struct {
+			GitVersion string `json:"gitVersion"`
+		} `json:"clientVersion"`
+		// clusterctl in some versions uses "ClientVersion"+"GitVersion" caps
+		ClientVersionCap struct {
+			GitVersion string `json:"GitVersion"`
+		} `json:"ClientVersion"`
+	}
+	_ = json.Unmarshal([]byte(out), &d)
+	if d.ClientVersion.GitVersion != "" {
+		return d.ClientVersion.GitVersion
+	}
+	return d.ClientVersionCap.GitVersion
+}
+
+func terraformJSONVersion() string {
+	out, _, _ := shell.Capture("terraform", "version", "-json")
+	var d struct {
+		TerraformVersion string `json:"terraform_version"`
+	}
+	_ = json.Unmarshal([]byte(out), &d)
+	return d.TerraformVersion
+}
+
+func orUnknown(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "unknown"
+	}
+	return v
+}
+
+// installSystemPackage mirrors the apt-get/dnf/yum/apk branching from
+// ensure_system_dependencies for a single package name.
+func installSystemPackage(pkg string) error {
+	switch {
+	case shell.CommandExists("apt-get"):
+		if err := shell.RunPrivileged("apt-get", "update", "-qq"); err != nil {
+			return err
+		}
+		return shell.RunPrivileged("apt-get", "install", "-y", pkg)
+	case shell.CommandExists("dnf"):
+		return shell.RunPrivileged("dnf", "install", "-y", pkg)
+	case shell.CommandExists("yum"):
+		return shell.RunPrivileged("yum", "install", "-y", pkg)
+	case shell.CommandExists("apk"):
+		return shell.RunPrivileged("apk", "add", pkg)
+	}
+	logx.Die("%s not found and package manager not detected — install %s manually.", pkg, pkg)
+	return nil
+}
+
+// extractZipMember opens a local zip and writes member `name` to `dest`.
+// Used by Terraform() — keeps the dependency-free posture of this module.
+func extractZipMember(zipPath, name, dest string) error {
+	// Use the standard library archive/zip via os/exec-free path. Since Go
+	// supplies archive/zip, this is trivial; adding import here keeps the
+	// function self-contained for readability.
+	return extractZipMemberImpl(zipPath, name, dest)
+}

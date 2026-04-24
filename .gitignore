@@ -1,0 +1,8 @@
+# Built binary at repo root (do not ignore cmd/bootstrap-capi/ source dir).
+/bootstrap-capi
+/bootstrap-capi-bin
+/dist/
+/tmp/
+*.test
+*.out
+.env

@@ -184,7 +184,7 @@ func PrintAccessInfo(cfg *config.Config) {
 			if pw != "" {
 				logx.Log("  Initial admin password: %s", pw)
 			} else {
-				logx.Warn("  argocd-initial-admin-secret not found in %s (not installed or password rotated?).",
+				logx.Warn("  Admin password not found in %s (checked argocd-initial-admin-secret, argocd-cluster, argocd-secret — not installed or password rotated?).",
 					cfg.WorkloadArgoCDNamespace)
 			}
 		} else {
@@ -202,8 +202,10 @@ func PrintAccessInfo(cfg *config.Config) {
 }
 
 // ReadInitialAdminPasswordWithKubeconfig reads the admin password using
-// KUBECONFIG env override (for the workload cluster). Simpler than the
-// context-based variant.
+// KUBECONFIG env override (for the workload cluster).  Probes, in order:
+//   - argocd-initial-admin-secret / password   (Helm chart default)
+//   - argocd-cluster / admin.password          (Argo CD Operator)
+//   - argocd-secret / admin.password           (fallback: only if plaintext, not bcrypt)
 func ReadInitialAdminPasswordWithKubeconfig(kubeconfig, namespace string) string {
 	if namespace == "" {
 		namespace = "argocd"
@@ -211,29 +213,28 @@ func ReadInitialAdminPasswordWithKubeconfig(kubeconfig, namespace string) string
 	for _, probe := range []struct{ sec, key string }{
 		{"argocd-initial-admin-secret", "password"},
 		{"argocd-cluster", `admin\.password`},
+		{"argocd-secret", `admin\.password`},
 	} {
-		out, err := exec.Command("kubectl", "get", "secret", probe.sec,
-			"-n", namespace, "-o", "jsonpath={.data."+probe.key+"}").Output()
-		_ = err
+		c := exec.Command("kubectl", "get", "secret", probe.sec,
+			"-n", namespace, "-o", "jsonpath={.data."+probe.key+"}")
+		c.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+		out, err := c.Output()
+		if err != nil {
+			continue
+		}
 		s := strings.TrimSpace(string(out))
 		if s == "" {
 			continue
 		}
-		// Rerun with KUBECONFIG env set so we actually hit the workload.
-		c := exec.Command("kubectl", "get", "secret", probe.sec,
-			"-n", namespace, "-o", "jsonpath={.data."+probe.key+"}")
-		c.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
-		out2, err := c.Output()
-		if err != nil {
+		dec, err := base64.StdEncoding.DecodeString(s)
+		if err != nil || len(dec) == 0 {
 			continue
 		}
-		s = strings.TrimSpace(string(out2))
-		if s == "" {
+		// argocd-secret stores a bcrypt hash — skip if it looks like one.
+		if strings.HasPrefix(string(dec), "$2") {
 			continue
 		}
-		if dec, err := base64.StdEncoding.DecodeString(s); err == nil && len(dec) > 0 {
-			return string(dec)
-		}
+		return string(dec)
 	}
 	return ""
 }

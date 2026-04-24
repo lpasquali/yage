@@ -5856,7 +5856,7 @@ ensure_helm_present() {
   fi
 }
 
-# Decode initial Argo admin password: Helm chart (argocd-initial-admin-secret) or Argo CD Operator (argocd-cluster admin.password).
+# Decode initial Argo admin password: Helm chart (argocd-initial-admin-secret), Argo CD Operator (argocd-cluster), or argocd-secret fallback.
 argocd_read_initial_admin_password() {
   local ctx_arg=() ns="${2:-argocd}" pw
   [[ -n "${1:-}" ]] && ctx_arg=(--context "$1")
@@ -5864,6 +5864,9 @@ argocd_read_initial_admin_password() {
   [[ -n "$pw" ]] && { printf '%s' "$pw"; return 0; }
   pw="$(kubectl "${ctx_arg[@]}" get secret argocd-cluster -n "$ns" -o jsonpath='{.data.admin\.password}' 2>/dev/null | base64 -d)"
   [[ -n "$pw" ]] && { printf '%s' "$pw"; return 0; }
+  # argocd-secret stores a bcrypt hash — skip if it starts with $2.
+  pw="$(kubectl "${ctx_arg[@]}" get secret argocd-secret -n "$ns" -o jsonpath='{.data.admin\.password}' 2>/dev/null | base64 -d)"
+  [[ -n "$pw" ]] && [[ "$pw" != \$2* ]] && { printf '%s' "$pw"; return 0; }
   return 1
 }
 
@@ -5951,7 +5954,7 @@ argocd_print_access_info() {
       if [[ -n "$wpw" ]]; then
         log "  Initial admin password: ${wpw}"
       else
-        warn "  argocd-initial-admin-secret not found in ${WORKLOAD_ARGOCD_NAMESPACE} (not installed or password rotated?)."
+        warn "  Admin password not found in ${WORKLOAD_ARGOCD_NAMESPACE} (checked argocd-initial-admin-secret, argocd-cluster, argocd-secret — not installed or password rotated?)."
       fi
     else
       warn "  Namespace ${WORKLOAD_ARGOCD_NAMESPACE} not on workload — run bootstrap with workload Argo enabled first."

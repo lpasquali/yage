@@ -383,7 +383,7 @@ func Load() *Config {
 	c.ArgoCDPrintAccessStandalone = envBool("ARGOCD_PRINT_ACCESS_STANDALONE", false)
 	c.ArgoCDPortForwardStandalone = envBool("ARGOCD_PORT_FORWARD_STANDALONE", false)
 	c.ArgoCDPortForwardTarget = getenv("ARGOCD_PORT_FORWARD_TARGET", "workload")
-	c.ArgoCDPortForwardPort = getenv("ARGOCD_PORT_FORWARD_PORT", getenv("ARGOCD_PORT_FORWARD_WORKLOAD_PORT", "8080"))
+	c.ArgoCDPortForwardPort = getenv("ARGOCD_PORT_FORWARD_PORT", getenv("ARGOCD_PORT_FORWARD_WORKLOAD_PORT", "8443"))
 
 	// Workload ArgoCD/GitOps (lines 430-479)
 	c.WorkloadArgoCDEnabled = envBool("WORKLOAD_ARGOCD_ENABLED", true)

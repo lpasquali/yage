@@ -153,7 +153,7 @@ func PrintAccessInfo(cfg *config.Config) {
 	kctx := "kind-" + cfg.KindClusterName
 	port := cfg.ArgoCDPortForwardPort
 	if port == "" {
-		port = "8080"
+		port = "8443"
 	}
 	wlPFAddr := "127.0.0.1:" + port
 	loginExtra := "--grpc-web"
@@ -196,7 +196,7 @@ func PrintAccessInfo(cfg *config.Config) {
 	fmt.Printf("    kubectl --context \"%s\" -n \"%s\" get secret \"%s-kubeconfig\" -o jsonpath={.data.value} | base64 -d > /tmp/%s-kubeconfig.yaml\n",
 		kctx, cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName, cfg.WorkloadClusterName)
 	fmt.Printf("    export KUBECONFIG=/tmp/%s-kubeconfig.yaml\n", cfg.WorkloadClusterName)
-	fmt.Printf("    kubectl port-forward -n \"%s\" svc/argocd-server %s:443\n", cfg.WorkloadArgoCDNamespace, wlPFAddr)
+	fmt.Printf("    kubectl port-forward --address 127.0.0.1 -n \"%s\" svc/argocd-server %s:443\n", cfg.WorkloadArgoCDNamespace, port)
 	fmt.Printf("  Login to Argo on the CAPI cluster:\n")
 	fmt.Printf("    argocd login %s --username admin --password '<password>' %s\n\n", wlPFAddr, loginExtra)
 }
@@ -245,7 +245,7 @@ func RunPortForwards(cfg *config.Config) {
 	kctx := "kind-" + cfg.KindClusterName
 	port := cfg.ArgoCDPortForwardPort
 	if port == "" {
-		port = "8080"
+		port = "8443"
 	}
 	if cfg.ArgoCDPortForwardTarget != "" && cfg.ArgoCDPortForwardTarget != "workload" {
 		logx.Warn("port-forward: only the provisioned cluster is supported (ARGOCD_PORT_FORWARD_TARGET=workload); ignoring %s.",
@@ -269,8 +269,9 @@ func RunPortForwards(cfg *config.Config) {
 		logx.Die("port-forward: namespace %s not found on the CAPI cluster — is workload Argo installed?",
 			cfg.WorkloadArgoCDNamespace)
 	}
-	cmd := exec.Command("kubectl", "port-forward", "-n", cfg.WorkloadArgoCDNamespace,
-		"svc/argocd-server", "127.0.0.1:"+port+":443")
+	cmd := exec.Command("kubectl", "port-forward", "--address", "127.0.0.1",
+		"-n", cfg.WorkloadArgoCDNamespace,
+		"svc/argocd-server", port+":443")
 	cmd.Env = append(os.Environ(), "KUBECONFIG="+kcfg)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {

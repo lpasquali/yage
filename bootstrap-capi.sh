@@ -278,7 +278,7 @@
 #   ARGOCD_SERVER_INSECURE           true|false; ArgoCD CR: server.insecure (default: false)
 #   ARGOCD_PRINT_ACCESS_TARGET      workload (only value; for standalone --argocd-print-access)
 #   ARGOCD_PORT_FORWARD_TARGET      workload (only value; port-forward to provisioned cluster Argo)
-#   ARGOCD_PORT_FORWARD_PORT         local port for Argo on the CAPI/Proxmox cluster (default: 8080; legacy: ARGOCD_PORT_FORWARD_WORKLOAD_PORT)
+#   ARGOCD_PORT_FORWARD_PORT         local port for Argo on the CAPI/Proxmox cluster (default: 8443; legacy: ARGOCD_PORT_FORWARD_WORKLOAD_PORT)
 #   (internal) ARGOCD_PRINT_ACCESS_STANDALONE  set by --argocd-print-access; not needed when using flags
 #   (internal) ARGOCD_PORT_FORWARD_STANDALONE  set by --argocd-port-forward; not needed when using flags
 #   WORKLOAD_ROLLOUT_MODE            argocd | capi | all (for --workload-rollout; default: argocd)
@@ -469,7 +469,7 @@ ARGOCD_PORT_FORWARD_STANDALONE="${ARGOCD_PORT_FORWARD_STANDALONE:-false}"
 # Port-forward: provisioned (CAPI/Proxmox) cluster only
 ARGOCD_PORT_FORWARD_TARGET="${ARGOCD_PORT_FORWARD_TARGET:-workload}"
 # Local listen port (legacy ARGOCD_PORT_FORWARD_WORKLOAD_PORT still honored if set)
-ARGOCD_PORT_FORWARD_PORT="${ARGOCD_PORT_FORWARD_PORT:-${ARGOCD_PORT_FORWARD_WORKLOAD_PORT:-8080}}"
+ARGOCD_PORT_FORWARD_PORT="${ARGOCD_PORT_FORWARD_PORT:-${ARGOCD_PORT_FORWARD_WORKLOAD_PORT:-8443}}"
 # --workload-rollout: re-apply to CAPMOX workload without Phase 1/2 (see parse_options + early exit)
 WORKLOAD_ROLLOUT_STANDALONE="${WORKLOAD_ROLLOUT_STANDALONE:-false}"
 # --kind-backup / --kind-restore: snapshot or apply management kind cluster state (empty = not a standalone op)
@@ -5929,9 +5929,10 @@ argocd_standalone_discover_workload_kubeconfig_ref() {
 
 # CAPI / Proxmox workload Argo only (see standalone --argocd-print-access; management kind has no Argo).
 argocd_print_access_info() {
-  local kctx wl_pf_addr login_extra kcfg_tmp wpw
+  local kctx pf_port wl_pf_addr login_extra kcfg_tmp wpw
   kctx="kind-${KIND_CLUSTER_NAME}"
-  wl_pf_addr="127.0.0.1:${ARGOCD_PORT_FORWARD_PORT:-8080}"
+  pf_port="${ARGOCD_PORT_FORWARD_PORT:-8443}"
+  wl_pf_addr="127.0.0.1:${pf_port}"
   if is_true "$ARGOCD_SERVER_INSECURE"; then
     login_extra="--insecure --grpc-web"
   else
@@ -5960,11 +5961,11 @@ argocd_print_access_info() {
       warn "  Namespace ${WORKLOAD_ARGOCD_NAMESPACE} not on workload — run bootstrap with workload Argo enabled first."
     fi
     printf '  Write kubeconfig and port-forward (local port matches ARGOCD_PORT_FORWARD_PORT, default %s):\n' \
-      "${ARGOCD_PORT_FORWARD_PORT:-8080}"
+      "${ARGOCD_PORT_FORWARD_PORT:-8443}"
     printf '    kubectl --context "%s" -n "%s" get secret "%s-kubeconfig" -o jsonpath={.data.value} | base64 -d > /tmp/%s-kubeconfig.yaml\n' \
       "$kctx" "$WORKLOAD_CLUSTER_NAMESPACE" "$WORKLOAD_CLUSTER_NAME" "$WORKLOAD_CLUSTER_NAME"
     printf '    export KUBECONFIG=/tmp/%s-kubeconfig.yaml\n' "$WORKLOAD_CLUSTER_NAME"
-    printf '    kubectl port-forward -n "%s" svc/argocd-server %s:443\n' "$WORKLOAD_ARGOCD_NAMESPACE" "$wl_pf_addr"
+    printf '    kubectl port-forward --address 127.0.0.1 -n "%s" svc/argocd-server %s:443\n' "$WORKLOAD_ARGOCD_NAMESPACE" "$pf_port"
     printf '  Login to Argo on the CAPI cluster:\n'
     printf '    argocd login %s --username admin --password '\''<password>'\'' %s\n' "$wl_pf_addr" "$login_extra"
     rm -f "$kcfg_tmp"
@@ -5976,7 +5977,7 @@ argocd_print_access_info() {
 argocd_run_port_forwards() {
   local kctx pf_port target kcfg_file _p
   kctx="kind-${KIND_CLUSTER_NAME}"
-  pf_port="${ARGOCD_PORT_FORWARD_PORT:-8080}"
+  pf_port="${ARGOCD_PORT_FORWARD_PORT:-8443}"
   target="${ARGOCD_PORT_FORWARD_TARGET:-workload}"
   kcfg_file=""
 
@@ -6007,7 +6008,7 @@ argocd_run_port_forwards() {
     trap - INT TERM
     die "port-forward: namespace ${WORKLOAD_ARGOCD_NAMESPACE} not found on the CAPI cluster — is workload Argo installed?"
   fi
-  KUBECONFIG="$kcfg_file" kubectl port-forward -n "$WORKLOAD_ARGOCD_NAMESPACE" svc/argocd-server "127.0.0.1:${pf_port}:443" &
+  KUBECONFIG="$kcfg_file" kubectl port-forward --address 127.0.0.1 -n "$WORKLOAD_ARGOCD_NAMESPACE" svc/argocd-server "${pf_port}:443" &
   _p=$!
   log "Port-forward: CAPI / Proxmox workload Argo → 127.0.0.1:${pf_port} (pid ${_p}) — Ctrl+C to stop — see --argocd-print-access for password."
   wait "$_p" || true

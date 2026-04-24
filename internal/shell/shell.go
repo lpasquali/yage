@@ -55,6 +55,22 @@ func Capture(argv ...string) (string, string, error) {
 	return out.String(), errBuf.String(), err
 }
 
+// CaptureIn runs argv in dir, returning (stdout, stderr, err). Same
+// contract as Capture but with a working directory override — useful
+// for git commands that should operate on a specific repo.
+func CaptureIn(dir string, argv ...string) (string, string, error) {
+	if len(argv) == 0 {
+		return "", "", nil
+	}
+	c := exec.Command(argv[0], argv[1:]...)
+	c.Dir = dir
+	var out, errBuf bytes.Buffer
+	c.Stdout = &out
+	c.Stderr = &errBuf
+	err := c.Run()
+	return out.String(), errBuf.String(), err
+}
+
 // CaptureOut returns stdout trimmed of surrounding whitespace.
 // Errors and stderr are ignored — callers should use Capture() when they
 // care about diagnostics.

@@ -83,6 +83,31 @@ func CommandExists(name string) bool {
 	return err == nil
 }
 
+// RequireCmd dies with the bash die() format when `name` is not on $PATH.
+// Mirrors require_cmd.
+func RequireCmd(name string) {
+	if !CommandExists(name) {
+		die("Required command not found on PATH: " + name)
+	}
+}
+
+// RequireFile dies with the bash die() format when `path` is not a regular
+// file. Mirrors require_file.
+func RequireFile(path string) {
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		die("Required file not found: " + path)
+	}
+}
+
+// die is a minimal duplicate of logx.Die used by Require* helpers to avoid
+// a circular import (logx -> shell would reintroduce the cycle the Die
+// helper was set up to break).
+func die(msg string) {
+	_, _ = os.Stderr.WriteString("❌ 💩 " + msg + "\n")
+	os.Exit(1)
+}
+
 // DiscardStderr wraps stderr so a tool's noisy output is silenced while
 // still returning an error on non-zero exit.
 func DiscardStderr(err error) error {

@@ -115,19 +115,9 @@ func writeWorkloadKubeconfig(cfg *config.Config, ctx string) (string, error) {
 // removeFile is a small defer-friendly wrapper.
 func removeFile(p string) { _ = os.Remove(p) }
 
-// applyBootstrapConfigToManagementCluster is the stub for
-// apply_bootstrap_config_to_management_cluster (bash L3692-L3810). The
-// bash function depends on _get_all_bootstrap_variables_as_yaml (L3620)
-// which snapshots every config-relevant variable into a YAML blob that
-// lives in ${PROXMOX_BOOTSTRAP_CONFIG_SECRET_NAME}. That snapshot format
-// is load-bearing — other code paths round-trip through it — so we defer
-// porting until the dedicated config-snapshot batch so we can get the
-// field set and ordering right in one pass.
-func applyBootstrapConfigToManagementCluster(cfg *config.Config, ctx string) error {
-	_ = cfg
-	_ = ctx
-	// Intentionally silent: this runs on every bootstrap pass, so a
-	// "not ported" warn here would be noisy. Callers get nil, matching
-	// the bash success path.
-	return nil
+// applyBootstrapConfigToManagementCluster keeps the internal (package-
+// private) call-site used by SyncBootstrapConfigToKind. It just forwards
+// to the ported ApplyBootstrapConfigToManagementCluster.
+func applyBootstrapConfigToManagementCluster(cfg *config.Config, _ string) error {
+	return ApplyBootstrapConfigToManagementCluster(cfg)
 }

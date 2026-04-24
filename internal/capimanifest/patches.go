@@ -126,26 +126,42 @@ func scalarCSVToYAMLList(text, key string) string {
 	})
 }
 
-// injectMemoryAdjustment adds schedulerHints.memoryAdjustment under a
-// ProxmoxCluster .spec when it is not already present. Matches bash
-// inject_memory_adjustment.
+// injectMemoryAdjustment adds schedulerHints.memoryAdjustment under the
+// ProxmoxCluster .spec when it is not already present. Identifies the
+// correct document by matching kind + apiVersion at line start (not
+// strings.Contains, which false-positives on the CAPI Cluster's
+// infrastructureRef). Matches bash inject_memory_adjustment.
+var reKindProxmoxCluster = regexp.MustCompile(`(?m)^kind:\s*ProxmoxCluster\s*$`)
+var reAPIInfraProxmox = regexp.MustCompile(`(?m)^apiVersion:\s*infrastructure\.cluster\.x-k8s\.io/`)
+var reSchedulerHints = regexp.MustCompile(`(?m)^  schedulerHints:`)
+var reSpecBlock = regexp.MustCompile(`(?m)^(spec:\n(?:  .*\n)+)`)
+
 func injectMemoryAdjustment(text, mem string) string {
-	// Doc-by-doc: find ProxmoxCluster with a spec block that doesn't
+	// Doc-by-doc: find the ProxmoxCluster document (by top-level kind +
+	// apiVersion at line start) with a spec block that doesn't already
 	// contain `^  schedulerHints:`. Append the two lines to the spec.
+	// Using strings.Contains would false-positive on the CAPI Cluster
+	// document whose infrastructureRef contains "kind: ProxmoxCluster".
 	parts := strings.Split(text, "\n---\n")
 	for i, doc := range parts {
-		if !strings.Contains(doc, "kind: ProxmoxCluster") {
+		if !reKindProxmoxCluster.MatchString(doc) {
 			continue
 		}
-		// Check existing schedulerHints at indent 2.
-		if regexp.MustCompile(`(?m)^  schedulerHints:`).FindString(doc) != "" {
+		if !reAPIInfraProxmox.MatchString(doc) {
 			continue
 		}
-		// Append at end of the doc's spec block (bash appends at doc end
-		// after stripping trailing newlines).
-		doc = strings.TrimRight(doc, "\n")
-		doc += "\n  schedulerHints:\n    memoryAdjustment: " + mem + "\n"
-		parts[i] = doc
+		if reSchedulerHints.MatchString(doc) {
+			break
+		}
+		loc := reSpecBlock.FindStringIndex(doc)
+		if loc == nil {
+			break
+		}
+		oldBlock := doc[loc[0]:loc[1]]
+		newBlock := strings.TrimRight(oldBlock, "\n") +
+			"\n  schedulerHints:\n    memoryAdjustment: " + mem + "\n"
+		parts[i] = doc[:loc[0]] + newBlock + doc[loc[1]:]
+		break
 	}
 	return strings.Join(parts, "\n---\n")
 }

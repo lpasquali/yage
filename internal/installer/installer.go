@@ -281,6 +281,46 @@ func SystemDependencies() error {
 	return nil
 }
 
+// Helm installs helm 3 via the upstream installer when it's not on PATH.
+// Ports ensure_helm_present (bash L5845-L5851). The installer writes to
+// /usr/local/bin by default (needs sudo for that path).
+func Helm() error {
+	if shell.CommandExists("helm") {
+		return nil
+	}
+	logx.Warn("helm not found — installing...")
+	// Fetch the installer, pipe into bash.
+	body, err := fetchAll("https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3")
+	if err != nil {
+		logx.Die("helm installation failed: %v", err)
+	}
+	if err := shell.Pipe(body, "bash"); err != nil {
+		logx.Die("helm installation failed: %v", err)
+	}
+	if !shell.CommandExists("helm") {
+		logx.Die("helm installation failed.")
+	}
+	return nil
+}
+
+// fetchAll is a minimal `curl -fsSL URL` used by Helm() and installers.
+// Kept here so it doesn't multiply across packages.
+func fetchAll(url string) (string, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
 // HasArm64Image reports whether an image has an arm64 variant in its
 // Docker manifest list. Replaces the bash `docker manifest inspect |
 // python3` pipeline with native Go JSON parsing. Returns false on any

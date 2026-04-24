@@ -4744,18 +4744,24 @@ for field in ('allowedNodes', 'dnsServers', 'addresses'):
 
 # Inject schedulerHints.memoryAdjustment into the ProxmoxCluster spec so memory
 # overcommit is permitted (0 = check disabled, 100 = no overcommit, 150 = 1.5x).
+# Split by document to avoid cross-document regex matches that could inject into
+# the CAPI Cluster object (strict decoding rejects unknown fields in v1beta2).
 memory_adjustment = sys.argv[12]
-def inject_memory_adjustment(match):
-  block = match.group(1)
-  if re.search(r'^\s{2}schedulerHints:', block, flags=re.MULTILINE):
-    return block
-  return block.rstrip('\n') + f"\n  schedulerHints:\n    memoryAdjustment: {memory_adjustment}\n"
-
-text = re.sub(
-  r'(kind:\s*ProxmoxCluster\nmetadata:\n(?:.*\n)*?spec:\n(?:  .*\n)+)',
-  inject_memory_adjustment,
-  text,
-)
+docs = text.split('\n---\n')
+for idx, doc in enumerate(docs):
+  if re.search(r'^kind:\s*ProxmoxCluster\s*$', doc, re.MULTILINE) is None:
+    continue
+  if re.search(r'^apiVersion:\s*infrastructure\.cluster\.x-k8s\.io/', doc, re.MULTILINE) is None:
+    continue
+  if re.search(r'^\s{2}schedulerHints:', doc, re.MULTILINE):
+    break
+  spec_m = re.search(r'^(spec:\n(?:  .*\n)+)', doc, re.MULTILINE)
+  if spec_m:
+    old_block = spec_m.group(1)
+    new_block = old_block.rstrip('\n') + f"\n  schedulerHints:\n    memoryAdjustment: {memory_adjustment}\n"
+    docs[idx] = doc[:spec_m.start()] + new_block + doc[spec_m.end():]
+  break
+text = '\n---\n'.join(docs)
 
 path.write_text(text)
 PY

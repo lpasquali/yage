@@ -284,24 +284,7 @@ func HashIdentityNameTag(spec []byte) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-// ---------------------------------------------------------------
-// TODO(port): functions below require HTTP access to PVE / disk-backed
-// Terraform state and are deferred until the orchestrator phases that
-// exercise them are ported.
-// ---------------------------------------------------------------
-
-// ResolveAvailableClusterSetIDForRoles mirrors resolve_available_cluster_set_id_for_roles.
-// Bash implementation queries /access/roles, /access/users, /access/users/{id}/token
-// to pick the next free numeric CLUSTER_SET_ID for legacy flows. Not yet ported.
-func ResolveAvailableClusterSetIDForRoles(cfg *config.Config) error {
-	return todo("proxmox.ResolveAvailableClusterSetIDForRoles (L1320-L1463)")
-}
-
-// ResolveRegionAndNodeFromPVEAuth mirrors _resolve_proxmox_region_and_node_from_pve_auth_value.
-// Bash implementation calls /nodes and /cluster/status to fill PROXMOX_REGION
-// and PROXMOX_NODE when left blank.
-func ResolveRegionAndNodeFromPVEAuth(cfg *config.Config, pveAuthValue string) error {
-	return todo("proxmox.ResolveRegionAndNodeFromPVEAuth (L3361-L3460)")
-}
-
-func todo(desc string) error { return fmt.Errorf("not yet ported: %s", desc) }
+// HTTP-backed helpers (PVE API calls) live in http.go:
+//   - ResolveAvailableClusterSetIDForRoles
+//   - ResolveRegionAndNodeFromPVEAuth / FromAdminAPI / FromClusterctlAPI
+//   - CheckAdminAPIConnectivity

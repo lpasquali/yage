@@ -22,8 +22,11 @@ import (
 	// its init() which calls provider.Register. Add a new provider
 	// by dropping a package under internal/provider/<name> and
 	// importing it here.
+	_ "github.com/lpasquali/bootstrap-capi/internal/provider/aws"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/capd"
+	_ "github.com/lpasquali/bootstrap-capi/internal/provider/openstack"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/proxmox"
+	_ "github.com/lpasquali/bootstrap-capi/internal/provider/vsphere"
 )
 
 func main() {

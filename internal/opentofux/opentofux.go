@@ -19,6 +19,7 @@
 package opentofux
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -27,7 +28,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/lpasquali/bootstrap-capi/internal/capimanifest"
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/csix"
 	"github.com/lpasquali/bootstrap-capi/internal/kindsync"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
 	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
@@ -359,6 +362,79 @@ func RecreateResyncCapmox(cfg *config.Config) {
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
 	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 	kindsync.RolloutRestartCapmoxController(cfg)
+}
+
+// RecreateIdentitiesWorkloadCSISecrets ports
+// recreate_identities_workload_csi_secrets (bash L3293-L3309). No-op
+// unless cfg.RecreateProxmoxIdentities is true. Applies the updated CSI
+// config Secret to the workload, optionally restarts the CSI controller,
+// and final-syncs bootstrap config to kind.
+func RecreateIdentitiesWorkloadCSISecrets(cfg *config.Config) {
+	if !cfg.RecreateProxmoxIdentities {
+		return
+	}
+	if cfg.CAPIManifest != "" {
+		fi, err := os.Stat(cfg.CAPIManifest)
+		if err == nil && fi.Size() > 0 {
+			capimanifest.DiscoverWorkloadClusterIdentity(cfg, cfg.CAPIManifest)
+			if cfg.WorkloadClusterName != "" && cfg.WorkloadClusterNamespace != "" &&
+				cfg.ProxmoxCSIURL != "" && cfg.ProxmoxCSITokenID != "" &&
+				cfg.ProxmoxCSITokenSecret != "" && cfg.ProxmoxRegion != "" {
+				ctx := "kind-" + cfg.KindClusterName
+				csix.ApplyConfigSecretToWorkload(cfg, func() (string, error) {
+					return writeWorkloadKubeconfigToTemp(cfg, ctx)
+				})
+			} else {
+				logx.Warn("Skipping workload Proxmox CSI config Secret (missing region or CSI values — set PROXMOX_REGION).")
+			}
+		} else {
+			logx.Warn("Skipping workload CSI config — no readable CAPI_MANIFEST; update %s-proxmox-csi-config on the workload by hand or pass --capi-manifest.", cfg.WorkloadClusterName)
+		}
+	} else {
+		logx.Warn("Skipping workload CSI config — no readable CAPI_MANIFEST; update %s-proxmox-csi-config on the workload by hand or pass --capi-manifest.", cfg.WorkloadClusterName)
+	}
+	if cfg.ProxmoxCSIEnabled {
+		kindsync.RolloutRestartProxmoxCSIOnWorkload(cfg)
+	}
+	_ = kindsync.SyncBootstrapConfigToKind(cfg)
+	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
+	logx.Log("Proxmox CAPI/CSI identity re-creation: workload-side CSI updates and final syncs finished (recreate mode).")
+}
+
+// writeWorkloadKubeconfigToTemp fetches the workload kubeconfig from the
+// management cluster's CAPI Secret and writes it to a tmp file (0600).
+// Mirrors the private helper in kindsync/helpers.go but avoids a
+// kindsync→opentofux cycle.
+func writeWorkloadKubeconfigToTemp(cfg *config.Config, ctx string) (string, error) {
+	out, _, _ := shell.Capture(
+		"kubectl", "--context", ctx,
+		"-n", cfg.WorkloadClusterNamespace,
+		"get", "secret", cfg.WorkloadClusterName+"-kubeconfig",
+		"-o", "jsonpath={.data.value}",
+	)
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "", os.ErrNotExist
+	}
+	decoded, err := base64Decode(out)
+	if err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp("", "workload-kubeconfig-")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := f.Write(decoded); err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	_ = f.Chmod(0o600)
+	return f.Name(), nil
+}
+
+func base64Decode(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
 }
 
 // DestroyIdentity ports destroy_proxmox_identity_terraform_state

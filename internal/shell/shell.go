@@ -41,6 +41,21 @@ func RunPrivileged(argv ...string) error {
 	return Run(Privileged(argv...)...)
 }
 
+// RunWithEnv runs argv with the given environment, inheriting os.Environ()
+// and appending extra. Used for commands that need specific env vars set
+// (e.g. clusterctl init with EXP_CLUSTER_RESOURCE_SET).
+func RunWithEnv(extra []string, argv ...string) error {
+	if len(argv) == 0 {
+		return nil
+	}
+	c := exec.Command(argv[0], argv[1:]...)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	c.Stdin = os.Stdin
+	c.Env = append(os.Environ(), extra...)
+	return c.Run()
+}
+
 // Capture runs argv, returning (stdout, stderr, err).
 // Trailing whitespace is NOT stripped; callers that need it should trim.
 func Capture(argv ...string) (string, string, error) {

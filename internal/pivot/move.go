@@ -164,6 +164,14 @@ func MoveCAPIState(cfg *config.Config, mgmtKubeconfig string) error {
 			"--to-kubeconfig", mgmtKubeconfig,
 			"-n", ns,
 		}
+		if cfg.PivotDryRun {
+			args = append(args, "--dry-run")
+			logx.Log("clusterctl move --dry-run: namespace=%s (logging plan only — no state will move)", ns)
+			if err := shell.Run(args...); err != nil {
+				return fmt.Errorf("clusterctl move --dry-run (ns=%s): %w", ns, err)
+			}
+			continue
+		}
 		var lastErr error
 		for attempt := 1; attempt <= 2; attempt++ {
 			logx.Log("clusterctl move: namespace=%s attempt %d/2", ns, attempt)

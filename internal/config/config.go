@@ -406,6 +406,13 @@ type Config struct {
 	// PivotVerifyTimeout caps how long we wait for the management
 	// cluster to look "identical" to kind before declaring success.
 	PivotVerifyTimeout            string
+	// PivotDryRun stops after provisioning + clusterctl-init on the
+	// management cluster, runs `clusterctl move --dry-run` so the user
+	// can inspect the planned hand-off without executing it, and
+	// returns. The workload cluster stays managed by kind. Useful for
+	// validating mgmt connectivity / sizing before committing to the
+	// move.
+	PivotDryRun                   bool
 }
 
 // Load reads environment variables and applies the same defaults the bash
@@ -740,6 +747,7 @@ func Load() *Config {
 	// --- Pivot: management cluster on Proxmox ---
 	c.PivotEnabled = envBool("PIVOT_ENABLED", false)
 	c.PivotKeepKind = envBool("PIVOT_KEEP_KIND", false)
+	c.PivotDryRun = envBool("PIVOT_DRY_RUN", false)
 	c.PivotVerifyTimeout = getenv("PIVOT_VERIFY_TIMEOUT", "10m")
 	c.MgmtClusterName = getenv("MGMT_CLUSTER_NAME", "capi-management")
 	c.MgmtClusterNamespace = getenv("MGMT_CLUSTER_NAMESPACE", "default")

@@ -710,7 +710,11 @@ func Run(cfg *config.Config) int {
 	// phases run against mgmt. The kind cluster is torn down at the end
 	// (unless --pivot-keep-kind / --no-delete-kind).
 	if cfg.PivotEnabled {
-		logx.Log("Phase 2.95: pivoting CAPI from kind → Proxmox-hosted management cluster...")
+		if cfg.PivotDryRun {
+			logx.Log("Phase 2.95: PIVOT DRY-RUN — provisioning mgmt cluster + clusterctl-init, then `clusterctl move --dry-run`. Workload stays on kind; no state moves.")
+		} else {
+			logx.Log("Phase 2.95: pivoting CAPI from kind → Proxmox-hosted management cluster...")
+		}
 		mgmtKubeconfig, err := pivot.EnsureManagementCluster(cfg)
 		if err != nil {
 			logx.Die("pivot: EnsureManagementCluster: %v", err)
@@ -720,6 +724,14 @@ func Run(cfg *config.Config) int {
 		}
 		if err := pivot.MoveCAPIState(cfg, mgmtKubeconfig); err != nil {
 			logx.Die("pivot: MoveCAPIState: %v", err)
+		}
+		if cfg.PivotDryRun {
+			logx.Log("pivot: dry-run complete. Inspect the management cluster:")
+			logx.Log("  KUBECONFIG=%s kubectl get nodes", mgmtKubeconfig)
+			logx.Log("  KUBECONFIG=%s kubectl -n capi-system get pods", mgmtKubeconfig)
+			logx.Log("Re-run without --pivot-dry-run to perform the real move + handoff + kind teardown.")
+			logx.Log("(kind cluster '%s' has been left intact; workload is still managed by it.)", cfg.KindClusterName)
+			return 0
 		}
 		copied, err := kindsync.HandOffBootstrapSecretsToManagement(cfg, "kind-"+cfg.KindClusterName, mgmtKubeconfig)
 		if err != nil {

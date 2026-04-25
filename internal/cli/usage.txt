@@ -1,343 +1,193 @@
-#
-# bootstrap-capi.sh
-#
-# Bootstraps a CAPI management cluster on kind with Cilium CNI (default: Ingress, kube-proxy replacement, and Hubble + Relay + UI on the workload),
-# initializes Cluster API with the Proxmox infrastructure provider
-# and in-cluster IPAM, then applies a workload cluster manifest.
-#
-# Usage:
-#   ./bootstrap-capi.sh [OPTIONS]
-#
-# Options:
-#   -f, --force                    Replace an existing kind cluster (delete workload + kind) without prompting; skips kind cluster selection when other clusters exist
-#   --no-delete-kind               Never delete the kind cluster (even with --force); skip heavy host maintenance
-#   --persist-local-secrets        Also write local CSI/proxmox-csi path when that path is set. Bootstrap state (env/CLI) is always synced to proxmox-bootstrap-system when the kind cluster is reachable; no clusterctl/proxmox-admin on disk.
-#   --kind-cluster-name NAME       Management kind cluster name (default: capi-provisioner; see existing-cluster prompt)
-#   --kind-config PATH             kind cluster config file (default: ephemeral minimal config under $TMPDIR)
-#   --proxmox-bootstrap-admin-secret NAME  kind Secret for Terraform / admin PVE API (data key proxmox-admin.yaml; default: proxmox-bootstrap-admin-credentials; legacy: set PROXMOX_BOOTSTRAP_SECRET_NAME to combine CAPI+CSI+admin in one Secret)
-#   --capi-manifest PATH           Workload Cluster API manifest on disk; default is **no** persistent file (manifest in a kind Secret; override for a local path)
-#   --regenerate-capi-manifest      Always re-run clusterctl to refresh workload YAML (after changing bootstrap config; see PROXMOX_BOOTSTRAP_CONFIG_FILE)
-#   --bootstrap-config-file PATH   Use this file as the local config.yaml for stale detection (overrides default ./config.yaml)
-#   -p, --purge                    Delete generated files and Terraform state before continuing.
-#                                 Default manifest (Secret on kind, no CAPI_MANIFEST): also removes the workload
-#                                 manifest Secret in proxmox-bootstrap-system.
-#   -b, --build-all                Build and kind-load all images even when arm64 images exist online
-#   -u, --admin-username USERNAME    Proxmox admin token username (default: root@pam!capi-bootstrap)
-#   -t, --admin-token TOKEN          Proxmox admin token secret (UUID)
-#   --proxmox-url URL                Proxmox API URL (e.g. https://pve.example:8006)
-#   --proxmox-token TOKEN_ID         Proxmox API token ID for clusterctl; auto-derived from CAPI user/prefix if omitted
-#   --proxmox-secret TOKEN_SECRET    Proxmox API token secret for clusterctl
-#   -r, --region REGION              Proxmox region/datacenter name for workload clusters
-#   -n, --node NODE                  Proxmox node name to deploy workload cluster VMs
-#   --template-id ID                 PROXMOX template VM ID (default: 104; clusterctl still consumes env TEMPLATE_VMID derived from it)
-#   --template-vmid ID               Same as --template-id (deprecated alias; sets PROXMOX_TEMPLATE_ID)
-#   --workload-control-plane-template-id ID  Override Proxmox template VM ID for workload control-plane VMs (default: PROXMOX_TEMPLATE_ID)
-#   --workload-worker-template-id ID         Override Proxmox template VM ID for workload worker VMs (default: PROXMOX_TEMPLATE_ID)
-#   --mgmt-control-plane-template-id ID      Override Proxmox template VM ID for management control-plane VMs (default: PROXMOX_TEMPLATE_ID)
-#   --mgmt-worker-template-id ID             Override Proxmox template VM ID for management worker VMs (default: PROXMOX_TEMPLATE_ID; mgmt usually has 0 workers)
-#   --bridge BRIDGE                  Bridge interface name (default: vmbr0)
-#   --control-plane-endpoint-ip IP   Control plane endpoint VIP (default: 192.168.0.20)
-#   --control-plane-endpoint-port P  Apiserver port on that endpoint (default: 6443; used for Cilium k8sServicePort when kube-proxy is replaced)
-#   --node-ip-ranges RANGES          Node IP ranges (default: 192.168.0.21-192.168.0.30)
-#   --gateway IP                     Gateway IP (default: 192.168.0.1)
-#   --ip-prefix N                    IP prefix (default: 24)
-#   --dns-servers LIST               DNS servers list (default: 8.8.8.8,8.8.4.4)
-#   --allowed-nodes LIST             Allowed Proxmox nodes (default: same as PROXMOX_NODE)
-#   --csi-url URL                    Proxmox CSI API URL (default: <PROXMOX_URL>/api2/json)
-#   --csi-token-id TOKEN_ID          Proxmox CSI token ID; auto-derived from CSI user/prefix if omitted
-#   --csi-token-secret SECRET        Proxmox CSI token secret
-#   --csi-user-id USER_ID            Proxmox CSI user ID for Terraform bootstrap (default: kubernetes-csi-<CLUSTER_SET_ID>@pve)
-#   --csi-token-prefix PREFIX        Proxmox CSI token name prefix for Terraform bootstrap (default: csi)
-#   --csi-insecure true|false        Proxmox CSI insecure TLS setting (default: PROXMOX_ADMIN_INSECURE)
-#   --csi-storage-class NAME         CSI StorageClass name (default: proxmox-data-xfs)
-#   --csi-storage NAME               Proxmox storage backend name (default: local-lvm)
-#   --cloudinit-storage NAME         Proxmox storage for CloudInit snippets/ISO (default: local)
-#   --csi-reclaim-policy POLICY      CSI reclaim policy (default: Delete)
-#   --csi-fstype TYPE                CSI filesystem type (default: xfs)
-#   --csi-default-class true|false   Set CSI StorageClass as default (default: true)
-#   --capi-user-id USER_ID           Proxmox CAPI user ID for Terraform bootstrap (default: capmox-<CLUSTER_SET_ID>@pve)
-#   --capi-token-prefix PREFIX       Proxmox CAPI token name prefix for Terraform bootstrap (default: capi)
-#   --control-plane-boot-volume-device DEVICE  Control plane boot volume device (default: scsi0)
-#   --control-plane-boot-volume-size SIZE      Control plane boot volume size in GB (default: 100)
-#   --control-plane-num-sockets N              Control plane sockets (default: 2)
-#   --control-plane-num-cores N                Control plane cores (default: 1)
-#   --control-plane-memory-mib N               Control plane memory in MiB (default: 8192)
-#   --worker-boot-volume-device DEVICE         Worker boot volume device (default: scsi0)
-#   --worker-boot-volume-size SIZE             Worker boot volume size in GB (default: 100)
-#   --worker-num-sockets N                     Worker sockets (default: 2)
-#   --worker-num-cores N                       Worker cores (default: 4)
-#   --worker-memory-mib N                      Worker memory in MiB (default: 16384)
-#   --workload-cluster-name NAME     CAPI cluster name on the management cluster (default: capi-quickstart; kubeconfig Secret is <name> in the Cluster’s namespace)
-#   --workload-cluster-namespace NS  That Cluster’s namespace (default: default; with --name, can be auto-resolved if exactly one match on kind)
-#   --workload-cilium-cluster-id ID  Cilium cluster.id for workload cluster (default: derived from CLUSTER_SET_ID)
-#   --workload-k8s-version VERSION   Workload Kubernetes version (default: v1.35.0)
-#   --control-plane-count N          Control plane replica count (default: 1)
-#   --worker-count N                 Worker replica count (default: 2)
-# --- Pivot (CAPI bootstrap-and-pivot pattern) ---
-#   --pivot                          Enable the CAPI bootstrap-and-pivot flow (PIVOT_ENABLED=true). kind provisions a single-node management cluster on Proxmox, clusterctl-moves CAPI state into it, and is torn down (unless --pivot-keep-kind).
-#   --no-pivot                       Disable pivot; keep CAPI state on kind only (PIVOT_ENABLED=false; default)
-#   --pivot-keep-kind                Skip the final `kind delete cluster` after a successful pivot — useful for debugging
-#   --pivot-verify-timeout DUR       Cap how long to wait for the management cluster to look identical to kind before declaring success (default: 10m)
-#   --mgmt-cluster-name NAME         CAPI Cluster name for the management cluster on Proxmox (default: capi-management)
-#   --mgmt-cluster-namespace NS      Namespace for the management Cluster on kind / management cluster (default: default)
-#   --mgmt-k8s-version V             Kubernetes version for the management cluster (default: same as WORKLOAD_KUBERNETES_VERSION)
-#   --mgmt-cilium-cluster-id N       Cilium cluster.id for the management cluster (default: derived from CLUSTER_SET_ID)
-#   --mgmt-control-plane-machine-count N  Control plane replica count for the management cluster (default: 1; single-node mgmt)
-#   --mgmt-worker-machine-count N    Worker replica count for the management cluster (default: 0)
-#   --mgmt-control-plane-endpoint-ip IP    Control plane endpoint VIP for the management cluster (must differ from workload endpoint)
-#   --mgmt-control-plane-endpoint-port PORT  Apiserver port on the management endpoint (default: same as workload CONTROL_PLANE_ENDPOINT_PORT)
-#   --mgmt-node-ip-ranges RANGES     Node IP ranges allocated to management-cluster VMs (must not overlap workload NODE_IP_RANGES)
-#   --mgmt-capi-manifest PATH        Rendered management-cluster CAPI manifest path; default = ephemeral kind Secret only
-#   --mgmt-control-plane-num-sockets N    Management control plane sockets (default: same as CONTROL_PLANE_NUM_SOCKETS)
-#   --mgmt-control-plane-num-cores N      Management control plane cores (default: same as CONTROL_PLANE_NUM_CORES)
-#   --mgmt-control-plane-memory-mib N     Management control plane memory in MiB (default: same as CONTROL_PLANE_MEMORY_MIB)
-#   --mgmt-control-plane-boot-volume-device DEV   Management boot volume device (default: same as CONTROL_PLANE_BOOT_VOLUME_DEVICE)
-#   --mgmt-control-plane-boot-volume-size SIZE    Management boot volume size in GB (default: same as CONTROL_PLANE_BOOT_VOLUME_SIZE)
-#   --capi-proxmox-machine-template-spec-rev-skip  Do not suffix ProxmoxMachineTemplate names with -t<specHash> (env: CAPI_PROXMOX_MACHINE_TEMPLATE_SPEC_REV=false)
-#   --cilium-wait-duration DURATION  Cilium wait duration for installs (default: 10m0s)
-#   --cilium-ingress V               Cilium Ingress controller + default IngressClass (default: true; requires kube-proxy replacement)
-#   --cilium-kube-proxy-replacement V  true|false|auto — auto enables replacement only when --cilium-ingress is true (default: true)
-#   --cilium-lb-ipam V               Append default CiliumLoadBalancerIPPool for LB-IPAM (default: true)
-#   --cilium-lb-ipam-pool-cidr CIDR  LB-IPAM pool as a CIDR block. If not set, a range can be used, or a default CIDR is derived from the VM network.
-#   --cilium-lb-ipam-pool-start IP   Start of the IP range for the LB-IPAM pool.
-#   --cilium-lb-ipam-pool-stop IP    End of the IP range for the LB-IPAM pool.
-#   --cilium-lb-ipam-pool-name NAME  metadata.name for the pool (default: <WORKLOAD_CLUSTER_NAME>-lb-pool)
-#   --cilium-ipam-cluster-pool-ipv4 CIDR  Cilium cluster-pool *pod* IPv4 range (default: 10.244.0.0/16). Avoid 192.168.0.0/24
-#                                         or other ranges that overlap your Proxmox/LAN/underlay—broken pod→ClusterIP/DNS and tiny capacity.
-#   --cilium-ipam-cluster-pool-ipv4-mask-size N  Per-node IPv4 mask size (default: 24)
-#   --cilium-gateway-api V            Enable Cilium Gateway API (Envoy; gateway.networking.k8s.io); default false — set true with app-of-apps Gateway+HTTPRoute
-#   --argocd-disable-operator-ingress V  Do not let the Argo CD Operator create cluster Ingress/HTTPRoute for the server (default: false). Disables them on the ArgoCD CR — expose with Gateway API in Git (e.g. examples/gateway-api)
-#   --cilium-hubble V                 Hubble (agent flows + Hubble Relay; default: true)
-#   --cilium-hubble-ui V             Hubble UI deployment (default: true; only if --cilium-hubble is true)
-#   --disable-argocd                 Skip all Argo CD (workload) and all GitOps-delivered add-ons
-#   --disable-workload-argocd        Skip Argo on the CAPI cluster (proxmox-csi, kyverno, cert-manager, …) installed via CAAPH
-#   --argocd-app-version VERSION     Argo CD *application* image tag (default: v3.3.8; ArgoCD CR spec.version)
-#   --argocd-server-insecure V       Argo CD server.insecure (HTTP / gRPC TLS disabled; default: false — lab only)
-#   --workload-gitops-mode caaph     must be caaph (only mode; Cilium + argocd-apps via CAAPH; Argo CD Operator + ArgoCD CR in-bootstrap)
-#   --workload-app-of-apps-git-url URL   Git repo for the root app-of-apps Application (default: public workload-app-of-apps; overridable)
-#   --workload-app-of-apps-git-path PATH Path in repo (default: examples/default)
-#   --workload-app-of-apps-git-ref REF  targetRevision (default: main)
-#   --argocd-print-access [workload]  Print Argo login hints for the CAPI/Proxmox cluster only (no Argo on kind; no bootstrap)
-#   --argocd-print-access-only […]  Alias of --argocd-print-access; combine with --argocd-port-forward
-#   --argocd-port-forward [workload]  kubectl port-forward to Argo on the provisioned cluster (default; no management/kind Argo; blocks)
-#   --argocd-port-forward-only […]  Alias; optional with --argocd-print-access
-#   --workload-rollout [argocd|capi|all]  Skip Phase 1/2: re-touch CAPI resources and/or sync hints (argocd: CAAPH+Git; use argocd app sync on the workload, not in-script YAML)
-#   --workload-rollout-no-wait     With --workload-rollout: for non-argocd modes, skip health waits when applicable
-#   --kind-backup [path]            Export kind management cluster state (namespaces + kind/); optional output path; env: BOOTSTRAP_KIND_BACKUP_*; not with other standalone modes
-#   --kind-restore <archive>        Import prior --kind-backup archive into current kind context; passphrase env if encrypted
-#   --disable-proxmox-csi            Skip proxmox-csi Argo Application (default: installed)
-#   --proxmox-csi-version VERSION    proxmox-csi Helm chart version (default: 0.5.7, app v1.18.1)
-#   --disable-proxmox-csi-smoketest  Skip PostSync 1Gi PVC/rollout hook Jobs for proxmox-csi (default: when CSI and hooks enabled)
-#   --disable-argocd-workload-postsync-hooks  Skip co-located PostSync hook git sources (default: PostSync under each in-cluster app; requires Argo CD 2.6+)
-#   --argocd-workload-postsync-hooks-git-url URL   Git repo for argo-postsync-hooks/* (default: public workload-smoketests; empty → bootstrap origin; published cluster needs this)
-#   --argocd-workload-postsync-hooks-git-path PATH  Optional path prefix in that repo (before argo-postsync-hooks/<component>)
-#   --argocd-workload-postsync-hooks-git-ref REF     Argo targetRevision (default: current branch, commit, or main)
-#   --recreate-proxmox-identities  Re-run Terraform to replace CAPI+CSI (or subset) Proxmox users/tokens, then refresh kind + workload Secrets (admin API token required; identity from .tfstate or token IDs)
-#   --recreate-proxmox-identities-scope capi|csi|both  Which identities to replace (default: both)
-#   --recreate-proxmox-identities-state-rm  Drop all addresses from Terraform state then apply (use if PVE was wiped; creates objects from scratch)
-#   --cluster-set-id ID            Optional; pin CLUSTER_SET_ID for recreate when not inferrable
-#   --disable-kyverno                Skip Kyverno Argo Application (default: installed)
-#   --kyverno-version VERSION        Kyverno Helm chart version (default: 3.7.1 = app v1.17.1)
-#   --disable-cert-manager           Skip cert-manager Argo Application (default: installed)
-#   --cert-manager-version VERSION   cert-manager Helm chart version (default: v1.20.2)
-#   --disable-crossplane             Skip Crossplane Argo Application (default: installed)
-#   --crossplane-version VERSION     Crossplane Helm chart version (default: 2.2.1)
-#   --disable-cnpg                   Skip CloudNativePG operator Argo Application (default: installed)
-#   --cnpg-version VERSION           CloudNativePG Helm chart version (default: latest)
-#   --disable-victoriametrics         Skip VictoriaMetrics (single) Argo Application (default: installed; Prometheus-compatible TSDB)
-#   --victoriametrics-version VERSION  VictoriaMetrics single Helm chart version (default: latest)
-#   --exp-cluster-resource-set V     Enable ClusterResourceSet in clusterctl (default: false; Cilium/Argo use CAAPH, not CRS)
-#   --cluster-topology V             Enable ClusterTopology feature (default: true)
-#   --exp-kubeadm-bootstrap-format-ignition V  Enable kubeadm ignition format (default: true)
-#   --disable-metrics-server         Skip metrics-server on the kind management cluster (default: install for kubectl top / HPA)
-#   --disable-workload-metrics-server  Skip metrics-server on the CAPI/Proxmox workload cluster (default: install; HPA / kubectl top there)
-#   -h, --help                       Show this usage message
-#
-# Environment variables (alternatives to options):
-#   FORCE                           true|false; replace kind cluster without prompting; skip kind cluster picker
-#   NO_DELETE_KIND                  true|false; never delete kind; skip Docker upgrade / Terraform provider install when set
-#   BOOTSTRAP_PERSIST_LOCAL_SECRETS true|false; if set, also write PROXMOX_CSI_CONFIG to disk when that path is set. Bootstrap config in kind is always updated when the cluster is reachable (default: false).
-#   PURGE                           true|false; delete generated files/state before continuing (ConfigMap: same scoping as --purge, see there)
-#   BUILD_ALL                       true|false; force local build+kind load for all images
-#   ENABLE_METRICS_SERVER           true|false; install metrics-server on kind (kubectl top; default: true)
-#   ENABLE_WORKLOAD_METRICS_SERVER  true|false; metrics-server on CAPI via in-cluster Argo (else kubectl; default: true)
-#   WORKLOAD_METRICS_SERVER_INSECURE_TLS  true = add --kubelet-insecure-tls (default: true; set false if kubelet certs are trusted)
-#   METRICS_SERVER_MANIFEST_URL     Direct kubectl only (Argo off or workload Argo off): components.yaml URL
-#   METRICS_SERVER_GIT_CHART_TAG    Tag in kubernetes-sigs/metrics-server for charts/metrics-server (in-cluster Argo; default: v0.7.2)
-#   SPIRE_OIDC_INSECURE_HTTP         When Keycloak+SPIRE: use HTTP for oidc-dp so Keycloak can add SPIFFE IdP from env (default: true; set false for TLS)
-#   SPIRE_OIDC_BUNDLE_SOURCE         ConfigMap | CSI (default: CSI — trust bundle + JWKS via Workload API / SPIFFE CSI; ConfigMap = file-based bundle, no Workload API)
-#   SPIRE_TOLERATE_CONTROL_PLANE     true|false; tolerations for control-plane taints on spire-agent, spiffe-csi-driver, oidc (default: true — required on many CAPI / single-CP nodes for CSI + agent to run on the same node as OIDC)
-#   KIND_CLUSTER_NAME               kind management cluster name (default: capi-provisioner; CLUSTER_NAME is an alias)
-#   CLUSTER_NAME                    Alias for KIND_CLUSTER_NAME
-#   KIND_CONFIG                     kind config path; unset = ephemeral minimal config (nothing in workspace)
-#   CAPI_MANIFEST                   Workload manifest; unset = only in-cluster Secret on kind + ephemeral process file (set to a path to use a file on disk)
-#   Immutability: many CAPI / infrastructure fields (e.g. cluster network CIDRs, cluster name, InfraRef types, parts of
-#   KubeadmControlPlane) cannot be updated in place. If you change those in the manifest, delete the workload Cluster on
-#   the management cluster first (kubectl delete cluster -n <ns> <name> and wait for machines to go away), then re-apply.
-#   The script warns when it regenerates the manifest with clusterctl while that Cluster already exists.
-#   BOOTSTRAP_SKIP_IMMUTABLE_MANIFEST_WARNING  true: suppress that warning (default: false)
-#   CAPI_MANIFEST_SECRET_NAMESPACE  kind namespace for workload YAML Secret (default: proxmox-bootstrap-system)
-#   CAPI_MANIFEST_SECRET_NAME       name of the Secret (default: proxmox-bootstrap-capi-manifest)
-#   CAPI_MANIFEST_SECRET_KEY        data key in that Secret (default: workload.yaml; same on-disk role as a checked-in workload CAPI file)
-#   PROXMOX_BOOTSTRAP_CONFIG_FILE     Optional path to a local config.yaml; when unset, ./config.yaml is used if that file exists (stale check vs. workload)
-#   BOOTSTRAP_REGENERATE_CAPI_MANIFEST  true: always clusterctl re-generate workload YAML before re-apply (e.g. only edited the in-cluster config Secret; default: false)
-#   WORKLOAD_ARGOCD_ENABLED         true|false; second Argo on the workload + in-cluster platform apps (default: true; see --disable-workload-argocd)
-#   WORKLOAD_ARGOCD_NAMESPACE        Namespace for Argo on the CAPI workload cluster (default: argocd)
-#   (in-bootstrap ArgoCD CR) spec.notifications + spec.server.grpc.ingress enabled; spec.prometheus/spec.monitoring default false
-#   (VictoriaMetrics: scrape Argo with VMServiceScrape/PodMonitor in app-of-apps — not Prometheus Operator ServiceMonitors). Set
-#   ARGOCD_OPERATOR_ARGOCD_PROMETHEUS_ENABLED / ARGOCD_OPERATOR_ARGOCD_MONITORING_ENABLED true only for kube-prometheus / Prom Operator.
-#   PROXMOX_CSI_CONFIG              Optional proxmox-csi values file; unset = CSI settings from env / in-cluster Secret only
-#   PROXMOX_BOOTSTRAP_CONFIG_SECRET_NAME  Secret for non-secret bootstrap state (data key config.yaml; default: proxmox-bootstrap-config)
-#   PROXMOX_BOOTSTRAP_CONFIG_SECRET_KEY    data key in that Secret (default: config.yaml; legacy: config.json still read for migration)
-#   (merge) merge_proxmox_bootstrap_secrets_from_kind re-reads that Secret: snapshot keys (network, Cilium, …) come from
-#   in-cluster before each sync, so k9s edits are not lost when the script re-writes the Secret. Use CLI flags
-#   (--node-ip-ranges, --gateway, …) to override for one run; those set *_EXPLICIT and skip the Secret for that key.
-#   After try_fill_workload_manifest_inputs_from_management_cluster the script re-runs merge so NODE_IP_RANGES in
-#   proxmox-bootstrap-config wins over the live ProxmoxCluster (otherwise the next clusterctl+sync would copy the
-#   cluster’s range back into the config Secret).
-#   KubeadmControlPlane / MachineDeployment rolling-update strategy (maxSurge, maxUnavailable) is not modified here — set it
-#   in the workload manifest, cluster template, or Git/Helm that feeds clusterctl. Remove stale keys CAPI_PROXMOX_ROLLOUT_*
-#   and CONTROL_PLANE/WORKER_ROLLOUT_* from proxmox-bootstrap-config if present.
-#   CAPI_PROXMOX_MACHINE_TEMPLATE_SPEC_REV  true: before apply, each ProxmoxMachineTemplate is renamed to
-#   <stem>-t<8-hex> where <8-hex> = sha256(manifest .spec)[:8] and KCP/MD infrastructureRef name lines are
-#   updated. Avoids "ProxmoxMachineTemplate is immutable" when VM sizing / template (spec) changes; new templates
-#   roll in via CAPI. false: keep clusterctl names (in-place spec updates may fail on re-apply). CLI: --capi-proxmox-machine-template-spec-rev-skip.
-#   Does not set CAPMox’s own controller workers — for that, scale the capmox-controller-manager on the management cluster.
-#   PROXMOX_BOOTSTRAP_SECRET_NAMESPACE  kind namespace (default: proxmox-bootstrap-system)
-#   PROXMOX_BOOTSTRAP_CAPMOX_SECRET_NAME  CAPMOX CAPI / clusterctl token Secret (default: proxmox-bootstrap-capmox-credentials)
-#   PROXMOX_BOOTSTRAP_CSI_SECRET_NAME     Proxmox CSI API token Secret (default: proxmox-bootstrap-csi-credentials)
-#   PROXMOX_BOOTSTRAP_SECRET_NAME         If set, legacy: one Secret for CAPI+CSI (and admin when same as admin Secret name) instead of capmox+csi split
-#   PROXMOX_BOOTSTRAP_ADMIN_SECRET_NAME  Terraform / admin PVE API (data key ${PROXMOX_BOOTSTRAP_ADMIN_SECRET_KEY:-proxmox-admin.yaml}; default: proxmox-bootstrap-admin-credentials)
-#   PROXMOX_BOOTSTRAP_ADMIN_SECRET_KEY
-#   On kind, proxmox-bootstrap-config holds config.yaml: management/bootstrap toggles and CSI *defaults* — not API secrets, not admin tokens, and not workload spec (${CAPI_MANIFEST_SECRET_NAME} / workload.yaml). Clusterctl/CAPMOX tokens: ${PROXMOX_BOOTSTRAP_CAPMOX_SECRET_NAME} (or legacy ${PROXMOX_BOOTSTRAP_SECRET_NAME}). CSI tokens: ${PROXMOX_BOOTSTRAP_CSI_SECRET_NAME} (or legacy). Admin: ${PROXMOX_BOOTSTRAP_ADMIN_SECRET_NAME} (proxmox-admin.yaml). capmox-system/capmox-manager-credentials is merged when needed. CLI/env override.
-#   CLUSTERCTL_CFG                 Optional; path to a local clusterctl Proxmox credentials YAML. Empty = env / kind Secrets + a temp file only for the clusterctl CLI.
-#   PROXMOX_ADMIN_CONFIG            Optional; legacy path to a local YAML for Terraform admin API token. Empty = env / kind Secrets only. This script does not create these files by default.
-#   PROXMOX_URL                      Proxmox API URL
-#   PROXMOX_TOKEN                    Proxmox API token ID used by clusterctl; auto-derived if omitted
-#   PROXMOX_SECRET                   Proxmox API token secret used by clusterctl
-#   PROXMOX_ADMIN_USERNAME           Proxmox admin token username
-#   PROXMOX_ADMIN_TOKEN              Proxmox admin token secret
-#   PROXMOX_REGION                   Proxmox region/datacenter name
-#   PROXMOX_NODE                     Proxmox node name
-#   PROXMOX_TEMPLATE_ID              Proxmox template VM ID for workload nodes (default: 104)
-#   PROXMOX_BRIDGE                   Bridge interface name (default: vmbr0)
-#   CONTROL_PLANE_ENDPOINT_IP        Control plane endpoint VIP
-#   CONTROL_PLANE_ENDPOINT_PORT      Apiserver port (default: 6443; Cilium k8sServicePort when CILIUM_KUBE_PROXY_REPLACEMENT is on)
-#   NODE_IP_RANGES                   Node IP ranges
-#   GATEWAY                          Gateway IP
-#   IP_PREFIX                        Network prefix
-#   DNS_SERVERS                      DNS server list
-#   ALLOWED_NODES                    Allowed Proxmox nodes
-#   VM_SSH_KEYS                      Comma-separated SSH public keys for workload VMs (clusterctl); in config.yaml when set or after generate; if still empty at generate, ~/.ssh/authorized_keys is read once
-#   PROXMOX_CSI_URL                  Proxmox CSI API URL
-#   PROXMOX_CSI_TOKEN_ID             Proxmox CSI token ID; auto-derived if omitted
-#   PROXMOX_CSI_TOKEN_SECRET         Proxmox CSI token secret
-#   PROXMOX_CSI_USER_ID              Proxmox CSI user ID for Terraform bootstrap
-#   PROXMOX_CSI_TOKEN_PREFIX         Proxmox CSI token name prefix for Terraform bootstrap
-#   PROXMOX_CSI_INSECURE             Proxmox CSI insecure TLS setting
-#   PROXMOX_CSI_STORAGE_CLASS_NAME   CSI StorageClass name
-#   PROXMOX_CSI_STORAGE              Proxmox storage backend name
-#   PROXMOX_CLOUDINIT_STORAGE        Proxmox storage for CloudInit snippets/ISO (must support iso,snippets)
-#   PROXMOX_CSI_RECLAIM_POLICY       CSI reclaim policy
-#   PROXMOX_CSI_FSTYPE               CSI filesystem type
-#   PROXMOX_CSI_DEFAULT_CLASS        Set CSI StorageClass as default (true|false)
-#   PROXMOX_CSI_CHART_REPO_URL       OCI registry base or full chart URL (default: oci://ghcr.io/sergelogvinov/charts)
-#   PROXMOX_CSI_CHART_NAME           Chart name appended to repo URL when URL lacks it (default: proxmox-csi-plugin)
-#   PROXMOX_CSI_CHART_VERSION        Helm OCI chart tag (default: 0.5.7; app proxmox-csi v1.18.1)
-#   PROXMOX_CSI_SMOKE_ENABLED        1Gi PVC + rollout PostSync jobs for proxmox-csi (default: true; co-located on proxmox-csi app)
-#   ARGO_WORKLOAD_POSTSYNC_HOOKS_ENABLED  Per-platform PostSync hook git Kustomize on each in-cluster app (default: true; needs multi-source, Argo 2.6+)
-#   ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_URL    Git for argo-postsync-hooks/<component> (default: public https://github.com/lpasquali/workload-smoketests.git; empty in env → same default; explicit "" → discover git origin)
-#   ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_PATH   Path prefix in that repo (before argo-postsync-hooks/…)
-#   ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_REF   targetRevision (default: current branch, commit, or main)
-#   ARGO_WORKLOAD_POSTSYNC_HOOKS_KUBECTL_IMAGE  Override PostSync Job kubectl (default: registry.k8s.io/kubectl from CAPI / WORKLOAD_KUBERNETES_VERSION)
-#   WORKLOAD_POSTSYNC_NAMESPACE     Namespace for PostSync Jobs that use the rollout script pattern (default: workload-smoke)
-#   RECREATE_PROXMOX_IDENTITIES       true: same as --recreate-proxmox-identities (re-run Terraform, refresh Secrets)
-#   PROXMOX_IDENTITY_RECREATE_SCOPE  capi | csi | both (default: both)
-#   PROXMOX_IDENTITY_RECREATE_STATE_RM  true: tofu state rm all then apply (empty PVE; full recreate)
-#   PROXMOX_CSI_CONFIG_PROVIDER      proxmox-csi config.features.provider (default: proxmox)
-#   PROXMOX_CSI_TOPOLOGY_LABELS      Inject kubelet node-labels for CSI topology (default: true)
-#   PROXMOX_TOPOLOGY_REGION          topology.kubernetes.io/region (default: PROXMOX_REGION)
-#   PROXMOX_TOPOLOGY_ZONE            topology.kubernetes.io/zone, PVE node name (default: PROXMOX_NODE)
-#   PROXMOX_CAPI_USER_ID             Proxmox CAPI user ID for Terraform bootstrap
-#   PROXMOX_CAPI_TOKEN_PREFIX        Proxmox CAPI token name prefix for Terraform bootstrap
-#   CONTROL_PLANE_BOOT_VOLUME_DEVICE Control plane boot volume device
-#   CONTROL_PLANE_BOOT_VOLUME_SIZE   Control plane boot volume size in GB
-#   CONTROL_PLANE_NUM_SOCKETS        Control plane sockets
-#   CONTROL_PLANE_NUM_CORES          Control plane cores
-#   CONTROL_PLANE_MEMORY_MIB         Control plane memory in MiB
-#   WORKER_BOOT_VOLUME_DEVICE        Worker boot volume device
-#   WORKER_BOOT_VOLUME_SIZE          Worker boot volume size in GB
-#   WORKER_NUM_SOCKETS               Worker sockets
-#   WORKER_NUM_CORES                 Worker cores
-#   WORKER_MEMORY_MIB                Worker memory in MiB
-#   WORKLOAD_CLUSTER_NAME            CAPI workload cluster name (see --workload-cluster-name)
-#   WORKLOAD_CLUSTER_NAMESPACE       Namespace of the Cluster (see --workload-cluster-namespace; default: default)
-#   BOOTSTRAP_KIND_BACKUP_NAMESPACES  optional list (comma/space); default: PROXMOX_BOOTSTRAP + WORKLOAD CAPI namespace
-#   BOOTSTRAP_KIND_BACKUP_OUT         path prefix for kind_bootstrap_state_backup (default: timestamped .tar in cwd)
-#   BOOTSTRAP_KIND_BACKUP_ENCRYPT     auto|age|openssl|none; auto encrypts with age, else openssl, when passphrase is set; else .tar.gz only
-#   BOOTSTRAP_KIND_BACKUP_PASSPHRASE, AGE_PASSPHRASE  at-rest passphrases (openssl: former; age: AGE native + fallback to the former for convenience)
-#   --kind-backup [path]             Dump namespaces + kind/ into a .tar.gz (or .age/.enc; optional path → BOOTSTRAP_KIND_BACKUP_OUT; env: BOOTSTRAP_KIND_BACKUP_NAMESPACES, …)
-#   --kind-restore <archive>         kubectl apply the backup into context kind-$KIND_CLUSTER_NAME (set passphrase if encrypted)
-#   (functions) kind_bootstrap_state_backup [outfile]  kind_bootstrap_state_restore <archive> — same as flags; set KIND_CLUSTER_NAME, env as needed
-#   WORKLOAD_CILIUM_CLUSTER_ID       Cilium cluster.id for workload cluster (default: derived from CLUSTER_SET_ID)
-#   WORKLOAD_KUBERNETES_VERSION      Workload Kubernetes version
-#   CONTROL_PLANE_MACHINE_COUNT      Control plane replica count
-#   WORKER_MACHINE_COUNT             Worker replica count
-# --- Pivot (CAPI bootstrap-and-pivot pattern) ---
-#   PIVOT_ENABLED                    Enable the CAPI bootstrap-and-pivot flow (default: false). When true,
-#                                    kind provisions a single-node management cluster on Proxmox, hands off
-#                                    CAPI state via `clusterctl move`, and is torn down (unless --pivot-keep-kind).
-#   PIVOT_KEEP_KIND                  true|false; skip `kind delete cluster` after pivot for debugging (default: false)
-#   PIVOT_VERIFY_TIMEOUT             How long to wait for the management cluster to mirror kind state before failing the pivot (default: 10m)
-#   MGMT_CLUSTER_NAME                CAPI Cluster name for the management cluster (default: capi-management)
-#   MGMT_CLUSTER_NAMESPACE           Namespace of that Cluster (default: default)
-#   MGMT_KUBERNETES_VERSION          Kubernetes version for the management cluster (default: WORKLOAD_KUBERNETES_VERSION)
-#   MGMT_CILIUM_CLUSTER_ID           Cilium cluster.id for the management cluster (default: derived from CLUSTER_SET_ID)
-#   MGMT_CONTROL_PLANE_MACHINE_COUNT Management control plane replica count (default: 1)
-#   MGMT_WORKER_MACHINE_COUNT        Management worker replica count (default: 0)
-#   MGMT_CONTROL_PLANE_ENDPOINT_IP   Control plane endpoint VIP for the management cluster (must differ from workload VIP)
-#   MGMT_CONTROL_PLANE_ENDPOINT_PORT Apiserver port on that endpoint (default: CONTROL_PLANE_ENDPOINT_PORT)
-#   MGMT_NODE_IP_RANGES              Node IP ranges for management-cluster VMs (must not overlap NODE_IP_RANGES)
-#   MGMT_CAPI_MANIFEST               Rendered management-cluster CAPI manifest; unset = ephemeral kind Secret + temp file
-#   MGMT_CONTROL_PLANE_NUM_SOCKETS   Management control plane sockets (default: CONTROL_PLANE_NUM_SOCKETS)
-#   MGMT_CONTROL_PLANE_NUM_CORES     Management control plane cores (default: CONTROL_PLANE_NUM_CORES)
-#   MGMT_CONTROL_PLANE_MEMORY_MIB    Management control plane memory in MiB (default: CONTROL_PLANE_MEMORY_MIB)
-#   MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE  Management boot volume device (default: CONTROL_PLANE_BOOT_VOLUME_DEVICE)
-#   MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE    Management boot volume size in GB (default: CONTROL_PLANE_BOOT_VOLUME_SIZE)
-#   CILIUM_WAIT_DURATION             Cilium wait duration for installs
-#   CILIUM_INGRESS                   true|false; Cilium Ingress + default IngressClass (default: true; requires kube-proxy replacement)
-#   CILIUM_KUBE_PROXY_REPLACEMENT    true|false|auto — auto = on only if CILIUM_INGRESS; default: true
-#                                    (when true, Cilium is installed with k8sServiceHost/Port = control plane endpoint so pods reach the API before ClusterIP is live — see Cilium kube-proxy-free docs)
-#   CILIUM_LB_IPAM                   true|false; apply CiliumLoadBalancerIPPool to workload (after nodes; default: true)
-#   CILIUM_LB_IPAM_POOL_CIDR         LB-IPAM pool CIDR; empty = derive from CONTROL_PLANE_ENDPOINT_IP (see --cilium-lb-ipam-pool-cidr)
-#   CILIUM_LB_IPAM_POOL_START        Start of the IP range for the LB-IPAM pool.
-#   CILIUM_LB_IPAM_POOL_STOP         End of the IP range for the LB-IPAM pool.
-#   CILIUM_LB_IPAM_POOL_NAME         Pool object name; empty = <WORKLOAD_CLUSTER_NAME>-lb-pool
-#   CILIUM_HUBBLE                    true|false; enable Hubble + Hubble Relay (default: true)
-#   CILIUM_HUBBLE_UI                 true|false; enable Hubble UI (default: true; requires CILIUM_HUBBLE)
-#   CILIUM_IPAM_CLUSTER_POOL_IPV4     cluster-pool pod CIDR (default: 10.244.0.0/16); set if cilium status shows a bad/small pool (e.g. 192.168.0.0/24)
-#   CILIUM_IPAM_CLUSTER_POOL_IPV4_MASK_SIZE  per-node mask (default: 24)
-#   CILIUM_GATEWAY_API_ENABLED       true|false; set Cilium helm gatewayAPI.enabled (default: false; install Gateway API CRDs per Cilium version if missing)
-#   ARGOCD_DISABLE_OPERATOR_MANAGED_INGRESS  true|false; no operator-managed Kubernetes Ingress for the Argo CD server (default: false). Disables server + gRPC Ingress on the ArgoCD CR — expose only via Gateway API in Git (e.g. `examples/gateway-api`).
-#   ARGOCD_SERVER_INSECURE           true|false; ArgoCD CR: server.insecure (default: false)
-#   ARGOCD_PRINT_ACCESS_TARGET      workload (only value; for standalone --argocd-print-access)
-#   ARGOCD_PORT_FORWARD_TARGET      workload (only value; port-forward to provisioned cluster Argo)
-#   ARGOCD_PORT_FORWARD_PORT         local port for Argo on the CAPI/Proxmox cluster (default: 8080; legacy: ARGOCD_PORT_FORWARD_WORKLOAD_PORT)
-#   (internal) ARGOCD_PRINT_ACCESS_STANDALONE  set by --argocd-print-access; not needed when using flags
-#   (internal) ARGOCD_PORT_FORWARD_STANDALONE  set by --argocd-port-forward; not needed when using flags
-#   WORKLOAD_ROLLOUT_MODE            argocd | capi | all (for --workload-rollout; default: argocd)
-#   WORKLOAD_ROLLOUT_NO_WAIT         true: skip wait for in-cluster Argo apps healthy
-#   ARGOCD_VERSION                   Argo CD app/server version + argocd CLI release tag (default: v3.3.8; CLI and ArgoCD CR are kept in lockstep upstream)
-#   KYVERNO_CLI_VERSION              kyverno CLI release tag (default: v1.17.1); Linux amd64/arm64; Argo + Kyverno
-#   KYVERNO_TOLERATE_CONTROL_PLANE  true|false; add Helm global.tolerations for control-plane taints (default: true; needed on many CAPI/single-CP nodes)
-#   CMCTL_VERSION                    cmctl release tag (default: v2.4.1); Linux amd64/arm64; Argo + cert-manager
-#   EXP_CLUSTER_RESOURCE_SET         clusterctl: ClusterResourceSet feature (default: false; unused for Cilium/Argo here)
-#   WORKLOAD_GITOPS_MODE             caaph only (CAAPH + app-of-apps Git; see --workload-app-of-apps-*)
-#   ARGOCD_OPERATOR_VERSION          Argo CD Operator git ref for kubectl apply -k …/argocd-operator/config/default?ref= (default: v0.16.0)
-#   ARGOCD_OPERATOR_ARGOCD_PROMETHEUS_ENABLED   true: ArgoCD CR spec.prometheus.enabled (ServiceMonitors; kube-prometheus). Default false (VM: use VMServiceScrape in Git).
-#   ARGOCD_OPERATOR_ARGOCD_MONITORING_ENABLED  true: ArgoCD CR spec.monitoring.enabled (PrometheusRules). Default false. Enable with prometheus for full Prom Operator integration.
-#   WORKLOAD_APP_OF_APPS_GIT_URL       default https://github.com/lpasquali/workload-app-of-apps.git
-#   WORKLOAD_APP_OF_APPS_GIT_PATH      default examples/default (use examples/proxmox-secret-name if CSI Secret is <cluster>-proxmox-csi-config; edit patch MY_CLUSTER)
-#   WORKLOAD_APP_OF_APPS_GIT_REF       default main
-#   CLUSTER_TOPOLOGY                 Enable ClusterTopology feature
-#   EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION  Enable kubeadm ignition format
+bootstrap-capi — bootstrap a Cluster API management plane and provision a Proxmox workload cluster
+
+USAGE
+    bootstrap-capi [OPTIONS]
+
+DESCRIPTION
+    Bootstraps a kind-based CAPI management plane (Cilium CNI: Ingress,
+    kube-proxy replacement, Hubble) and provisions a Proxmox workload
+    cluster on top of it. With --pivot, the CAPI control plane is then
+    moved to a Proxmox-hosted management cluster (clusterctl move) and
+    kind is torn down.
+
+    The bash script bootstrap-capi.sh is the canonical reference for
+    every behavior detail. The Go binary is a 1:1 port and accepts the
+    same flags + environment variables; see docs/ARCHITECTURE.md for
+    the in-process implementation overview.
+
+OPTIONS
+
+  General
+    -f, --force                       Replace an existing kind cluster without prompting
+        --no-delete-kind              Never delete the kind cluster (even with --force)
+        --persist-local-secrets       Also write local CSI/proxmox-csi config files
+    -p, --purge                       Delete generated files + Terraform state before continuing
+    -b, --build-all                   Build and kind-load all images even when arm64 images exist online
+        --regenerate-capi-manifest    Always re-run clusterctl to refresh the workload manifest
+
+  kind cluster
+        --kind-cluster-name NAME      Management kind cluster name (default: capi-provisioner)
+        --kind-config PATH            kind cluster config file (default: ephemeral minimal)
+        --bootstrap-config-file PATH  Local config.yaml used for stale-detection (default: ./config.yaml)
+        --proxmox-bootstrap-admin-secret NAME  kind Secret for Terraform / admin PVE API
+                                      (default: proxmox-bootstrap-admin-credentials)
+        --capi-manifest PATH          Workload CAPI manifest on disk (default: kept in a kind Secret)
+
+  Proxmox API
+    -u, --admin-username USERNAME     Proxmox admin token username (default: root@pam!capi-bootstrap)
+    -t, --admin-token TOKEN           Proxmox admin token secret (UUID)
+        --proxmox-url URL             Proxmox API URL (e.g. https://pve.example:8006)
+        --proxmox-token TOKEN_ID      Proxmox API token ID for clusterctl
+        --proxmox-secret SECRET       Proxmox API token secret for clusterctl
+
+  Proxmox infrastructure
+    -r, --region REGION               Proxmox region/datacenter for workload clusters
+    -n, --node NODE                   Proxmox node to deploy workload VMs
+        --bridge BRIDGE               Bridge interface name (default: vmbr0)
+        --template-id ID              Catch-all Proxmox template VM ID (default: 104)
+        --template-vmid ID            Deprecated alias for --template-id
+        --workload-control-plane-template-id ID  Per-machine-type override
+        --workload-worker-template-id ID         Per-machine-type override
+        --mgmt-control-plane-template-id ID      Per-machine-type override
+        --mgmt-worker-template-id ID             Per-machine-type override
+
+  Networking
+        --control-plane-endpoint-ip IP    Control plane endpoint VIP (default: 192.168.0.20)
+        --control-plane-endpoint-port P   Apiserver port (default: 6443)
+        --node-ip-ranges RANGES           Node IP ranges (default: 192.168.0.21-192.168.0.30)
+        --gateway IP                      Gateway IP (default: 192.168.0.1)
+        --ip-prefix N                     IP prefix (default: 24)
+        --dns-servers LIST                Comma-separated DNS servers (default: 8.8.8.8,8.8.4.4)
+        --allowed-nodes LIST              Allowed Proxmox nodes (default: same as --node)
+
+  Proxmox CSI
+        --csi-url URL                     CSI API URL (default: <proxmox-url>/api2/json)
+        --csi-token-id TOKEN_ID           CSI token ID (auto-derived if omitted)
+        --csi-token-secret SECRET         CSI token secret
+        --csi-user-id USER_ID             CSI user ID for Terraform bootstrap
+                                          (default: kubernetes-csi-<CLUSTER_SET_ID>@pve)
+        --csi-token-prefix PREFIX         CSI token name prefix (default: csi)
+        --csi-insecure true|false         Insecure TLS (default: same as admin)
+        --csi-storage-class NAME          CSI StorageClass name (default: proxmox-data-xfs)
+        --csi-storage NAME                Proxmox storage backend (default: local-lvm)
+        --cloudinit-storage NAME          Proxmox storage for CloudInit (default: local)
+        --csi-reclaim-policy POLICY       CSI reclaim policy (default: Delete)
+        --csi-fstype TYPE                 CSI filesystem type (default: xfs)
+        --csi-default-class true|false    Set CSI StorageClass as default (default: true)
+        --capi-user-id USER_ID            CAPI user ID for Terraform (default: capmox-<CLUSTER_SET_ID>@pve)
+        --capi-token-prefix PREFIX        CAPI token name prefix (default: capi)
+
+  Workload VM sizing
+        --control-plane-boot-volume-device DEV (default: scsi0)
+        --control-plane-boot-volume-size GB    (default: 100)
+        --control-plane-num-sockets N          (default: 2)
+        --control-plane-num-cores N            (default: 1)
+        --control-plane-memory-mib N           (default: 8192)
+        --worker-boot-volume-device DEV        (default: scsi0)
+        --worker-boot-volume-size GB           (default: 100)
+        --worker-num-sockets N                 (default: 2)
+        --worker-num-cores N                   (default: 4)
+        --worker-memory-mib N                  (default: 16384)
+
+  Workload cluster
+        --workload-cluster-name NAME          CAPI Cluster name (default: capi-quickstart)
+        --workload-cluster-namespace NS       Cluster namespace (default: default)
+        --workload-cilium-cluster-id ID       Cilium cluster.id (default: derived from CLUSTER_SET_ID)
+        --workload-k8s-version VERSION        Kubernetes version (default: v1.35.0)
+        --control-plane-count N               CP replica count (default: 1)
+        --worker-count N                      Worker replica count (default: 2)
+
+  Pivot — CAPI bootstrap-and-pivot pattern
+        --pivot                       Enable pivot to a Proxmox-hosted management cluster
+        --no-pivot                    Disable pivot (default; kind remains the management plane)
+        --pivot-keep-kind             Skip the final `kind delete cluster` after a successful pivot
+        --pivot-dry-run               Provision mgmt + clusterctl init, then `clusterctl move --dry-run`
+                                      and exit. Workload stays managed by kind. Use to validate mgmt
+                                      reachability/sizing before committing to the move.
+        --pivot-verify-timeout DUR    Wait at most DUR (e.g. 10m) for the management cluster to mirror
+                                      the kind state before failing the pivot (default: 10m)
+        --mgmt-cluster-name NAME      Management Cluster name (default: capi-management)
+        --mgmt-cluster-namespace NS   Management Cluster namespace (default: default)
+        --mgmt-k8s-version V          Kubernetes version on management (default: same as workload)
+        --mgmt-cilium-cluster-id N    Cilium cluster.id for management (default: derived)
+        --mgmt-control-plane-machine-count N   Default 1 (single-node mgmt)
+        --mgmt-worker-machine-count N          Default 0 (CP-only)
+        --mgmt-control-plane-endpoint-ip IP    Management VIP — user-provided
+        --mgmt-control-plane-endpoint-port P   Apiserver port (default: same as workload)
+        --mgmt-node-ip-ranges RANGES           2-IP range to support rollout — user-provided
+        --mgmt-control-plane-num-sockets N     (default: 1)
+        --mgmt-control-plane-num-cores N       (default: 2)
+        --mgmt-control-plane-memory-mib N      (default: 4096)
+        --mgmt-control-plane-boot-volume-device DEV
+        --mgmt-control-plane-boot-volume-size GB
+        --mgmt-capi-manifest PATH     Path for the rendered management manifest (default: temp file)
+
+  Standalone modes
+        --kind-backup [PATH]          Snapshot kind state to PATH (.tar.gz). With encryption when set.
+        --kind-restore PATH           Restore kind state from PATH and exit
+        --workload-rollout [MODE]     Roll workload Machines (mode: argocd|capi|all; default: argocd)
+        --argocd-print-access [TARGET]    Print Argo CD URL + initial admin password and exit
+        --argocd-port-forward [TARGET]    kubectl port-forward Argo CD on 127.0.0.1 and exit
+
+ENVIRONMENT
+
+    Most flags have a matching upper-snake env var (e.g. --proxmox-url ↔ PROXMOX_URL).
+    On a re-run against an existing kind cluster, the persisted Secret
+    proxmox-bootstrap-system/proxmox-bootstrap-config takes precedence over env defaults
+    for non-CLI fields. CLI flags marked _EXPLICIT win against the Secret merge:
+
+        NODE_IP_RANGES           GATEWAY          IP_PREFIX
+        DNS_SERVERS              ALLOWED_NODES
+        WORKLOAD_CLUSTER_NAME    WORKLOAD_CLUSTER_NAMESPACE
+
+    Pivot env vars (all default to empty/false unless noted):
+        PIVOT_ENABLED            PIVOT_KEEP_KIND     PIVOT_DRY_RUN
+        PIVOT_VERIFY_TIMEOUT     (default: 10m)
+        MGMT_CLUSTER_NAME        (default: capi-management)
+        MGMT_CLUSTER_NAMESPACE   (default: default)
+        MGMT_KUBERNETES_VERSION  (default: WORKLOAD_KUBERNETES_VERSION)
+        MGMT_CONTROL_PLANE_NUM_SOCKETS=1  MGMT_CONTROL_PLANE_NUM_CORES=2  MGMT_CONTROL_PLANE_MEMORY_MIB=4096
+        MGMT_CONTROL_PLANE_MACHINE_COUNT=1   MGMT_WORKER_MACHINE_COUNT=0
+        MGMT_CILIUM_HUBBLE=true              MGMT_CILIUM_LB_IPAM=false
+        MGMT_PROXMOX_CSI_ENABLED=false       (mgmt is stateless by default)
+
+    Per-machine-type Proxmox template overrides (empty → fall back to PROXMOX_TEMPLATE_ID):
+        WORKLOAD_CONTROL_PLANE_TEMPLATE_ID   WORKLOAD_WORKER_TEMPLATE_ID
+        MGMT_CONTROL_PLANE_TEMPLATE_ID       MGMT_WORKER_TEMPLATE_ID
+
+EXAMPLES
+
+    # Standard bootstrap (kind = forever-management)
+    bootstrap-capi \
+        --proxmox-url https://pve.example:8006 \
+        --admin-username root@pam!capi-bootstrap \
+        --admin-token 11111111-2222-3333-4444-555555555555 \
+        --region datacenter --node pve
+
+    # Pivot an existing setup to a Proxmox-hosted management cluster
+    # (workload keeps running; only the CAPI controller managing it moves).
+    bootstrap-capi --pivot --pivot-keep-kind \
+        --mgmt-control-plane-endpoint-ip 192.168.0.30 \
+        --mgmt-node-ip-ranges 192.168.0.31-192.168.0.32
+
+    # Validate the pivot before committing — provisions mgmt, runs
+    # `clusterctl move --dry-run` and exits without moving state.
+    bootstrap-capi --pivot --pivot-dry-run \
+        --mgmt-control-plane-endpoint-ip 192.168.0.30 \
+        --mgmt-node-ip-ranges 192.168.0.31-192.168.0.32
+
+    # Per-machine-type templates (e.g. a hardened CP image, vanilla worker image)
+    bootstrap-capi \
+        --workload-control-plane-template-id 200 \
+        --workload-worker-template-id 201
+
+    # Snapshot kind state before a risky run
+    bootstrap-capi --kind-backup ./kind-pre-pivot.tar.gz
+
+    # Print Argo CD access info for the workload (no full bootstrap)
+    bootstrap-capi --argocd-print-access
+
+SEE ALSO
+
+    bootstrap-capi.sh        canonical bash reference (every default + behavior detail)
+    docs/ARCHITECTURE.md     Go implementation overview + 6 mermaid diagrams

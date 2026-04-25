@@ -44,15 +44,21 @@ func ApplyRoleResourceOverrides(cfg *config.Config) error {
 	text := string(raw)
 
 	type hw struct {
-		disk, size, sockets, cores, mem string
+		disk, size, sockets, cores, mem, template string
 	}
+	// Per-role template overrides fall back to the catch-all
+	// cfg.ProxmoxTemplateID when empty.
+	cpTpl := firstNonEmpty(cfg.WorkloadControlPlaneTemplateID, cfg.ProxmoxTemplateID)
+	wkTpl := firstNonEmpty(cfg.WorkloadWorkerTemplateID, cfg.ProxmoxTemplateID)
 	cp := hw{
 		disk: cfg.ControlPlaneBootVolumeDevice, size: cfg.ControlPlaneBootVolumeSize,
 		sockets: cfg.ControlPlaneNumSockets, cores: cfg.ControlPlaneNumCores, mem: cfg.ControlPlaneMemoryMiB,
+		template: cpTpl,
 	}
 	wk := hw{
 		disk: cfg.WorkerBootVolumeDevice, size: cfg.WorkerBootVolumeSize,
 		sockets: cfg.WorkerNumSockets, cores: cfg.WorkerNumCores, mem: cfg.WorkerMemoryMiB,
+		template: wkTpl,
 	}
 	text = patchPMTBlock(text, "control-plane", cp)
 	text = patchPMTBlock(text, "worker", wk)
@@ -64,10 +70,23 @@ func ApplyRoleResourceOverrides(cfg *config.Config) error {
 	return os.WriteFile(cfg.CAPIManifest, []byte(text), 0o644)
 }
 
-// patchPMTBlock replaces the five hw fields inside every
-// ProxmoxMachineTemplate block whose metadata.name contains `role`.
+// firstNonEmpty returns the first non-empty string from its arguments.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// patchPMTBlock replaces the five sizing fields (and optionally
+// templateID) inside every ProxmoxMachineTemplate block whose
+// metadata.name contains `role`. An empty `h.template` leaves the
+// templateID untouched (the manifest keeps whatever clusterctl
+// substituted from the catch-all PROXMOX_TEMPLATE_ID).
 func patchPMTBlock(text, role string, h struct {
-	disk, size, sockets, cores, mem string
+	disk, size, sockets, cores, mem, template string
 },
 ) string {
 	// Bash uses a single regex with dotall + greedy; Go's RE2 can do that
@@ -89,6 +108,9 @@ func patchPMTBlock(text, role string, h struct {
 		doc = replaceFirstPerLine(doc, `(numSockets:\s*)[^\n]+`, "${1}"+h.sockets)
 		doc = replaceFirstPerLine(doc, `(numCores:\s*)[^\n]+`, "${1}"+h.cores)
 		doc = replaceFirstPerLine(doc, `(memoryMiB:\s*)[^\n]+`, "${1}"+h.mem)
+		if h.template != "" {
+			doc = replaceFirstPerLine(doc, `(templateID:\s*)[^\n]+`, "${1}"+h.template)
+		}
 		parts[i] = doc
 	}
 	return strings.Join(parts, "\n---\n")

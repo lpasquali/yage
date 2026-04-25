@@ -30,8 +30,12 @@
 #   --proxmox-secret TOKEN_SECRET    Proxmox API token secret for clusterctl
 #   -r, --region REGION              Proxmox region/datacenter name for workload clusters
 #   -n, --node NODE                  Proxmox node name to deploy workload cluster VMs
-#   --template-id ID                 PROXMOX template VM ID (default: 104; clusterctl still consumes env TEMPLATE_VMID derived from it)
+#   --template-id ID                 PROXMOX template VM ID (default: 104; catch-all when no per-machine-type override is set)
 #   --template-vmid ID               Same as --template-id (deprecated alias; sets PROXMOX_TEMPLATE_ID)
+#   --workload-control-plane-template-id ID  Per-machine-type override for workload control-plane VMs (falls back to PROXMOX_TEMPLATE_ID)
+#   --workload-worker-template-id ID         Per-machine-type override for workload worker VMs (falls back to PROXMOX_TEMPLATE_ID)
+#   --mgmt-control-plane-template-id ID      Per-machine-type override for management control-plane VMs (falls back to PROXMOX_TEMPLATE_ID)
+#   --mgmt-worker-template-id ID             Per-machine-type override for management worker VMs (falls back to PROXMOX_TEMPLATE_ID; mgmt usually has 0 workers)
 #   --bridge BRIDGE                  Bridge interface name (default: vmbr0)
 #   --control-plane-endpoint-ip IP   Control plane endpoint VIP (default: 192.168.0.20)
 #   --control-plane-endpoint-port P  Apiserver port on that endpoint (default: 6443; used for Cilium k8sServicePort when kube-proxy is replaced)
@@ -617,6 +621,11 @@ PROXMOX_TOPOLOGY_REGION="${PROXMOX_TOPOLOGY_REGION:-}"
 PROXMOX_TOPOLOGY_ZONE="${PROXMOX_TOPOLOGY_ZONE:-}"
 PROXMOX_TEMPLATE_ID="${PROXMOX_TEMPLATE_ID:-${TEMPLATE_VMID:-104}}"
 unset TEMPLATE_VMID 2>/dev/null || true
+# Per-machine-type Proxmox template overrides; empty → fall back to PROXMOX_TEMPLATE_ID.
+WORKLOAD_CONTROL_PLANE_TEMPLATE_ID="${WORKLOAD_CONTROL_PLANE_TEMPLATE_ID:-}"
+WORKLOAD_WORKER_TEMPLATE_ID="${WORKLOAD_WORKER_TEMPLATE_ID:-}"
+MGMT_CONTROL_PLANE_TEMPLATE_ID="${MGMT_CONTROL_PLANE_TEMPLATE_ID:-}"
+MGMT_WORKER_TEMPLATE_ID="${MGMT_WORKER_TEMPLATE_ID:-}"
 PROXMOX_BRIDGE="${PROXMOX_BRIDGE:-vmbr0}"
 CONTROL_PLANE_ENDPOINT_IP="${CONTROL_PLANE_ENDPOINT_IP:-192.168.0.20}"
 CONTROL_PLANE_ENDPOINT_PORT="${CONTROL_PLANE_ENDPOINT_PORT:-6443}"
@@ -1578,6 +1587,22 @@ parse_options() {
         ;;
       --template-vmid)
         PROXMOX_TEMPLATE_ID="$2"
+        shift 2
+        ;;
+      --workload-control-plane-template-id)
+        WORKLOAD_CONTROL_PLANE_TEMPLATE_ID="$2"
+        shift 2
+        ;;
+      --workload-worker-template-id)
+        WORKLOAD_WORKER_TEMPLATE_ID="$2"
+        shift 2
+        ;;
+      --mgmt-control-plane-template-id)
+        MGMT_CONTROL_PLANE_TEMPLATE_ID="$2"
+        shift 2
+        ;;
+      --mgmt-worker-template-id)
+        MGMT_WORKER_TEMPLATE_ID="$2"
         shift 2
         ;;
       --bridge)
@@ -4740,6 +4765,12 @@ EOF
 apply_role_resource_overrides() {
   local manifest="$1"
 
+  # Per-machine-type Proxmox template overrides resolve here so an empty
+  # WORKLOAD_*_TEMPLATE_ID falls back to PROXMOX_TEMPLATE_ID (the catch-all
+  # already substituted into the manifest by clusterctl).
+  local cp_tpl="${WORKLOAD_CONTROL_PLANE_TEMPLATE_ID:-${PROXMOX_TEMPLATE_ID}}"
+  local wk_tpl="${WORKLOAD_WORKER_TEMPLATE_ID:-${PROXMOX_TEMPLATE_ID}}"
+
   python3 - \
     "$manifest" \
     "$CONTROL_PLANE_BOOT_VOLUME_DEVICE" \
@@ -4752,7 +4783,9 @@ apply_role_resource_overrides() {
     "$WORKER_NUM_SOCKETS" \
     "$WORKER_NUM_CORES" \
     "$WORKER_MEMORY_MIB" \
-    "$PROXMOX_MEMORY_ADJUSTMENT" <<'PY'
+    "$PROXMOX_MEMORY_ADJUSTMENT" \
+    "$cp_tpl" \
+    "$wk_tpl" <<'PY'
 import pathlib
 import re
 import sys
@@ -4771,21 +4804,25 @@ cfg = {
     "wk_sockets": sys.argv[9],
     "wk_cores": sys.argv[10],
     "wk_mem": sys.argv[11],
+    "cp_tpl": sys.argv[13],
+    "wk_tpl": sys.argv[14],
 }
 
-def patch(block, disk, size, sockets, cores, mem):
+def patch(block, disk, size, sockets, cores, mem, tpl):
   block = re.sub(r'(disk:\s*)[^\n]+', rf'\g<1>{disk}', block)
   block = re.sub(r'(sizeGb:\s*)[^\n]+', rf'\g<1>{size}', block)
   block = re.sub(r'(numSockets:\s*)[^\n]+', rf'\g<1>{sockets}', block)
   block = re.sub(r'(numCores:\s*)[^\n]+', rf'\g<1>{cores}', block)
   block = re.sub(r'(memoryMiB:\s*)[^\n]+', rf'\g<1>{mem}', block)
+  if tpl:
+    block = re.sub(r'(templateID:\s*)[^\n]+', rf'\g<1>{tpl}', block)
   return block
 
 cp_pattern = r'(kind:\s*ProxmoxMachineTemplate\nmetadata:\n\s*name:\s*[^\n]*control-plane[^\n]*\n.*?)(?=\n---\n|\Z)'
 wk_pattern = r'(kind:\s*ProxmoxMachineTemplate\nmetadata:\n\s*name:\s*[^\n]*worker[^\n]*\n.*?)(?=\n---\n|\Z)'
 
-text = re.sub(cp_pattern, lambda m: patch(m.group(1), cfg["cp_disk"], cfg["cp_size"], cfg["cp_sockets"], cfg["cp_cores"], cfg["cp_mem"]), text, flags=re.S)
-text = re.sub(wk_pattern, lambda m: patch(m.group(1), cfg["wk_disk"], cfg["wk_size"], cfg["wk_sockets"], cfg["wk_cores"], cfg["wk_mem"]), text, flags=re.S)
+text = re.sub(cp_pattern, lambda m: patch(m.group(1), cfg["cp_disk"], cfg["cp_size"], cfg["cp_sockets"], cfg["cp_cores"], cfg["cp_mem"], cfg["cp_tpl"]), text, flags=re.S)
+text = re.sub(wk_pattern, lambda m: patch(m.group(1), cfg["wk_disk"], cfg["wk_size"], cfg["wk_sockets"], cfg["wk_cores"], cfg["wk_mem"], cfg["wk_tpl"]), text, flags=re.S)
 
 def scalar_to_yaml_list(match):
   indent = match.group(1)

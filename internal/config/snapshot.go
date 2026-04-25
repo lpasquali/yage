@@ -177,6 +177,11 @@ func (c *Config) Snapshot() []SnapshotField {
 		sp("MGMT_CILIUM_HUBBLE", &c.MgmtCiliumHubble),
 		sp("MGMT_CILIUM_LB_IPAM", &c.MgmtCiliumLBIPAM),
 		bp("MGMT_PROXMOX_CSI_ENABLED", &c.MgmtProxmoxCSIEnabled),
+		// Per-machine-type Proxmox template overrides
+		sp("WORKLOAD_CONTROL_PLANE_TEMPLATE_ID", &c.WorkloadControlPlaneTemplateID),
+		sp("WORKLOAD_WORKER_TEMPLATE_ID", &c.WorkloadWorkerTemplateID),
+		sp("MGMT_CONTROL_PLANE_TEMPLATE_ID", &c.MgmtControlPlaneTemplateID),
+		sp("MGMT_WORKER_TEMPLATE_ID", &c.MgmtWorkerTemplateID),
 		sp("CONTROL_PLANE_MACHINE_COUNT", &c.ControlPlaneMachineCount),
 		sp("WORKER_MACHINE_COUNT", &c.WorkerMachineCount),
 		// --- ArgoCD toggles ---

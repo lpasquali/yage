@@ -326,6 +326,20 @@ type Config struct {
 	WorkerNumCores               string
 	WorkerMemoryMiB              string
 
+	// ---- Per-machine-type Proxmox VM template overrides ----
+	//
+	// Each cluster (workload or management) and role (control-plane or
+	// worker) can specify its own Proxmox template VM ID. Empty values
+	// fall through to ProxmoxTemplateID — the catch-all default that
+	// clusterctl substitutes during manifest generation. The overrides
+	// are applied as a post-generation patch on the corresponding
+	// ProxmoxMachineTemplate (matched by metadata.name containing
+	// "control-plane" or "worker").
+	WorkloadControlPlaneTemplateID string
+	WorkloadWorkerTemplateID       string
+	MgmtControlPlaneTemplateID     string
+	MgmtWorkerTemplateID           string
+
 	// ---- Workload cluster ----
 	WorkloadClusterName             string
 	WorkloadCiliumClusterID         string
@@ -706,6 +720,12 @@ func Load() *Config {
 	c.WorkerNumSockets = getenv("WORKER_NUM_SOCKETS", "2")
 	c.WorkerNumCores = getenv("WORKER_NUM_CORES", "4")
 	c.WorkerMemoryMiB = getenv("WORKER_MEMORY_MIB", "16384")
+
+	// Per-machine-type template overrides; empty → fall back to ProxmoxTemplateID.
+	c.WorkloadControlPlaneTemplateID = getenv("WORKLOAD_CONTROL_PLANE_TEMPLATE_ID", "")
+	c.WorkloadWorkerTemplateID = getenv("WORKLOAD_WORKER_TEMPLATE_ID", "")
+	c.MgmtControlPlaneTemplateID = getenv("MGMT_CONTROL_PLANE_TEMPLATE_ID", "")
+	c.MgmtWorkerTemplateID = getenv("MGMT_WORKER_TEMPLATE_ID", "")
 
 	// --- Workload cluster ---
 	c.WorkloadClusterName = getenv("WORKLOAD_CLUSTER_NAME", "capi-quickstart")

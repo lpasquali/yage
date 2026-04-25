@@ -83,6 +83,14 @@ func Parse(c *config.Config, argv []string) {
 			c.ProxmoxNode = shiftVal(a)
 		case "--template-id", "--template-vmid":
 			c.ProxmoxTemplateID = shiftVal(a)
+		case "--workload-control-plane-template-id":
+			c.WorkloadControlPlaneTemplateID = shiftVal(a)
+		case "--workload-worker-template-id":
+			c.WorkloadWorkerTemplateID = shiftVal(a)
+		case "--mgmt-control-plane-template-id":
+			c.MgmtControlPlaneTemplateID = shiftVal(a)
+		case "--mgmt-worker-template-id":
+			c.MgmtWorkerTemplateID = shiftVal(a)
 		case "--bridge":
 			c.ProxmoxBridge = shiftVal(a)
 		case "--control-plane-endpoint-ip":

@@ -31,6 +31,10 @@
 #   -n, --node NODE                  Proxmox node name to deploy workload cluster VMs
 #   --template-id ID                 PROXMOX template VM ID (default: 104; clusterctl still consumes env TEMPLATE_VMID derived from it)
 #   --template-vmid ID               Same as --template-id (deprecated alias; sets PROXMOX_TEMPLATE_ID)
+#   --workload-control-plane-template-id ID  Override Proxmox template VM ID for workload control-plane VMs (default: PROXMOX_TEMPLATE_ID)
+#   --workload-worker-template-id ID         Override Proxmox template VM ID for workload worker VMs (default: PROXMOX_TEMPLATE_ID)
+#   --mgmt-control-plane-template-id ID      Override Proxmox template VM ID for management control-plane VMs (default: PROXMOX_TEMPLATE_ID)
+#   --mgmt-worker-template-id ID             Override Proxmox template VM ID for management worker VMs (default: PROXMOX_TEMPLATE_ID; mgmt usually has 0 workers)
 #   --bridge BRIDGE                  Bridge interface name (default: vmbr0)
 #   --control-plane-endpoint-ip IP   Control plane endpoint VIP (default: 192.168.0.20)
 #   --control-plane-endpoint-port P  Apiserver port on that endpoint (default: 6443; used for Cilium k8sServicePort when kube-proxy is replaced)

@@ -238,7 +238,11 @@ func mgmtRoleResourceOverrides(cfg *config.Config, manifestPath string) error {
 	}
 	text := string(raw)
 
-	// Patch every PMT (control-plane or worker) using the mgmt sizing.
+	// Patch every PMT (control-plane or worker) using the mgmt sizing
+	// and per-role template overrides (with PROXMOX_TEMPLATE_ID as the
+	// catch-all fallback when MGMT_*_TEMPLATE_ID is unset).
+	mgmtCPTpl := firstNonEmptyMgmt(cfg.MgmtControlPlaneTemplateID, cfg.ProxmoxTemplateID)
+	mgmtWkTpl := firstNonEmptyMgmt(cfg.MgmtWorkerTemplateID, cfg.ProxmoxTemplateID)
 	parts := strings.Split(text, "\n---\n")
 	nameRE := regexp.MustCompile(`(?m)^  name:\s*(\S+)\s*$`)
 	for i, doc := range parts {
@@ -256,6 +260,16 @@ func mgmtRoleResourceOverrides(cfg *config.Config, manifestPath string) error {
 		doc = replaceFirstPerLine(doc, `(numSockets:\s*)[^\n]+`, "${1}"+cfg.MgmtControlPlaneNumSockets)
 		doc = replaceFirstPerLine(doc, `(numCores:\s*)[^\n]+`, "${1}"+cfg.MgmtControlPlaneNumCores)
 		doc = replaceFirstPerLine(doc, `(memoryMiB:\s*)[^\n]+`, "${1}"+cfg.MgmtControlPlaneMemoryMiB)
+		// Pick the per-role template override; default to CP for any
+		// PMT whose name doesn't contain "worker" (mgmt typically has 0
+		// workers, but we honor the override if present).
+		tpl := mgmtCPTpl
+		if strings.Contains(m[1], "worker") {
+			tpl = mgmtWkTpl
+		}
+		if tpl != "" {
+			doc = replaceFirstPerLine(doc, `(templateID:\s*)[^\n]+`, "${1}"+tpl)
+		}
 		parts[i] = doc
 	}
 	text = strings.Join(parts, "\n---\n")
@@ -505,6 +519,18 @@ func hexDigit(r rune) int {
 }
 
 // --- small helpers (copies from internal/capimanifest, scoped to pivot) ---
+
+// firstNonEmptyMgmt returns the first non-empty argument; used to pick
+// the per-role mgmt template override with a PROXMOX_TEMPLATE_ID
+// fallback. Local copy so this package doesn't depend on capimanifest.
+func firstNonEmptyMgmt(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
 
 func replaceFirstPerLine(s, pattern, repl string) string {
 	re := regexp.MustCompile(pattern)

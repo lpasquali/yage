@@ -308,6 +308,11 @@ func Parse(c *config.Config, argv []string) {
 			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil {
 				c.BudgetUSDMonth = f
 			}
+		case "--print-pricing-setup":
+			// Special: not really a flag, more of a subcommand.
+			// Print the IAM/token setup snippet for the named
+			// vendor (or all vendors with "all") and exit.
+			c.PrintPricingSetup = strings.ToLower(strings.TrimSpace(shiftVal(a)))
 		case "--allow-resource-overcommit":
 			c.AllowResourceOvercommit = true
 		case "--system-apps-cpu-millicores":

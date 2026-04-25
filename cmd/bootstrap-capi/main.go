@@ -17,6 +17,7 @@ import (
 	"github.com/lpasquali/bootstrap-capi/internal/bootstrap"
 	"github.com/lpasquali/bootstrap-capi/internal/cli"
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/pricing"
 
 	// Provider registrations: importing each provider package runs
 	// its init() which calls provider.Register. Add a new provider
@@ -35,5 +36,16 @@ import (
 func main() {
 	cfg := config.Load()
 	cli.Parse(cfg, os.Args[1:])
+	if cfg.PrintPricingSetup != "" {
+		switch cfg.PrintPricingSetup {
+		case "all":
+			for _, v := range []string{"aws", "azure", "gcp", "hetzner"} {
+				pricing.PrintOnboardingForce(os.Stdout, v)
+			}
+		default:
+			pricing.PrintOnboardingForce(os.Stdout, cfg.PrintPricingSetup)
+		}
+		return
+	}
 	os.Exit(bootstrap.Run(cfg))
 }

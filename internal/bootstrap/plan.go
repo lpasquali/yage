@@ -354,10 +354,18 @@ func planMonthlyCost(w *os.File, cfg *config.Config) {
 	est, err := p.EstimateMonthlyCostUSD(cfg)
 	if err != nil {
 		if errors.Is(err, provider.ErrNotApplicable) {
+			// Even when the provider opted out, surface the
+			// onboarding hint ONCE if the failure was credentials.
+			if !pricing.PricingCredsConfigured(p.Name()) {
+				section(w, "Estimated monthly cost (provider: "+p.Name()+")")
+				bullet(w, "(skipped: %v)", err)
+				pricing.MaybePrintOnboarding(w, p.Name())
+			}
 			return
 		}
 		section(w, "Estimated monthly cost")
 		bullet(w, "(estimate query failed: %v)", err)
+		pricing.MaybePrintOnboarding(w, p.Name())
 		return
 	}
 	section(w, "Estimated monthly cost (provider: "+p.Name()+")")

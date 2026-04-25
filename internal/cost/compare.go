@@ -196,6 +196,16 @@ func PrintComparison(w io.Writer, cfg *config.Config) {
 	fmt.Fprintln(w, "live list price. Useful for sizing log/observability + DB buckets — pick the cloud")
 	fmt.Fprintln(w, "where your storage envelope is widest if persistence is the dominant cost driver.")
 	hr()
+
+	// First-run onboarding hints — for every vendor where pricing
+	// failed because creds aren't configured, print the IAM/token
+	// setup snippet ONCE per cache.
+	for _, r := range rows {
+		if r.Err == nil {
+			continue
+		}
+		pricing.MaybePrintOnboarding(w, r.ProviderName)
+	}
 }
 
 func retentionDescription(budgetUSD, pricePerGBMonth float64) string {

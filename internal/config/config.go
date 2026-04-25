@@ -94,6 +94,12 @@ type Config struct {
 	// = how much persistent volume capacity remains for
 	// observability / DB buckets after the cluster is paid for.
 	BudgetUSDMonth              float64
+	// PrintPricingSetup, when non-empty, makes the program print
+	// the IAM/token setup snippet for the named vendor (or "all"
+	// for every vendor that needs setup) and exit. Intended for
+	// users who dismissed the first-run hint and want to see it
+	// again. Empty string means "no special action".
+	PrintPricingSetup           string
 	// ResourceBudgetFraction caps the share of available Proxmox host
 	// CPU/memory/storage that the configured clusters may consume.
 	// 0.75 by default — the remaining 25 % is reserved for the host

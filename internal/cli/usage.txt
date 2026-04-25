@@ -28,6 +28,15 @@ OPTIONS
                                       the current config + env + kind state) and exit. No state is
                                       changed. Distinct from --pivot-dry-run (which actually
                                       provisions the mgmt cluster, stops at `clusterctl move`).
+        --cost-compare                With --dry-run, print a side-by-side monthly-cost table for
+                                      every registered provider (same logical cluster shape) using
+                                      live FinOps APIs. Independent of the active infra-provider.
+        --budget-usd-month F          With --dry-run, compute persistent-storage retention at the
+                                      given monthly budget on the active provider. Internally still
+                                      USD; displayed in the active taller currency.
+        --print-pricing-setup VENDOR  Print the IAM/token setup CLI snippet for VENDOR's pricing API
+                                      (aws, azure, gcp, hetzner, or "all") and exit. Same hint shown
+                                      on first cost-related run when credentials are missing.
         --resource-budget-fraction F  Cap the share of available Proxmox host CPU/memory/storage that
                                       the workload + (optional) management clusters may consume
                                       (default: 0.6667 — 2/3). The remaining ~1/3 is reserved for the

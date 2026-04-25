@@ -670,6 +670,28 @@ EXP_CLUSTER_RESOURCE_SET="${EXP_CLUSTER_RESOURCE_SET:-false}"
 CLUSTER_TOPOLOGY="${CLUSTER_TOPOLOGY:-true}"
 EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION="${EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION:-true}"
 
+# --- Pivot (kind -> management cluster) defaults ------------------------------
+# Mirrored in internal/pivot/pivot.go (Go port). When PIVOT_ENABLED=false (default),
+# the script behaves exactly as before — every pivot code path is gated by `if pivot_enabled`.
+PIVOT_ENABLED="${PIVOT_ENABLED:-false}"
+PIVOT_KEEP_KIND="${PIVOT_KEEP_KIND:-false}"
+PIVOT_VERIFY_TIMEOUT="${PIVOT_VERIFY_TIMEOUT:-10m}"
+MGMT_CLUSTER_NAME="${MGMT_CLUSTER_NAME:-capi-management}"
+MGMT_CLUSTER_NAMESPACE="${MGMT_CLUSTER_NAMESPACE:-default}"
+MGMT_KUBERNETES_VERSION="${MGMT_KUBERNETES_VERSION:-${WORKLOAD_KUBERNETES_VERSION}}"
+MGMT_CILIUM_CLUSTER_ID="${MGMT_CILIUM_CLUSTER_ID:-}"
+MGMT_CONTROL_PLANE_MACHINE_COUNT="${MGMT_CONTROL_PLANE_MACHINE_COUNT:-1}"
+MGMT_WORKER_MACHINE_COUNT="${MGMT_WORKER_MACHINE_COUNT:-0}"
+MGMT_CONTROL_PLANE_NUM_SOCKETS="${MGMT_CONTROL_PLANE_NUM_SOCKETS:-${CONTROL_PLANE_NUM_SOCKETS}}"
+MGMT_CONTROL_PLANE_NUM_CORES="${MGMT_CONTROL_PLANE_NUM_CORES:-${CONTROL_PLANE_NUM_CORES}}"
+MGMT_CONTROL_PLANE_MEMORY_MIB="${MGMT_CONTROL_PLANE_MEMORY_MIB:-${CONTROL_PLANE_MEMORY_MIB}}"
+MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE="${MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE:-${CONTROL_PLANE_BOOT_VOLUME_DEVICE}}"
+MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE="${MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE:-${CONTROL_PLANE_BOOT_VOLUME_SIZE}}"
+MGMT_CONTROL_PLANE_ENDPOINT_IP="${MGMT_CONTROL_PLANE_ENDPOINT_IP:-}"
+MGMT_CONTROL_PLANE_ENDPOINT_PORT="${MGMT_CONTROL_PLANE_ENDPOINT_PORT:-${CONTROL_PLANE_ENDPOINT_PORT}}"
+MGMT_NODE_IP_RANGES="${MGMT_NODE_IP_RANGES:-}"
+MGMT_CAPI_MANIFEST="${MGMT_CAPI_MANIFEST:-}"
+
 # --- Helpers ------------------------------------------------------------------
 log()  { printf '✅ 🎉 %s\n' "$*"; }
 warn() { printf '⚠️ 🙈 %s\n' "$*" >&2; }
@@ -1964,6 +1986,38 @@ parse_options() {
       --disable-workload-metrics-server)
         ENABLE_WORKLOAD_METRICS_SERVER=false
         shift
+        ;;
+      --pivot)
+        PIVOT_ENABLED=true
+        shift
+        ;;
+      --no-pivot)
+        PIVOT_ENABLED=false
+        shift
+        ;;
+      --pivot-keep-kind)
+        PIVOT_KEEP_KIND=true
+        shift
+        ;;
+      --mgmt-cluster-name)
+        MGMT_CLUSTER_NAME="$2"
+        shift 2
+        ;;
+      --mgmt-cluster-namespace)
+        MGMT_CLUSTER_NAMESPACE="$2"
+        shift 2
+        ;;
+      --mgmt-k8s-version)
+        MGMT_KUBERNETES_VERSION="$2"
+        shift 2
+        ;;
+      --mgmt-control-plane-endpoint-ip)
+        MGMT_CONTROL_PLANE_ENDPOINT_IP="$2"
+        shift 2
+        ;;
+      --mgmt-node-ip-ranges)
+        MGMT_NODE_IP_RANGES="$2"
+        shift 2
         ;;
       -h|--help)
         usage
@@ -7398,6 +7452,365 @@ wait_for_workload_cluster_ready() {
   rm -f "$kubeconfig_path"
 }
 
+# --- Pivot helpers ------------------------------------------------------------
+# Bash mirror of internal/pivot/pivot.go (Go port). Each helper here corresponds
+# to a function in that package; the main flow gates the entire pivot block on
+# `pivot_enabled` so PIVOT_ENABLED=false (the default) preserves the original
+# kind-as-permanent-management-cluster behavior.
+
+# Mirrored in internal/pivot/pivot.go Enabled().
+pivot_enabled() {
+  is_true "${PIVOT_ENABLED:-false}"
+}
+
+# Mirrored in internal/pivot/pivot.go GenerateManifest(). Same shape as
+# generate_workload_manifest_if_missing but uses MGMT_* variables and writes
+# to ${MGMT_CAPI_MANIFEST} (a mktemp file when unset).
+generate_mgmt_manifest_if_missing() {
+  if [[ -z "${MGMT_CAPI_MANIFEST:-}" ]]; then
+    MGMT_CAPI_MANIFEST="$(mktemp)"
+  fi
+
+  if [[ -s "$MGMT_CAPI_MANIFEST" ]]; then
+    log "Reusing existing management-cluster manifest ${MGMT_CAPI_MANIFEST} (delete the file or unset MGMT_CAPI_MANIFEST to regenerate)."
+    return 0
+  fi
+
+  local missing_manifest_cfg=()
+  [[ -z "$PROXMOX_URL" ]]          && missing_manifest_cfg+=(PROXMOX_URL)
+  [[ -z "$PROXMOX_REGION" ]]       && missing_manifest_cfg+=(PROXMOX_REGION)
+  [[ -z "$PROXMOX_NODE" ]]         && missing_manifest_cfg+=(PROXMOX_NODE)
+  [[ -z "$PROXMOX_TEMPLATE_ID" ]]  && missing_manifest_cfg+=(PROXMOX_TEMPLATE_ID)
+  [[ -z "${MGMT_CONTROL_PLANE_ENDPOINT_IP:-}" ]] && missing_manifest_cfg+=(MGMT_CONTROL_PLANE_ENDPOINT_IP)
+  [[ -z "${MGMT_NODE_IP_RANGES:-}" ]] && missing_manifest_cfg+=(MGMT_NODE_IP_RANGES)
+
+  if [[ ${#missing_manifest_cfg[@]} -gt 0 ]]; then
+    die "Missing management-cluster manifest inputs: ${missing_manifest_cfg[*]}. Set them as command-line options or environment variables before generating ${MGMT_CAPI_MANIFEST}."
+  fi
+
+  log "Generating management cluster manifest with clusterctl (target ${MGMT_CLUSTER_NAMESPACE}/${MGMT_CLUSTER_NAME})..."
+
+  local ctl_cfg="${BOOTSTRAP_CLUSTERCTL_CONFIG_PATH:-}"
+  [[ -z "$ctl_cfg" && -n "${CLUSTERCTL_CFG:-}" ]] && ctl_cfg="$CLUSTERCTL_CFG"
+  if [[ -z "$ctl_cfg" || ! -f "$ctl_cfg" ]]; then
+    bootstrap_sync_clusterctl_config_file
+    ctl_cfg="${BOOTSTRAP_CLUSTERCTL_CONFIG_PATH:-}"
+    [[ -z "$ctl_cfg" && -n "${CLUSTERCTL_CFG:-}" ]] && ctl_cfg="$CLUSTERCTL_CFG"
+  fi
+  [[ -n "$ctl_cfg" && -f "$ctl_cfg" ]] \
+    || die "clusterctl config is not available; cannot generate management manifest."
+
+  BRIDGE="${BRIDGE:-$PROXMOX_BRIDGE}"
+  PROXMOX_SOURCENODE="${PROXMOX_SOURCENODE:-$PROXMOX_NODE}"
+  if [[ -z "${VM_SSH_KEYS:-}" && -f "$HOME/.ssh/authorized_keys" ]]; then
+    VM_SSH_KEYS="$(grep -v '^\s*#' "$HOME/.ssh/authorized_keys" | grep -v '^\s*$' | paste -sd ',' - || true)"
+  fi
+
+  local tmp_manifest
+  tmp_manifest="$(mktemp)"
+
+  if ! PROXMOX_URL="$PROXMOX_URL" \
+  PROXMOX_REGION="$PROXMOX_REGION" \
+  PROXMOX_NODE="$PROXMOX_NODE" \
+  PROXMOX_TEMPLATE_ID="$PROXMOX_TEMPLATE_ID" \
+  TEMPLATE_VMID="${PROXMOX_TEMPLATE_ID}" \
+  BRIDGE="$BRIDGE" \
+  PROXMOX_SOURCENODE="$PROXMOX_SOURCENODE" \
+  VM_SSH_KEYS="$VM_SSH_KEYS" \
+  CONTROL_PLANE_ENDPOINT_IP="$MGMT_CONTROL_PLANE_ENDPOINT_IP" \
+  CONTROL_PLANE_ENDPOINT_PORT="$MGMT_CONTROL_PLANE_ENDPOINT_PORT" \
+  NODE_IP_RANGES="$MGMT_NODE_IP_RANGES" \
+  GATEWAY="$GATEWAY" \
+  IP_PREFIX="$IP_PREFIX" \
+  DNS_SERVERS="$DNS_SERVERS" \
+  ALLOWED_NODES="$ALLOWED_NODES" \
+  PROXMOX_CLOUDINIT_STORAGE="$PROXMOX_CLOUDINIT_STORAGE" \
+  BOOT_VOLUME_DEVICE="$MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE" \
+  BOOT_VOLUME_SIZE="$MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE" \
+  NUM_SOCKETS="$MGMT_CONTROL_PLANE_NUM_SOCKETS" \
+  NUM_CORES="$MGMT_CONTROL_PLANE_NUM_CORES" \
+  MEMORY_MIB="$MGMT_CONTROL_PLANE_MEMORY_MIB" \
+  clusterctl generate cluster "$MGMT_CLUSTER_NAME" \
+    --config "$ctl_cfg" \
+    --target-namespace "$MGMT_CLUSTER_NAMESPACE" \
+    --kubernetes-version "$MGMT_KUBERNETES_VERSION" \
+    --control-plane-machine-count "$MGMT_CONTROL_PLANE_MACHINE_COUNT" \
+    --worker-machine-count "$MGMT_WORKER_MACHINE_COUNT" \
+    --infrastructure "$INFRA_PROVIDER" > "$tmp_manifest"; then
+    rm -f "$tmp_manifest"
+    die "clusterctl generate cluster failed for management cluster ${MGMT_CLUSTER_NAME}."
+  fi
+
+  if [[ ! -s "$tmp_manifest" ]]; then
+    rm -f "$tmp_manifest"
+    die "clusterctl generate cluster produced an empty management manifest."
+  fi
+
+  mv -f "$tmp_manifest" "$MGMT_CAPI_MANIFEST"
+  log "Generated management manifest at ${MGMT_CAPI_MANIFEST}."
+}
+
+# Mirrored in internal/pivot/pivot.go ApplyManagementManifest(). 3-attempt
+# retry with the same idempotent ProxmoxCluster-skip logic as the workload apply.
+apply_mgmt_cluster_manifest_to_kind() {
+  local manifest="${1:-$MGMT_CAPI_MANIFEST}"
+  [[ -f "$manifest" ]] || die "Management manifest not found: ${manifest}"
+  log "Applying management cluster manifest ${manifest} to kind (kind-${KIND_CLUSTER_NAME})..."
+  local attempt
+  for attempt in 1 2 3; do
+    if apply_workload_cluster_manifest_to_management_cluster "$manifest"; then
+      log "Management manifest applied to kind."
+      return 0
+    fi
+    if [[ "$attempt" -eq 3 ]]; then
+      die "Failed to apply management manifest after ${attempt} attempts."
+    fi
+    warn "Management manifest apply failed (attempt ${attempt}/3). Retrying in 10s while webhooks settle..."
+    sleep 10
+  done
+}
+
+# Mirrored in internal/pivot/pivot.go WaitForManagementReady().
+wait_for_mgmt_cluster_ready() {
+  log "Waiting for management cluster ${MGMT_CLUSTER_NAMESPACE}/${MGMT_CLUSTER_NAME} Available on kind..."
+  kubectl --context "kind-${KIND_CLUSTER_NAME}" wait cluster "$MGMT_CLUSTER_NAME" \
+    --namespace "$MGMT_CLUSTER_NAMESPACE" \
+    --for=condition=Available \
+    --timeout=60m \
+    || die "Management cluster ${MGMT_CLUSTER_NAME} did not reach Available."
+  log "Management cluster ${MGMT_CLUSTER_NAME} Available."
+}
+
+# Mirrored in internal/pivot/pivot.go FetchManagementKubeconfig(). Returns the
+# path to a 0600 kubeconfig file via stdout (caller captures with $(...)).
+fetch_mgmt_kubeconfig() {
+  local out
+  out="$(mktemp)"
+  chmod 600 "$out"
+  local b64
+  b64="$(kubectl --context "kind-${KIND_CLUSTER_NAME}" \
+    -n "$MGMT_CLUSTER_NAMESPACE" \
+    get secret "${MGMT_CLUSTER_NAME}-kubeconfig" \
+    -o jsonpath='{.data.value}' 2>/dev/null)" \
+    || { rm -f "$out"; die "Failed to read Secret ${MGMT_CLUSTER_NAMESPACE}/${MGMT_CLUSTER_NAME}-kubeconfig from kind."; }
+  [[ -n "$b64" ]] || { rm -f "$out"; die "Empty kubeconfig in Secret ${MGMT_CLUSTER_NAMESPACE}/${MGMT_CLUSTER_NAME}-kubeconfig."; }
+  printf '%s' "$b64" | base64 -d > "$out" \
+    || { rm -f "$out"; die "Failed to decode management cluster kubeconfig."; }
+  printf '%s' "$out"
+}
+
+# Mirrored in internal/pivot/pivot.go ClusterctlInitOnMgmt().
+clusterctl_init_on_mgmt() {
+  local mgmt_kcfg="$1"
+  [[ -n "$mgmt_kcfg" && -f "$mgmt_kcfg" ]] || die "clusterctl_init_on_mgmt: kubeconfig path missing or unreadable."
+  log "Running clusterctl init on management cluster (infrastructure=${INFRA_PROVIDER}, ipam=${IPAM_PROVIDER}, addon=helm)..."
+  EXP_CLUSTER_RESOURCE_SET="${EXP_CLUSTER_RESOURCE_SET:-true}" \
+  CLUSTER_TOPOLOGY="$CLUSTER_TOPOLOGY" \
+  EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION="$EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION" \
+  KUBECONFIG="$mgmt_kcfg" \
+  clusterctl init \
+    --config "$BOOTSTRAP_CLUSTERCTL_CONFIG_PATH" \
+    --infrastructure "$INFRA_PROVIDER" \
+    --ipam "$IPAM_PROVIDER" \
+    --addon helm \
+    || die "clusterctl init on management cluster failed."
+
+  log "Waiting for core CAPI controllers on management cluster..."
+  KUBECONFIG="$mgmt_kcfg" kubectl wait deployment capi-controller-manager \
+    --namespace capi-system --for=condition=Available --timeout=300s \
+    || die "capi-controller-manager not Available on management cluster."
+  KUBECONFIG="$mgmt_kcfg" kubectl wait deployment capmox-controller-manager \
+    --namespace capmox-system --for=condition=Available --timeout=300s \
+    || die "capmox-controller-manager not Available on management cluster."
+  log "Management cluster providers are Available."
+}
+
+# Mirrored in internal/pivot/pivot.go ClusterctlMoveToMgmt(). Moves CAPI state
+# from kind to the new management cluster for the workload-cluster namespace
+# (and the management-cluster namespace too, when distinct).
+clusterctl_move_to_mgmt() {
+  local mgmt_kcfg="$1"
+  [[ -n "$mgmt_kcfg" && -f "$mgmt_kcfg" ]] || die "clusterctl_move_to_mgmt: kubeconfig path missing or unreadable."
+  log "Running clusterctl move from kind to management (namespace=${WORKLOAD_CLUSTER_NAMESPACE})..."
+  clusterctl move \
+    --config "$BOOTSTRAP_CLUSTERCTL_CONFIG_PATH" \
+    --kubeconfig "$KUBECONFIG" \
+    --kubeconfig-context "kind-${KIND_CLUSTER_NAME}" \
+    --to-kubeconfig "$mgmt_kcfg" \
+    --namespace "$WORKLOAD_CLUSTER_NAMESPACE" \
+    || die "clusterctl move (workload namespace ${WORKLOAD_CLUSTER_NAMESPACE}) failed."
+
+  if [[ "$MGMT_CLUSTER_NAMESPACE" != "$WORKLOAD_CLUSTER_NAMESPACE" ]]; then
+    log "Running clusterctl move from kind to management (namespace=${MGMT_CLUSTER_NAMESPACE})..."
+    clusterctl move \
+      --config "$BOOTSTRAP_CLUSTERCTL_CONFIG_PATH" \
+      --kubeconfig "$KUBECONFIG" \
+      --kubeconfig-context "kind-${KIND_CLUSTER_NAME}" \
+      --to-kubeconfig "$mgmt_kcfg" \
+      --namespace "$MGMT_CLUSTER_NAMESPACE" \
+      || die "clusterctl move (management namespace ${MGMT_CLUSTER_NAMESPACE}) failed."
+  fi
+  log "clusterctl move complete."
+}
+
+# Mirrored in internal/pivot/pivot.go HandoffBootstrapSecrets(). Copies the
+# proxmox-bootstrap-system Secrets (config + capmox + csi + admin) and
+# capmox-system/capmox-manager-credentials from kind to the management
+# cluster, stripping cluster-managed metadata so apply does not conflict.
+handoff_bootstrap_secrets_kind_to_mgmt() {
+  local mgmt_kcfg="$1"
+  [[ -n "$mgmt_kcfg" && -f "$mgmt_kcfg" ]] || die "handoff_bootstrap_secrets_kind_to_mgmt: kubeconfig path missing or unreadable."
+
+  local kctx="kind-${KIND_CLUSTER_NAME}"
+
+  log "Ensuring namespace ${PROXMOX_BOOTSTRAP_SECRET_NAMESPACE} exists on management cluster..."
+  KUBECONFIG="$mgmt_kcfg" kubectl create namespace "$PROXMOX_BOOTSTRAP_SECRET_NAMESPACE" \
+    --dry-run=client -o yaml | KUBECONFIG="$mgmt_kcfg" kubectl apply -f - >/dev/null \
+    || die "Failed to ensure namespace ${PROXMOX_BOOTSTRAP_SECRET_NAMESPACE} on management cluster."
+
+  local secrets=(
+    "${PROXMOX_BOOTSTRAP_CONFIG_SECRET_NAME}"
+    "${PROXMOX_BOOTSTRAP_CAPMOX_SECRET_NAME}"
+    "${PROXMOX_BOOTSTRAP_CSI_SECRET_NAME}"
+    "${PROXMOX_BOOTSTRAP_ADMIN_SECRET_NAME}"
+  )
+  [[ -n "${PROXMOX_BOOTSTRAP_SECRET_NAME:-}" ]] && secrets+=("$PROXMOX_BOOTSTRAP_SECRET_NAME")
+
+  local s
+  for s in "${secrets[@]}"; do
+    [[ -n "$s" ]] || continue
+    if ! kubectl --context "$kctx" -n "$PROXMOX_BOOTSTRAP_SECRET_NAMESPACE" \
+        get secret "$s" >/dev/null 2>&1; then
+      warn "Secret ${PROXMOX_BOOTSTRAP_SECRET_NAMESPACE}/${s} not present on kind — skipping handoff for it."
+      continue
+    fi
+    log "Handing off Secret ${PROXMOX_BOOTSTRAP_SECRET_NAMESPACE}/${s} from kind to management..."
+    kubectl --context "$kctx" -n "$PROXMOX_BOOTSTRAP_SECRET_NAMESPACE" get secret "$s" -o yaml \
+      | python3 -c '
+import sys
+import yaml
+obj = yaml.safe_load(sys.stdin)
+md = obj.get("metadata") or {}
+for k in ("resourceVersion", "uid", "creationTimestamp", "selfLink", "generation", "managedFields", "ownerReferences"):
+    md.pop(k, None)
+obj["metadata"] = md
+sys.stdout.write(yaml.safe_dump(obj))
+' \
+      | KUBECONFIG="$mgmt_kcfg" kubectl apply -f - \
+      || die "Failed to apply Secret ${s} to management cluster."
+  done
+
+  if kubectl --context "$kctx" get namespace capmox-system >/dev/null 2>&1 \
+      && kubectl --context "$kctx" -n capmox-system get secret capmox-manager-credentials >/dev/null 2>&1; then
+    log "Ensuring namespace capmox-system on management cluster..."
+    KUBECONFIG="$mgmt_kcfg" kubectl create namespace capmox-system \
+      --dry-run=client -o yaml | KUBECONFIG="$mgmt_kcfg" kubectl apply -f - >/dev/null \
+      || warn "Failed to ensure namespace capmox-system on management cluster."
+    log "Handing off capmox-system/capmox-manager-credentials from kind to management..."
+    kubectl --context "$kctx" -n capmox-system get secret capmox-manager-credentials -o yaml \
+      | python3 -c '
+import sys
+import yaml
+obj = yaml.safe_load(sys.stdin)
+md = obj.get("metadata") or {}
+for k in ("resourceVersion", "uid", "creationTimestamp", "selfLink", "generation", "managedFields", "ownerReferences"):
+    md.pop(k, None)
+obj["metadata"] = md
+sys.stdout.write(yaml.safe_dump(obj))
+' \
+      | KUBECONFIG="$mgmt_kcfg" kubectl apply -f - \
+      || warn "Failed to apply capmox-manager-credentials to management cluster."
+  fi
+  log "Bootstrap Secret handoff complete."
+}
+
+# Mirrored in internal/pivot/pivot.go VerifyParity(). Polls the management
+# cluster until: Cluster CRs for both mgmt + workload exist; capi-system and
+# capmox-system Deployments are Available; and the expected bootstrap Secrets
+# are present. Honors PIVOT_VERIFY_TIMEOUT (Nm minutes / Ns seconds; bare integer = seconds).
+verify_pivot_parity() {
+  local mgmt_kcfg="$1"
+  [[ -n "$mgmt_kcfg" && -f "$mgmt_kcfg" ]] || die "verify_pivot_parity: kubeconfig path missing or unreadable."
+
+  local raw="${PIVOT_VERIFY_TIMEOUT:-10m}" timeout_seconds=600
+  case "$raw" in
+    *m) timeout_seconds=$(( ${raw%m} * 60 )) ;;
+    *s) timeout_seconds=${raw%s} ;;
+    *[!0-9]*) warn "Unrecognized PIVOT_VERIFY_TIMEOUT='${raw}' — using 600s."; timeout_seconds=600 ;;
+    *) timeout_seconds="$raw" ;;
+  esac
+  [[ "$timeout_seconds" -gt 0 ]] || timeout_seconds=600
+
+  log "Verifying pivot parity on management cluster (timeout ${timeout_seconds}s)..."
+
+  local secrets=(
+    "${PROXMOX_BOOTSTRAP_CONFIG_SECRET_NAME}"
+    "${PROXMOX_BOOTSTRAP_CAPMOX_SECRET_NAME}"
+    "${PROXMOX_BOOTSTRAP_CSI_SECRET_NAME}"
+    "${PROXMOX_BOOTSTRAP_ADMIN_SECRET_NAME}"
+  )
+
+  local deadline
+  deadline=$(( $(date +%s) + timeout_seconds ))
+  local ok=false
+  while (( $(date +%s) < deadline )); do
+    local missing=()
+
+    KUBECONFIG="$mgmt_kcfg" kubectl get cluster "$MGMT_CLUSTER_NAME" \
+      -n "$MGMT_CLUSTER_NAMESPACE" >/dev/null 2>&1 \
+      || missing+=("Cluster/${MGMT_CLUSTER_NAMESPACE}/${MGMT_CLUSTER_NAME}")
+
+    KUBECONFIG="$mgmt_kcfg" kubectl get cluster "$WORKLOAD_CLUSTER_NAME" \
+      -n "$WORKLOAD_CLUSTER_NAMESPACE" >/dev/null 2>&1 \
+      || missing+=("Cluster/${WORKLOAD_CLUSTER_NAMESPACE}/${WORKLOAD_CLUSTER_NAME}")
+
+    KUBECONFIG="$mgmt_kcfg" kubectl -n capi-system get deployment capi-controller-manager \
+      -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null \
+      | grep -q '^True$' \
+      || missing+=("capi-system/capi-controller-manager")
+
+    KUBECONFIG="$mgmt_kcfg" kubectl -n capmox-system get deployment capmox-controller-manager \
+      -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null \
+      | grep -q '^True$' \
+      || missing+=("capmox-system/capmox-controller-manager")
+
+    local s
+    for s in "${secrets[@]}"; do
+      [[ -n "$s" ]] || continue
+      KUBECONFIG="$mgmt_kcfg" kubectl -n "$PROXMOX_BOOTSTRAP_SECRET_NAMESPACE" \
+        get secret "$s" >/dev/null 2>&1 \
+        || missing+=("Secret/${PROXMOX_BOOTSTRAP_SECRET_NAMESPACE}/${s}")
+    done
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+      ok=true
+      break
+    fi
+    sleep 5
+  done
+
+  if ! is_true "$ok"; then
+    die "Pivot parity verification timed out after ${timeout_seconds}s. Missing: ${missing[*]:-unknown}"
+  fi
+  log "Pivot parity verified on management cluster."
+}
+
+# Mirrored in internal/pivot/pivot.go TeardownKind(). Deletes the kind cluster
+# unless PIVOT_KEEP_KIND or NO_DELETE_KIND is set.
+teardown_kind_after_pivot() {
+  if is_true "${PIVOT_KEEP_KIND:-false}"; then
+    log "PIVOT_KEEP_KIND=true — keeping kind cluster ${KIND_CLUSTER_NAME} after pivot."
+    return 0
+  fi
+  if is_true "${NO_DELETE_KIND:-false}"; then
+    log "NO_DELETE_KIND=true — keeping kind cluster ${KIND_CLUSTER_NAME} after pivot."
+    return 0
+  fi
+  log "Deleting kind cluster ${KIND_CLUSTER_NAME} (pivot complete)..."
+  kind delete cluster --name "$KIND_CLUSTER_NAME" \
+    || warn "Failed to delete kind cluster ${KIND_CLUSTER_NAME}; remove manually if needed."
+}
+
 purge_stale_host_networking() {
   log "Purging stale host networking state from previous kind/CNI runs..."
 
@@ -8430,6 +8843,42 @@ wait_for_service_endpoint capmox-system capmox-webhook-service 300
 
 recreate_identities_resync_and_rollout_capmox
 
+# --- 8.5 Pivot: kind -> management cluster (when PIVOT_ENABLED=true) ---------
+# Mirrors internal/pivot/pivot.go EnsureManagementCluster. Default PIVOT_ENABLED=false,
+# so the entire block is a no-op and the script behaves exactly as before.
+PIVOT_MGMT_KUBECONFIG=""
+if pivot_enabled; then
+  log "Phase 2.9.5: Pivoting CAPI from kind to a permanent management cluster (PIVOT_ENABLED=true)."
+
+  # 1. Generate + apply the management-cluster CAPI manifest on kind.
+  generate_mgmt_manifest_if_missing
+  apply_mgmt_cluster_manifest_to_kind "$MGMT_CAPI_MANIFEST"
+
+  # 2. Wait for the management cluster Available, fetch its kubeconfig.
+  wait_for_mgmt_cluster_ready
+  PIVOT_MGMT_KUBECONFIG="$(fetch_mgmt_kubeconfig)"
+  log "Management cluster kubeconfig written to ${PIVOT_MGMT_KUBECONFIG} (mode 0600)."
+
+  # 3. Run clusterctl init against the new management cluster.
+  clusterctl_init_on_mgmt "$PIVOT_MGMT_KUBECONFIG"
+
+  # 4. Run clusterctl move --to-kubeconfig=<mgmt> to migrate CAPI state from kind.
+  clusterctl_move_to_mgmt "$PIVOT_MGMT_KUBECONFIG"
+
+  # 5. Mirror proxmox-bootstrap-system Secrets from kind to mgmt.
+  handoff_bootstrap_secrets_kind_to_mgmt "$PIVOT_MGMT_KUBECONFIG"
+
+  # 6. Verify parity (CAPI inventory + bootstrap Secrets present on mgmt).
+  verify_pivot_parity "$PIVOT_MGMT_KUBECONFIG"
+
+  # 7. Rebind subsequent kubectl context to the mgmt kubeconfig so the
+  #    workload-cluster apply path (and everything afterwards) targets mgmt
+  #    rather than kind. This is the simplest, most consistent way to make
+  #    the existing phase-9 logic run conditionally against either kind or mgmt.
+  export KUBECONFIG="$PIVOT_MGMT_KUBECONFIG"
+  log "Phase 2.9.5 complete: subsequent kubectl operations use the management cluster (KUBECONFIG=${PIVOT_MGMT_KUBECONFIG})."
+fi
+
 # --- 9. Apply workload cluster manifest --------------------------------------
 # Label the Cluster, then apply it before Cilium/Argo HelmChartProxy objects so a Cluster exists
 # to select (CAAPH). Cilium: Cluster API add-on provider Helm (HelmChartProxy), not ClusterResourceSet.
@@ -8512,6 +8961,12 @@ if is_true "$ARGOCD_ENABLED"; then
   fi
 else
   warn "Argo CD disabled (--disable-argocd) — skipping CAAPH workload Argo and app-of-apps."
+fi
+
+# --- 11. Pivot teardown: delete kind unless caller asked to keep it ----------
+# Mirrored in internal/pivot/pivot.go TeardownKind. No-op when pivot is disabled.
+if pivot_enabled; then
+  teardown_kind_after_pivot
 fi
 
 log "Done. CAPI: 'kubectl get clusters -A' and 'clusterctl describe cluster <name>'. For workload apps, rely on Argo CD sync (this script does not wait for all add-ons to be Healthy)."

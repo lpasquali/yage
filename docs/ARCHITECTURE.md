@@ -85,7 +85,8 @@ flowchart TD
     P26 --> P27[Phase 2.7: management CNI = kindnet<br/>L8369-L8372]
     P27 --> P28[Phase 2.8: clusterctl init core+CAAPH+CAPMOX<br/>L8374-L8423]
     P28 --> P29[Phase 2.9: workload manifest apply<br/>+ Cilium HelmChartProxy<br/>L8425-L8494]
-    P29 --> P210[Phase 2.10: Argo CD Operator<br/>+ CAAPH argocd-apps<br/>L8496-L8508]
+    P29 --> P295[Phase 2.95: Pivot PIVOT_ENABLED=true<br/>clusterctl move kind to mgmt<br/>see Diagram 6]
+    P295 --> P210[Phase 2.10: Argo CD Operator<br/>+ CAAPH argocd-apps<br/>L8496-L8508<br/>note: targets mgmt kubeconfig<br/>when pivot enabled, kind context otherwise]
     P210 --> Z[Done]
 ```
 
@@ -277,6 +278,88 @@ flowchart TD
     SSO --> SSO_SRC[kustomize manifest]
 ```
 
+## Bootstrap-and-pivot pattern
+
+The kind cluster that hosts CAPI during phases 2.4 through 2.9 is intentionally
+ephemeral: it is single-host, runs on Docker on the operator's workstation, and
+is not the production management plane. Treating it as the long-lived CAPI
+host is fragile — the workstation reboots, Docker upgrades, kind versions, and
+local kubeconfigs all become operational surface area for a control plane that
+should be cluster-grade. The bootstrap-and-pivot pattern resolves this by
+using kind only as a "boot loader": kind brings up enough CAPI to provision a
+single-node "management cluster" on Proxmox, and that mgmt cluster then takes
+over CAPI duties for the rest of the lifecycle.
+
+When `PIVOT_ENABLED=true`, kind becomes transient. After the management
+cluster comes up on Proxmox and reports the CAPI Cluster as Available, the
+canonical `clusterctl move` machinery copies all CAPI custom resources
+(Clusters, Machines, KubeadmControlPlanes, ProxmoxClusters, MachineDeployments,
+identity Secrets, …) from the kind management plane to the new Proxmox-hosted
+management cluster, and the kind cluster is torn down. Subsequent workload
+clusters are then provisioned by applying their Cluster CRs against the
+mgmt kubeconfig instead of the kind context, and Argo CD targeting in
+phase 2.10 follows the same flip. When `PIVOT_ENABLED=false` (the default),
+the legacy flow is preserved verbatim: kind remains the management plane and
+workload Cluster CRs are applied to it directly.
+
+The eight pivot steps, with their Go entry points in the new
+`internal/pivot/` package:
+
+1. **EnsureManagementCluster** — provision the single-node mgmt cluster on
+   Proxmox via the existing CAPMOX path on kind (`internal/pivot/pivot.go`).
+2. **Wait for the CAPI Cluster to report Available on kind**
+   (`internal/pivot/wait.go`).
+3. **Fetch the mgmt kubeconfig** from the kind-side
+   `<mgmt-cluster>-kubeconfig` Secret and persist it locally
+   (`internal/pivot/wait.go`).
+4. **InstallCAPIOnManagement** — `clusterctl init` against the mgmt
+   kubeconfig with the same providers (core, kubeadm bootstrap + control
+   plane, CAAPH, in-cluster IPAM, CAPMOX) (`internal/pivot/move.go`).
+5. **MoveCAPIState** — `clusterctl move --to-kubeconfig <mgmt>` to
+   transfer all CAPI CRs and identity Secrets from kind to mgmt
+   (`internal/pivot/move.go`).
+6. **HandOffBootstrapSecretsToManagement** — re-create the
+   `proxmox-bootstrap-config/config.yaml` Secret (and any sibling literal
+   Secrets the bootstrap relies on) inside the new
+   `proxmox-bootstrap-system` namespace on the mgmt cluster
+   (`internal/kindsync/handoff.go`).
+7. **VerifyParity** — compare the post-move set of CAPI CRs on mgmt
+   against the pre-move snapshot from kind, and assert that controllers
+   on mgmt are reconciling the moved Clusters
+   (`internal/pivot/pivot.go`).
+8. **TeardownKind** — delete the kind cluster (skipped under
+   `--no-delete-kind`) (`internal/pivot/pivot.go`).
+
+### Diagram 6: bootstrap-and-pivot timeline
+
+```mermaid
+flowchart TD
+    START[bootstrap-capi start] --> KIND[kind cluster transient<br/>phases 2.4 to 2.6]
+    KIND --> PROV[clusterctl init on kind<br/>phase 2.8]
+    PROV --> BRANCH{PIVOT_ENABLED?}
+
+    BRANCH -- false default --> WLKIND[apply workload Cluster on kind<br/>phase 2.9 + 2.10]
+    WLKIND --> CILIUMK[Cilium HelmChartProxy via CAAPH on kind]
+    CILIUMK --> ARGOK[Argo CD Operator + argocd-apps<br/>targeting workload from kind]
+
+    BRANCH -- true --> MGMTAPPLY[apply mgmt-Cluster CR on kind<br/>phase 2.95 step 1]
+    MGMTAPPLY --> MGMT[mgmt cluster on Proxmox<br/>single node]
+    MGMT --> WAIT[wait Cluster Available on kind<br/>step 2]
+    WAIT --> KCFG[fetch mgmt kubeconfig<br/>from kind Secret<br/>step 3]
+    KCFG --> INIT[clusterctl init on mgmt<br/>step 4]
+    INIT --> MOVE[clusterctl move kind to mgmt<br/>step 5]
+    MOVE --> HANDOFF[handoff bootstrap Secrets<br/>proxmox-bootstrap-system NS<br/>step 6]
+    HANDOFF --> VERIFY[VerifyParity<br/>step 7]
+    VERIFY --> TEARDOWN[delete kind<br/>step 8]
+    TEARDOWN --> ONGOING[ongoing operations target mgmt]
+    ONGOING --> WLMGMT[apply workload Cluster on mgmt<br/>phase 2.10]
+    WLMGMT --> CILIUMW[Cilium HelmChartProxy via CAAPH on mgmt]
+    CILIUMW --> ARGOW[Argo CD Operator + argocd-apps<br/>targeting workload from mgmt]
+
+    ARGOK --> DONE[Done]
+    ARGOW --> DONE
+```
+
 ## Keycloak SSO topology (diagram 4)
 
 ```mermaid
@@ -436,6 +519,19 @@ Counts produced from
 Everything else (deploy/Service/Secret/CRD apply, waits, Cluster CR
 patch, kubeconfig discovery, Helm chart proxy authoring) goes through
 `internal/k8sclient` typed + dynamic clients.
+
+Intentional `clusterctl` shell-outs (the binary is the supported entry
+point for these operations and re-implementing them in-process would
+fork upstream behaviour):
+
+- `clusterctl init` — provider install on both the kind management plane
+  (phase 2.8) and the Proxmox-hosted management cluster (pivot step 4).
+- `clusterctl alpha rollout restart` — used by `--workload-rollout` to
+  roll KubeadmControlPlane / MachineDeployment.
+- `clusterctl move` — pivot step 5; transfers all CAPI CRs and identity
+  Secrets from kind to the mgmt cluster when `PIVOT_ENABLED=true`. Reusing
+  the upstream binary preserves the canonical move semantics (pause /
+  copy / verify / unpause) rather than re-implementing them.
 
 ## Vendor library inventory
 

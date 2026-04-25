@@ -108,22 +108,15 @@ func installTarballMember(url, member string, tarStripComponents int) error {
 	return shell.RunPrivileged("chmod", "+x", filepath.Join("/usr/local/bin", filepath.Base(member)))
 }
 
-// Kind mirrors ensure_kind(): install kind pinned to cfg.KindVersion.
+// Kind is a no-op: cluster lifecycle is now driven through the embedded
+// `sigs.k8s.io/kind/pkg/cluster` library, so the kind CLI binary is no longer
+// required at runtime. The function is retained (rather than removed) to keep
+// existing call sites in bootstrap.go compiling without churn. The cfg
+// parameter is intentionally unused.
 func Kind(cfg *config.Config) error {
-	if shell.CommandExists("kind") {
-		have := firstVersionOn("kind", "--version", "2>&1")
-		if versionx.Match(have, cfg.KindVersion) {
-			return nil
-		}
-		logx.Warn("kind (%s) does not match KIND_VERSION=%s — reinstalling...", orUnknown(have), cfg.KindVersion)
-	} else {
-		logx.Warn("kind not found — installing...")
-	}
-	url := fmt.Sprintf(
-		"https://github.com/kubernetes-sigs/kind/releases/download/%s/kind-%s-%s",
-		cfg.KindVersion, sysinfo.OS(), sysinfo.Arch(),
-	)
-	return installBinary("kind", url)
+	_ = cfg
+	logx.Log("kind library is embedded — skipping CLI install")
+	return nil
 }
 
 // Kubectl mirrors ensure_kubectl(): installs from dl.k8s.io.
@@ -188,10 +181,10 @@ func ArgoCDCLI(cfg *config.Config) error {
 	}
 	if shell.CommandExists("argocd") {
 		have := firstVersionOn("argocd", "version", "--client", "2>&1")
-		if versionx.Match(have, cfg.ArgoCDCLIVersion) {
+		if versionx.Match(have, cfg.ArgoCDVersion) {
 			return nil
 		}
-		logx.Warn("argocd CLI (%s) does not match ARGOCD_CLI_VERSION=%s — reinstalling...", orUnknown(have), cfg.ArgoCDCLIVersion)
+		logx.Warn("argocd CLI (%s) does not match ARGOCD_VERSION=%s — reinstalling...", orUnknown(have), cfg.ArgoCDVersion)
 	} else {
 		logx.Warn("argocd CLI not found — installing...")
 	}
@@ -201,7 +194,7 @@ func ArgoCDCLI(cfg *config.Config) error {
 	default:
 		logx.Die("Unsupported architecture for argocd CLI on Linux: %s (need amd64 or arm64).", arch)
 	}
-	url := fmt.Sprintf("https://github.com/argoproj/argo-cd/releases/download/%s/argocd-linux-%s", cfg.ArgoCDCLIVersion, arch)
+	url := fmt.Sprintf("https://github.com/argoproj/argo-cd/releases/download/%s/argocd-linux-%s", cfg.ArgoCDVersion, arch)
 	return installBinary("argocd", url)
 }
 
@@ -281,29 +274,63 @@ func SystemDependencies() error {
 	return nil
 }
 
-// Helm installs helm 3 via the upstream installer when it's not on PATH.
-// Ports ensure_helm_present (bash L5845-L5851). The installer writes to
-// /usr/local/bin by default (needs sudo for that path).
-func Helm() error {
-	if shell.CommandExists("helm") {
-		return nil
+// Helm and EnsureHelmPresent were removed: an audit showed the rest of the
+// codebase has zero `helm` shell-outs, so installing the helm CLI is no longer
+// necessary. If a future caller needs helm functionality it should use
+// `helm.sh/helm/v3` in-process rather than shelling out to the binary.
+
+// Docker installs Docker Engine when it is not already on PATH. Ports
+// bash L8020-L8034 (curl get.docker.com, optional usermod, systemctl
+// enable --now docker).
+func Docker() {
+	if shell.CommandExists("docker") {
+		v, _, _ := shell.Capture("docker", "--version")
+		logx.Log("Docker already installed (%s).", strings.TrimSpace(v))
+		return
 	}
-	logx.Warn("helm not found — installing...")
-	// Fetch the installer, pipe into bash.
-	body, err := fetchAll("https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3")
+	logx.Log("Docker not found — installing via get.docker.com...")
+	body, err := fetchAll("https://get.docker.com")
 	if err != nil {
-		logx.Die("helm installation failed: %v", err)
+		logx.Die("Failed to fetch Docker installer: %v", err)
 	}
-	if err := shell.Pipe(body, "bash"); err != nil {
-		logx.Die("helm installation failed: %v", err)
+	// Pipe the script through bash (privileged).
+	if err := shell.RunPrivileged("bash", "-c", body); err != nil {
+		logx.Die("Docker installation failed.")
 	}
-	if !shell.CommandExists("helm") {
-		logx.Die("helm installation failed.")
+	// Optionally add SUDO_USER to the docker group.
+	if u := os.Getenv("SUDO_USER"); u != "" {
+		_ = shell.RunPrivileged("usermod", "-aG", "docker", u)
 	}
-	return nil
+	if shell.CommandExists("systemctl") {
+		_ = shell.RunPrivileged("systemctl", "enable", "--now", "docker")
+	}
+	if !shell.CommandExists("docker") {
+		logx.Die("Docker installation failed.")
+	}
+	logx.Log("Docker installed successfully.")
 }
 
-// fetchAll is a minimal `curl -fsSL URL` used by Helm() and installers.
+// UpgradeDocker upgrades docker-ce / docker-ce-cli / containerd.io via
+// the host package manager. Ports bash L8098-L8109. Best-effort: unknown
+// package managers are warned about and skipped.
+func UpgradeDocker() {
+	switch {
+	case shell.CommandExists("apt-get"):
+		_ = shell.RunPrivileged("apt-get", "update", "-qq")
+		_ = shell.RunPrivileged("apt-get", "install", "-y", "--only-upgrade",
+			"docker-ce", "docker-ce-cli", "containerd.io")
+	case shell.CommandExists("dnf"):
+		_ = shell.RunPrivileged("dnf", "upgrade", "-y",
+			"docker-ce", "docker-ce-cli", "containerd.io")
+	case shell.CommandExists("yum"):
+		_ = shell.RunPrivileged("yum", "update", "-y",
+			"docker-ce", "docker-ce-cli", "containerd.io")
+	default:
+		logx.Warn("Unknown package manager — skipping Docker update.")
+	}
+}
+
+// fetchAll is a minimal `curl -fsSL URL` used by the Docker installer.
 // Kept here so it doesn't multiply across packages.
 func fetchAll(url string) (string, error) {
 	resp, err := http.Get(url)
@@ -476,16 +503,23 @@ func kubectlClientGitVersion() string {
 
 func clusterctlGitVersion() string {
 	out, _, _ := shell.Capture("clusterctl", "version", "-o", "json")
+	// clusterctl v1.13+ wraps the version under a top-level "clusterctl"
+	// key; older releases used "clientVersion" or "ClientVersion".
 	var d struct {
+		Clusterctl struct {
+			GitVersion string `json:"gitVersion"`
+		} `json:"clusterctl"`
 		ClientVersion struct {
 			GitVersion string `json:"gitVersion"`
 		} `json:"clientVersion"`
-		// clusterctl in some versions uses "ClientVersion"+"GitVersion" caps
 		ClientVersionCap struct {
 			GitVersion string `json:"GitVersion"`
 		} `json:"ClientVersion"`
 	}
 	_ = json.Unmarshal([]byte(out), &d)
+	if d.Clusterctl.GitVersion != "" {
+		return d.Clusterctl.GitVersion
+	}
 	if d.ClientVersion.GitVersion != "" {
 		return d.ClientVersion.GitVersion
 	}

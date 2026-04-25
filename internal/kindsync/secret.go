@@ -17,17 +17,17 @@
 package kindsync
 
 import (
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
+	"context"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
 // kindSecret models a kind Secret merge: take the existing in-cluster
 // data (restricted to AllowedKeys), overlay new non-empty values for the
-// same keys, emit a fresh Secret JSON, then `kubectl apply -f -` it.
+// same keys, server-side-apply a fresh Secret object.
 //
 // The label block is preserved from the existing object when present.
 // Missing AllowedKeys are not erased on the kind side (data is merged,
@@ -47,59 +47,41 @@ type kindSecret struct {
 // and returns an error on a failed apply so callers can log and move on
 // (the bash uses `|| warn` then continues).
 func (s kindSecret) apply() error {
-	raw, _, _ := shell.Capture(
-		"kubectl", "--context", s.Context,
-		"get", "secret", s.Name,
-		"-n", s.Namespace, "-o", "json",
-	)
-	var cur struct {
-		Metadata struct {
-			Labels map[string]string `json:"labels,omitempty"`
-		} `json:"metadata,omitempty"`
-		Data map[string]string `json:"data,omitempty"`
+	cli, err := k8sclient.ForContext(s.Context)
+	if err != nil {
+		logx.Warn("Failed to update %s/%s.", s.Namespace, s.Name)
+		return err
 	}
-	_ = json.Unmarshal([]byte(raw), &cur)
+	bg := context.Background()
 
 	allowed := make(map[string]struct{}, len(s.AllowedKeys))
 	for _, k := range s.AllowedKeys {
 		allowed[k] = struct{}{}
 	}
 
-	out := map[string]string{}
+	out := map[string][]byte{}
+	var labels map[string]string
+
 	// Preserve existing data for the allowed key set.
-	for k, v := range cur.Data {
-		if _, ok := allowed[k]; ok && v != "" {
-			out[k] = v
+	if cur, getErr := cli.Typed.CoreV1().Secrets(s.Namespace).Get(bg, s.Name, metav1.GetOptions{}); getErr == nil && cur != nil {
+		for k, v := range cur.Data {
+			if _, ok := allowed[k]; ok && len(v) > 0 {
+				out[k] = v
+			}
 		}
+		labels = cur.Labels
 	}
-	// Overlay with current env/config values, b64-encoded.
+	// Overlay with current env/config values (raw bytes — the typed
+	// Secret object owns the b64 wire encoding).
 	for _, k := range s.AllowedKeys {
 		v := s.LookupValue(k)
 		if v == "" {
 			continue
 		}
-		out[k] = base64.StdEncoding.EncodeToString([]byte(v))
+		out[k] = []byte(v)
 	}
 
-	meta := map[string]any{
-		"name":      s.Name,
-		"namespace": s.Namespace,
-	}
-	if len(cur.Metadata.Labels) > 0 {
-		meta["labels"] = cur.Metadata.Labels
-	}
-	obj := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Secret",
-		"metadata":   meta,
-		"type":       "Opaque",
-		"data":       out,
-	}
-	doc, err := json.Marshal(obj)
-	if err != nil {
-		return err
-	}
-	if err := shell.Pipe(string(doc), "kubectl", "--context", s.Context, "apply", "-f", "-"); err != nil {
+	if err := applySecret(bg, cli, s.Namespace, s.Name, out, labels); err != nil {
 		logx.Warn("Failed to update %s/%s.", s.Namespace, s.Name)
 		return err
 	}
@@ -108,7 +90,10 @@ func (s kindSecret) apply() error {
 
 // ensureNamespace mirrors the idempotent
 // `kubectl create ns ... --dry-run=client -o yaml | kubectl apply -f -`.
-func ensureNamespace(ctx, ns string) error {
-	doc := fmt.Sprintf(`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q}}`, ns)
-	return shell.Pipe(doc, "kubectl", "--context", ctx, "apply", "-f", "-")
+func ensureNamespace(kctx, ns string) error {
+	cli, err := k8sclient.ForContext(kctx)
+	if err != nil {
+		return err
+	}
+	return cli.EnsureNamespace(context.Background(), ns)
 }

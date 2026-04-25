@@ -1,13 +1,24 @@
 package bootstrap
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/kind/pkg/cluster"
+
 	"github.com/lpasquali/bootstrap-capi/internal/capimanifest"
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/kindsync"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
 	"github.com/lpasquali/bootstrap-capi/internal/opentofux"
@@ -15,17 +26,25 @@ import (
 	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
+var capiClusterGVR = schema.GroupVersionResource{
+	Group:    "cluster.x-k8s.io",
+	Version:  "v1beta1",
+	Resource: "clusters",
+}
+
 // WaitForWorkloadClusterReady ports wait_for_workload_cluster_ready
-// (L7362-L7391). Waits for CAPI Cluster Available, fetches its
-// kubeconfig via clusterctl, then waits for Cilium + node readiness.
+// (L7362-L7391).
 func WaitForWorkloadClusterReady(cfg *config.Config) {
 	capimanifest.DiscoverWorkloadClusterIdentity(cfg, cfg.CAPIManifest)
 
 	logx.Log("Waiting for workload cluster %s/%s Available...",
 		cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName)
-	if err := shell.Run("kubectl", "wait", "cluster", cfg.WorkloadClusterName,
-		"--namespace", cfg.WorkloadClusterNamespace,
-		"--for=condition=Available", "--timeout=60m"); err != nil {
+	mgmt, err := k8sclient.ForCurrent()
+	if err != nil {
+		logx.Die("waiting for workload cluster: cannot build management client: %v", err)
+	}
+	bg := context.Background()
+	if err := waitClusterAvailable(mgmt, bg, cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName, 60*time.Minute); err != nil {
 		logx.Die("workload cluster did not become Available: %v", err)
 	}
 
@@ -37,23 +56,91 @@ func WaitForWorkloadClusterReady(cfg *config.Config) {
 	defer os.Remove(kcfg)
 	logx.Log("Workload cluster Available; kubeconfig fetched.")
 
+	cli, err := k8sclient.ForKubeconfigFile(kcfg)
+	if err != nil {
+		logx.Warn("workload kubeconfig client: %v", err)
+		return
+	}
 	logx.Log("Waiting for Cilium rollout in workload cluster %s...", cfg.WorkloadClusterName)
-	_ = shell.Run("kubectl", "--kubeconfig", kcfg, "rollout", "status",
-		"daemonset/cilium", "-n", "kube-system", "--timeout=20m")
-	_ = shell.Run("kubectl", "--kubeconfig", kcfg, "rollout", "status",
-		"deployment/cilium-operator", "-n", "kube-system", "--timeout=20m")
-	_ = shell.Run("kubectl", "--kubeconfig", kcfg, "wait", "nodes", "--all",
-		"--for=condition=Ready", "--timeout=20m")
+	_ = waitDaemonSetReady(cli, "kube-system", "cilium", 20*time.Minute)
+	_ = waitDeploymentReady(cli, "kube-system", "cilium-operator", 20*time.Minute)
+	_ = waitAllNodesReady(cli, 20*time.Minute)
 }
 
-// PurgeStaleHostNetworking ports purge_stale_host_networking
-// (L7393-L7441). Best-effort: every step ignores errors; removes
-// leftover CNI config/state, stale kind/lxc bridge interfaces,
-// Cilium-owned iptables chains, and cni-* network namespaces.
+// waitClusterAvailable polls a CAPI Cluster's Available condition.
+func waitClusterAvailable(cli *k8sclient.Client, bg context.Context, ns, name string, timeout time.Duration) error {
+	return k8sclient.PollUntil(bg, 5*time.Second, timeout, func(ctx context.Context) (bool, error) {
+		u, err := cli.Dynamic.Resource(capiClusterGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		conds, _, _ := unstructuredSlice(u.Object, "status", "conditions")
+		for _, c := range conds {
+			cm, ok := c.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			t, _ := cm["type"].(string)
+			s, _ := cm["status"].(string)
+			if t == "Available" && s == "True" {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+}
+
+// waitDaemonSetReady waits for a DaemonSet's NumberReady == DesiredNumberScheduled.
+func waitDaemonSetReady(cli *k8sclient.Client, ns, name string, timeout time.Duration) error {
+	bg := context.Background()
+	return k8sclient.PollUntil(bg, 5*time.Second, timeout, func(ctx context.Context) (bool, error) {
+		ds, err := cli.Typed.AppsV1().DaemonSets(ns).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return ds.Status.DesiredNumberScheduled > 0 &&
+			ds.Status.NumberReady == ds.Status.DesiredNumberScheduled, nil
+	})
+}
+
+// waitAllNodesReady polls every Node for Ready=True.
+func waitAllNodesReady(cli *k8sclient.Client, timeout time.Duration) error {
+	bg := context.Background()
+	return k8sclient.PollUntil(bg, 5*time.Second, timeout, func(ctx context.Context) (bool, error) {
+		nodes, err := cli.Typed.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return false, err
+		}
+		if len(nodes.Items) == 0 {
+			return false, nil
+		}
+		for _, n := range nodes.Items {
+			ready := false
+			for _, c := range n.Status.Conditions {
+				if c.Type == corev1.NodeReady && c.Status == corev1.ConditionTrue {
+					ready = true
+					break
+				}
+			}
+			if !ready {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+}
+
+// PurgeStaleHostNetworking is unchanged from the previous implementation
+// (uses ip / iptables / sudo, not kubectl).
 func PurgeStaleHostNetworking() {
 	logx.Log("Purging stale host networking state from previous kind/CNI runs...")
 
-	// /etc/cni/net.d — delete kindnet/cilium/flannel/cni config files.
 	if fi, err := os.Stat("/etc/cni/net.d"); err == nil && fi.IsDir() {
 		entries, _ := os.ReadDir("/etc/cni/net.d")
 		for _, e := range entries {
@@ -71,15 +158,12 @@ func PurgeStaleHostNetworking() {
 		}
 	}
 
-	// /var/lib/cni — delete networks/ and results/.
 	if _, err := os.Stat("/var/lib/cni"); err == nil {
 		_ = shell.RunPrivileged("rm", "-rf", "/var/lib/cni/networks", "/var/lib/cni/results")
 	}
 
-	// Stale kind/lxc bridge interfaces.
 	out, _, _ := shell.Capture("ip", "link", "show")
 	for _, line := range strings.Split(out, "\n") {
-		// Bash parses: `/^[0-9]+: (lxc|kind)/ { print $2 }` then strips @...
 		fields := strings.SplitN(line, ":", 3)
 		if len(fields) < 2 {
 			continue
@@ -92,7 +176,6 @@ func PurgeStaleHostNetworking() {
 		_ = shell.RunPrivileged("ip", "link", "delete", name)
 	}
 
-	// Cilium iptables chains.
 	if shell.CommandExists("iptables") {
 		for _, table := range []string{"filter", "nat", "mangle"} {
 			out, _, _ := shell.Capture("sudo", "iptables", "-t", table, "-S")
@@ -112,7 +195,6 @@ func PurgeStaleHostNetworking() {
 		}
 	}
 
-	// cni-* netns.
 	if shell.CommandExists("ip") {
 		out, _, _ := shell.Capture("ip", "netns", "list")
 		for _, line := range strings.Split(out, "\n") {
@@ -134,7 +216,7 @@ func PurgeStaleHostNetworking() {
 // DeleteWorkloadClusterBeforeKindDeletion ports
 // delete_workload_cluster_before_kind_deletion (L7554-L7582).
 func DeleteWorkloadClusterBeforeKindDeletion(cfg *config.Config) {
-	ctx := "kind-" + cfg.KindClusterName
+	ctxName := "kind-" + cfg.KindClusterName
 	name := cfg.WorkloadClusterName
 	ns := cfg.WorkloadClusterNamespace
 	if ns == "" {
@@ -153,17 +235,37 @@ func DeleteWorkloadClusterBeforeKindDeletion(cfg *config.Config) {
 		logx.Warn("WORKLOAD_CLUSTER_NAME is empty; skipping workload cluster deletion before kind teardown.")
 		return
 	}
-	if err := shell.Run("kubectl", "--context", ctx, "get", "cluster", name, "-n", ns); err != nil {
-		logx.Log("No workload Cluster %s/%s found on %s; continuing with kind deletion.", ns, name, ctx)
+	cli, err := k8sclient.ForContext(ctxName)
+	if err != nil {
+		logx.Warn("Cannot build kube client for %s: %v; skipping workload cluster deletion.", ctxName, err)
+		return
+	}
+	bg := context.Background()
+	if _, err := cli.Dynamic.Resource(capiClusterGVR).Namespace(ns).Get(bg, name, metav1.GetOptions{}); err != nil {
+		logx.Log("No workload Cluster %s/%s found on %s; continuing with kind deletion.", ns, name, ctxName)
 		return
 	}
 	logx.Log("Deleting workload Cluster %s/%s before deleting kind cluster %s...",
 		ns, name, cfg.KindClusterName)
-	_ = shell.Run("kubectl", "--context", ctx, "delete", "cluster", name,
-		"-n", ns, "--ignore-not-found")
+	if err := cli.Dynamic.Resource(capiClusterGVR).Namespace(ns).
+		Delete(bg, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		logx.Warn("delete workload Cluster: %v", err)
+	}
 	logx.Log("Waiting for workload Cluster %s/%s to be deleted...", ns, name)
-	_ = shell.Run("kubectl", "--context", ctx, "wait",
-		"--for=delete", "cluster/"+name, "-n", ns, "--timeout=30m")
+	_ = waitClusterDeleted(cli, bg, ns, name, 30*time.Minute)
+}
+
+func waitClusterDeleted(cli *k8sclient.Client, bg context.Context, ns, name string, timeout time.Duration) error {
+	return k8sclient.PollUntil(bg, 5*time.Second, timeout, func(ctx context.Context) (bool, error) {
+		_, err := cli.Dynamic.Resource(capiClusterGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return false, nil
+	})
 }
 
 // PurgeGeneratedArtifacts ports purge_generated_artifacts (L7584-L7618).
@@ -171,19 +273,21 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 	stateDir := opentofux.StateDir()
 	logx.Log("Purging generated files and Terraform state...")
 
-	if shell.CommandExists("kind") && shell.CommandExists("kubectl") {
-		out, _, _ := shell.Capture("kind", "get", "clusters")
+	provider := cluster.NewProvider()
+	if names, err := provider.List(); err == nil {
 		found := false
-		for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", ""), "\n") {
-			if strings.TrimSpace(ln) == cfg.KindClusterName {
+		for _, n := range names {
+			if n == cfg.KindClusterName {
 				found = true
 				break
 			}
 		}
 		if found {
-			_ = shell.Run("kubectl", "--context", "kind-"+cfg.KindClusterName,
-				"delete", "namespace", cfg.ProxmoxBootstrapSecretNamespace,
-				"--ignore-not-found", "--wait=false")
+			if cli, err := k8sclient.ForContext("kind-" + cfg.KindClusterName); err == nil {
+				bg := context.Background()
+				_ = cli.Typed.CoreV1().Namespaces().
+					Delete(bg, cfg.ProxmoxBootstrapSecretNamespace, metav1.DeleteOptions{})
+			}
 			DeleteWorkloadClusterBeforeKindDeletion(cfg)
 			DeleteCAPIManifestSecret(cfg)
 		} else {
@@ -224,22 +328,41 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 }
 
 // WorkloadRolloutCAPITouchRollout ports workload_rollout_capi_touch_rollout
-// (L7763-L7858). Triggers CAPI to roll control-plane + worker Machines
-// via `clusterctl alpha rollout restart` (preferred) or
-// `spec.rolloutAfter` patch (fallback).
+// (L7763-L7858). Triggers CAPI to roll control-plane + worker Machines.
+// `clusterctl alpha rollout restart` is intentionally retained as a shell-out
+// (the only way to drive that subcommand without pulling cluster-api/client
+// in-process is far heavier).
 func WorkloadRolloutCAPITouchRollout(cfg *config.Config) {
-	ctx := "kind-" + cfg.KindClusterName
+	ctxName := "kind-" + cfg.KindClusterName
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	selector := "cluster.x-k8s.io/cluster-name=" + cfg.WorkloadClusterName
 
-	outK, _, _ := shell.Capture("kubectl", "--context", ctx,
-		"-n", cfg.WorkloadClusterNamespace, "get", "kubeadmcontrolplane",
-		"-l", selector, "-o", "name")
-	kcps := nonEmptyLines(outK)
-	outM, _, _ := shell.Capture("kubectl", "--context", ctx,
-		"-n", cfg.WorkloadClusterNamespace, "get", "machinedeployment",
-		"-l", selector, "-o", "name")
-	mds := nonEmptyLines(outM)
+	cli, err := k8sclient.ForContext(ctxName)
+	if err != nil {
+		logx.Die("workload-rollout: cannot build kube client for %s: %v", ctxName, err)
+	}
+	bg := context.Background()
+
+	kcpGVR := schema.GroupVersionResource{Group: "controlplane.cluster.x-k8s.io", Version: "v1beta1", Resource: "kubeadmcontrolplanes"}
+	mdGVR := schema.GroupVersionResource{Group: "cluster.x-k8s.io", Version: "v1beta1", Resource: "machinedeployments"}
+	pmGVR := schema.GroupVersionResource{Group: "infrastructure.cluster.x-k8s.io", Version: "v1alpha1", Resource: "proxmoxmachines"}
+
+	listNames := func(gvr schema.GroupVersionResource) []string {
+		ul, err := cli.Dynamic.Resource(gvr).Namespace(cfg.WorkloadClusterNamespace).
+			List(bg, metav1.ListOptions{LabelSelector: selector})
+		if err != nil || ul == nil {
+			return nil
+		}
+		out := make([]string, 0, len(ul.Items))
+		for _, it := range ul.Items {
+			if nm := it.GetName(); nm != "" {
+				out = append(out, nm)
+			}
+		}
+		return out
+	}
+	kcps := listNames(kcpGVR)
+	mds := listNames(mdGVR)
 
 	if len(kcps) == 0 {
 		logx.Warn("workload-rollout: no KubeadmControlPlane with label %s in %s — nothing to roll for the control plane.",
@@ -250,19 +373,23 @@ func WorkloadRolloutCAPITouchRollout(cfg *config.Config) {
 			selector, cfg.WorkloadClusterNamespace)
 	}
 
-	paused, _, _ := shell.Capture("kubectl", "--context", ctx,
-		"-n", cfg.WorkloadClusterNamespace, "get", "cluster",
-		cfg.WorkloadClusterName, "-o", "jsonpath={.spec.paused}")
-	if strings.TrimSpace(paused) == "true" {
-		logx.Warn("workload-rollout: Cluster %s has spec.paused=true — CAPI will not roll Machines until the Cluster is unpaused.",
-			cfg.WorkloadClusterName)
+	if u, err := cli.Dynamic.Resource(capiClusterGVR).Namespace(cfg.WorkloadClusterNamespace).
+		Get(bg, cfg.WorkloadClusterName, metav1.GetOptions{}); err == nil {
+		paused, _ := u.Object["spec"].(map[string]interface{})["paused"].(bool)
+		if paused {
+			logx.Warn("workload-rollout: Cluster %s has spec.paused=true — CAPI will not roll Machines until the Cluster is unpaused.",
+				cfg.WorkloadClusterName)
+		}
 	}
 	for _, md := range mds {
-		st, _, _ := shell.Capture("kubectl", "--context", ctx,
-			"-n", cfg.WorkloadClusterNamespace, "get", md,
-			"-o", "jsonpath={.spec.strategy.type}")
-		if strings.TrimSpace(st) == "OnDelete" {
-			logx.Warn("workload-rollout: %s uses spec.strategy.type=OnDelete — CAPI does not create replacement Machines until existing Machines are deleted. Use RollingUpdate, or delete Machine objects, or `kubectl delete machine <name>` for each node to replace.", md)
+		u, err := cli.Dynamic.Resource(mdGVR).Namespace(cfg.WorkloadClusterNamespace).
+			Get(bg, md, metav1.GetOptions{})
+		if err != nil {
+			continue
+		}
+		st, _, _ := unstructuredStr(u.Object, "spec", "strategy", "type")
+		if st == "OnDelete" {
+			logx.Warn("workload-rollout: %s uses spec.strategy.type=OnDelete — CAPI does not create replacement Machines until existing Machines are deleted.", md)
 		}
 	}
 
@@ -272,12 +399,17 @@ func WorkloadRolloutCAPITouchRollout(cfg *config.Config) {
 		if err != nil {
 			logx.Warn("workload-rollout: mktemp failed for kubeconfig; using spec.rolloutAfter only")
 		} else {
-			out, _, capErr := shell.Capture("kubectl", "config", "view", "--raw")
-			if capErr != nil || out == "" {
-				logx.Warn("workload-rollout: could not write kubeconfig for clusterctl; using spec.rolloutAfter only")
+			rules := clientcmd.NewDefaultClientConfigLoadingRules()
+			cc, err := rules.Load()
+			if err != nil || cc == nil {
+				logx.Warn("workload-rollout: could not load kubeconfig for clusterctl; using spec.rolloutAfter only")
 				os.Remove(f.Name())
 			} else {
-				if _, err := f.WriteString(out); err == nil {
+				body, err := clientcmd.Write(*cc)
+				if err != nil {
+					logx.Warn("workload-rollout: could not serialize kubeconfig for clusterctl; using spec.rolloutAfter only")
+					os.Remove(f.Name())
+				} else if _, err := f.Write(body); err == nil {
 					rkcfg = f.Name()
 				}
 			}
@@ -290,11 +422,14 @@ func WorkloadRolloutCAPITouchRollout(cfg *config.Config) {
 		defer os.Remove(rkcfg)
 	}
 
-	rollout := func(kind, resource string) {
-		name := resource
-		if i := strings.IndexByte(resource, '/'); i >= 0 {
-			name = resource[i+1:]
-		}
+	patchRolloutAfter := func(gvr schema.GroupVersionResource, name string) error {
+		body := []byte(fmt.Sprintf(`{"spec":{"rolloutAfter":"%s"}}`, now))
+		_, err := cli.Dynamic.Resource(gvr).Namespace(cfg.WorkloadClusterNamespace).
+			Patch(bg, name, types.MergePatchType, body, metav1.PatchOptions{})
+		return err
+	}
+
+	rollout := func(gvr schema.GroupVersionResource, kind, name string) {
 		ok := false
 		if rkcfg != "" {
 			if err := shell.Run("clusterctl", "alpha", "rollout", "restart",
@@ -304,40 +439,56 @@ func WorkloadRolloutCAPITouchRollout(cfg *config.Config) {
 				logx.Log("workload-rollout: clusterctl restarted %s/%s", kind, name)
 				ok = true
 			} else {
-				logx.Warn("workload-rollout: clusterctl alpha rollout restart failed for %s/%s (see above) — trying spec.rolloutAfter", kind, name)
+				logx.Warn("workload-rollout: clusterctl alpha rollout restart failed for %s/%s — trying spec.rolloutAfter", kind, name)
 			}
 		}
 		if !ok {
-			patch := `{"spec":{"rolloutAfter":"` + now + `"}}`
-			if err := shell.Run("kubectl", "--context", ctx,
-				"-n", cfg.WorkloadClusterNamespace, "patch", resource,
-				"--type", "merge", "-p", patch); err == nil {
-				logx.Log("workload-rollout: set spec.rolloutAfter on %s", resource)
+			if err := patchRolloutAfter(gvr, name); err == nil {
+				logx.Log("workload-rollout: set spec.rolloutAfter on %s/%s", kind, name)
 			} else {
-				logx.Warn("workload-rollout: failed to set spec.rolloutAfter on %s", resource)
+				logx.Warn("workload-rollout: failed to set spec.rolloutAfter on %s/%s: %v", kind, name, err)
 			}
 		}
 	}
 	for _, kcp := range kcps {
-		rollout("kubeadmcontrolplane", kcp)
+		rollout(kcpGVR, "kubeadmcontrolplane", kcp)
 	}
 	for _, md := range mds {
-		rollout("machinedeployment", md)
+		rollout(mdGVR, "machinedeployment", md)
 	}
 
-	_ = shell.Run("kubectl", "--context", ctx, "-n", cfg.WorkloadClusterNamespace,
-		"annotate", "cluster", cfg.WorkloadClusterName,
-		"reconcile.cluster.x-k8s.io/force-rollout="+now, "--overwrite")
-	pms, _, _ := shell.Capture("kubectl", "--context", ctx,
-		"-n", cfg.WorkloadClusterNamespace, "get", "proxmoxmachines",
-		"-l", selector, "-o", "name")
-	tsNow := time.Now().Unix()
-	for _, pm := range nonEmptyLines(pms) {
-		_ = shell.Run("kubectl", "--context", ctx,
-			"-n", cfg.WorkloadClusterNamespace, "annotate", pm,
-			"reconcile.cluster.x-k8s.io/request="+time.Unix(tsNow, 0).UTC().Format("2006-01-02T15:04:05Z"),
-			"--overwrite")
+	annPatch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"reconcile.cluster.x-k8s.io/force-rollout":"%s"}}}`, now))
+	_, _ = cli.Dynamic.Resource(capiClusterGVR).Namespace(cfg.WorkloadClusterNamespace).
+		Patch(bg, cfg.WorkloadClusterName, types.MergePatchType, annPatch, metav1.PatchOptions{})
+
+	pms := listNames(pmGVR)
+	for _, pm := range pms {
+		pmAnn := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"reconcile.cluster.x-k8s.io/request":"%s"}}}`,
+			time.Now().UTC().Format("2006-01-02T15:04:05Z")))
+		_, _ = cli.Dynamic.Resource(pmGVR).Namespace(cfg.WorkloadClusterNamespace).
+			Patch(bg, pm, types.MergePatchType, pmAnn, metav1.PatchOptions{})
 	}
+}
+
+// unstructuredSlice fetches a []interface{} at path; returns nil on miss.
+func unstructuredSlice(obj map[string]interface{}, path ...string) ([]interface{}, bool, error) {
+	cur := obj
+	for i, p := range path {
+		v, ok := cur[p]
+		if !ok || v == nil {
+			return nil, false, nil
+		}
+		if i == len(path)-1 {
+			s, ok := v.([]interface{})
+			return s, ok, nil
+		}
+		next, ok := v.(map[string]interface{})
+		if !ok {
+			return nil, false, nil
+		}
+		cur = next
+	}
+	return nil, false, nil
 }
 
 func nonEmptyLines(s string) []string {
@@ -351,6 +502,5 @@ func nonEmptyLines(s string) []string {
 	return out
 }
 
-// Silence unused import in case kindsync is pulled in later here.
 var _ = kindsync.SyncBootstrapConfigToKind
 var _ = proxmox.APIJSONURL

@@ -1,15 +1,21 @@
 package bootstrap
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/kind/pkg/cluster"
 
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
 	"github.com/lpasquali/bootstrap-capi/internal/promptx"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
 // MaybeInteractiveSelectKindCluster ports
@@ -27,19 +33,9 @@ func MaybeInteractiveSelectKindCluster(cfg *config.Config) {
 	if cfg.Force {
 		return
 	}
-	if !shell.CommandExists("kind") || !shell.CommandExists("kubectl") {
-		return
-	}
-	curCtx, _, _ := shell.Capture("kubectl", "config", "current-context")
-	curCtx = strings.TrimSpace(curCtx)
-	raw, _, _ := shell.Capture("kind", "get", "clusters")
-	var names []string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			names = append(names, line)
-		}
-	}
+	curCtx := k8sclient.CurrentContext()
+	provider := cluster.NewProvider()
+	names, _ := provider.List()
 
 	if !promptx.CanPrompt() {
 		switch {
@@ -85,7 +81,7 @@ func MaybeInteractiveSelectKindCluster(cfg *config.Config) {
 	// 2. no kind clusters but kubeconfig points at kind-*
 	if len(names) == 0 && strings.HasPrefix(curCtx, "kind-") {
 		fromCtx := strings.TrimPrefix(curCtx, "kind-")
-		if err := shell.Run("kubectl", "cluster-info", "--request-timeout=5s"); err == nil {
+		if apiAlive(curCtx, 5*time.Second) {
 			fmt.Fprintf(os.Stderr, "\n\033[1;33m[?]\033[0m No clusters reported by 'kind get clusters', but kubectl context is \033[1m%s\033[0m and the API answers.\n", curCtx)
 			fmt.Fprintf(os.Stderr, "    Use kind cluster '%s' for updates instead of KIND_CLUSTER_NAME=%s? [Y/n]: ", fromCtx, cfg.KindClusterName)
 			resp := promptx.ReadLine()
@@ -135,36 +131,36 @@ func MaybeInteractiveSelectWorkloadCluster(cfg *config.Config) {
 	if cfg.Force {
 		return
 	}
-	ctx := "kind-" + cfg.KindClusterName
-	if !contextExists(ctx) {
+	ctxName := "kind-" + cfg.KindClusterName
+	if !k8sclient.ContextExists(ctxName) {
 		return
 	}
-	if err := shell.Run("kubectl", "--context", ctx, "get", "crd", "clusters.cluster.x-k8s.io"); err != nil {
+	cli, err := k8sclient.ForContext(ctxName)
+	if err != nil {
 		return
 	}
-	raw, _, _ := shell.Capture(
-		"kubectl", "--context", ctx, "get", "clusters.cluster.x-k8s.io", "-A",
-		"-o", "jsonpath={range .items[*]}{.metadata.namespace}\t{.metadata.name}\n{end}",
-	)
-	if strings.TrimSpace(raw) == "" {
+	bg := context.Background()
+	clusterGVR := schema.GroupVersionResource{
+		Group:    "cluster.x-k8s.io",
+		Version:  "v1beta1",
+		Resource: "clusters",
+	}
+	list, err := cli.Dynamic.Resource(clusterGVR).Namespace("").List(bg, metav1.ListOptions{})
+	if err != nil || list == nil {
 		return
 	}
 	var cNS, cName []string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, it := range list.Items {
+		nm := it.GetName()
+		if nm == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) != 2 || parts[1] == "" {
-			continue
-		}
-		ns := parts[0]
+		ns := it.GetNamespace()
 		if ns == "" {
 			ns = "default"
 		}
 		cNS = append(cNS, ns)
-		cName = append(cName, parts[1])
+		cName = append(cName, nm)
 	}
 	if len(cName) == 0 {
 		return
@@ -177,7 +173,7 @@ func MaybeInteractiveSelectWorkloadCluster(cfg *config.Config) {
 			cfg.WorkloadClusterName = cName[0]
 			RefreshDefaultCAPIManifestPath(cfg)
 			logx.Log("Non-interactive session: using the only Cluster '%s/%s' on %s.",
-				cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName, ctx)
+				cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName, ctxName)
 		case len(cName) > 1:
 			matched := false
 			for i := range cName {
@@ -195,13 +191,13 @@ func MaybeInteractiveSelectWorkloadCluster(cfg *config.Config) {
 					fmt.Fprintf(&sb, "%s/%s ", cNS[i], cName[i])
 				}
 				logx.Warn("Non-interactive session: Cluster API Clusters on %s: %s. Set WORKLOAD_CLUSTER_NAME and WORKLOAD_CLUSTER_NAMESPACE to match one, or use a terminal for the picker.",
-					ctx, strings.TrimSpace(sb.String()))
+					ctxName, strings.TrimSpace(sb.String()))
 			}
 		}
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "\n\033[1;36mExisting Cluster API workload Cluster(s) on %s:\033[0m\n", ctx)
+	fmt.Fprintf(os.Stderr, "\n\033[1;36mExisting Cluster API workload Cluster(s) on %s:\033[0m\n", ctxName)
 	for i := range cName {
 		fmt.Fprintf(os.Stderr, "  %d) namespace \033[1m%s\033[0m  cluster \033[1m%s\033[0m\n", i+1, cNS[i], cName[i])
 	}
@@ -223,12 +219,28 @@ func MaybeInteractiveSelectWorkloadCluster(cfg *config.Config) {
 			cfg.WorkloadClusterName = cName[n-1]
 			RefreshDefaultCAPIManifestPath(cfg)
 			logx.Log("Using existing Cluster '%s/%s' from %s.",
-				cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName, ctx)
+				cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName, ctxName)
 			return
 		}
 	}
 	logx.Log("Keeping WORKLOAD_CLUSTER_NAME='%s' namespace='%s' (no Cluster selected from API).",
 		cfg.WorkloadClusterName, currentNS)
+}
+
+// apiAlive checks whether the API server behind kubeContext answers a
+// /version request within timeout — replacement for `kubectl cluster-info
+// --request-timeout=5s`.
+func apiAlive(kubeContext string, timeout time.Duration) bool {
+	cli, err := k8sclient.ForContext(kubeContext)
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cli.Config.Timeout = timeout
+	_ = ctx
+	_, err = cli.Discovery.ServerVersion()
+	return err == nil
 }
 
 func containsString(xs []string, target string) bool {

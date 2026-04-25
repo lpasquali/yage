@@ -283,8 +283,7 @@
 #   (internal) ARGOCD_PORT_FORWARD_STANDALONE  set by --argocd-port-forward; not needed when using flags
 #   WORKLOAD_ROLLOUT_MODE            argocd | capi | all (for --workload-rollout; default: argocd)
 #   WORKLOAD_ROLLOUT_NO_WAIT         true: skip wait for in-cluster Argo apps healthy
-#   ARGOCD_VERSION                   Argo CD container/CLI app version (default: v3.3.8; keep in sync with ARGOCD_CLI_VERSION for login)
-#   ARGOCD_CLI_VERSION               argocd CLI release tag (default: v3.3.8; align with ARGOCD_VERSION / https://github.com/argoproj/argo-cd/releases/latest)
+#   ARGOCD_VERSION                   Argo CD app/server version + argocd CLI release tag (default: v3.3.8; CLI and ArgoCD CR are kept in lockstep upstream)
 #   KYVERNO_CLI_VERSION              kyverno CLI release tag (default: v1.17.1); Linux amd64/arm64; Argo + Kyverno
 #   KYVERNO_TOLERATE_CONTROL_PLANE  true|false; add Helm global.tolerations for control-plane taints (default: true; needed on many CAPI/single-CP nodes)
 #   CMCTL_VERSION                    cmctl release tag (default: v2.4.1); Linux amd64/arm64; Argo + cert-manager
@@ -444,7 +443,6 @@ METRICS_SERVER_GIT_CHART_TAG="${METRICS_SERVER_GIT_CHART_TAG:-v0.7.2}"
 ARGOCD_SERVER_INSECURE="${ARGOCD_SERVER_INSECURE:-false}"
 # Pin with upstream releases: https://github.com/argoproj/argo-cd/releases
 ARGOCD_VERSION="${ARGOCD_VERSION:-v3.3.8}"
-ARGOCD_CLI_VERSION="${ARGOCD_CLI_VERSION:-v3.3.8}"
 # Pin: https://github.com/argoproj-labs/argocd-operator/blob/main/config/default/kustomization.yaml
 ARGOCD_OPERATOR_VERSION="${ARGOCD_OPERATOR_VERSION:-v0.16.0}"
 # ArgoCD CR: spec.prometheus / spec.monitoring create Prometheus Operator ServiceMonitors and PrometheusRules — off by default (VictoriaMetrics uses VMServiceScrape from Git; see workload-app-of-apps). Set true with kube-prometheus-stack.
@@ -2655,7 +2653,7 @@ ensure_clusterctl() {
   local have os arch
   if command -v clusterctl >/dev/null 2>&1; then
     have="$(
-      clusterctl version -o json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); v=d.get("ClientVersion",d.get("clientVersion",{})); print((v or {}).get("GitVersion", (v or {}).get("gitVersion","")) or "")' 2>/dev/null || true
+      clusterctl version -o json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); v=d.get("clusterctl") or d.get("ClientVersion") or d.get("clientVersion") or {}; print((v or {}).get("GitVersion", (v or {}).get("gitVersion","")) or "")' 2>/dev/null || true
     )"
     if _versions_match "$have" "$CLUSTERCTL_VERSION"; then
       return
@@ -2699,10 +2697,10 @@ ensure_argocd_cli() {
     have="$(
       argocd version --client 2>&1 | grep -oE 'v?[0-9][0-9.]+' | head -1
     )" || true
-    if _versions_match "$have" "$ARGOCD_CLI_VERSION"; then
+    if _versions_match "$have" "$ARGOCD_VERSION"; then
       return
     fi
-    warn "argocd CLI (${have:-unknown}) does not match ARGOCD_CLI_VERSION=${ARGOCD_CLI_VERSION} — reinstalling..."
+    warn "argocd CLI (${have:-unknown}) does not match ARGOCD_VERSION=${ARGOCD_VERSION} — reinstalling..."
   else
     warn "argocd CLI not found — installing..."
   fi
@@ -2713,7 +2711,7 @@ ensure_argocd_cli() {
     *) die "Unsupported architecture for argocd CLI on Linux: ${arch} (need amd64 or arm64)." ;;
   esac
   install_binary argocd \
-    "https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_CLI_VERSION}/argocd-linux-${argo_arch}"
+    "https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_VERSION}/argocd-linux-${argo_arch}"
 }
 
 ensure_kyverno_cli() {
@@ -3631,7 +3629,7 @@ _get_all_bootstrap_variables_as_yaml() {
     ARGOCD_DISABLE_OPERATOR_MANAGED_INGRESS
     CAPMOX_VERSION
     IPAM_IMAGE
-    ARGOCD_VERSION ARGOCD_CLI_VERSION
+    ARGOCD_VERSION
     WORKLOAD_GITOPS_MODE WORKLOAD_APP_OF_APPS_GIT_URL WORKLOAD_APP_OF_APPS_GIT_PATH WORKLOAD_APP_OF_APPS_GIT_REF
     PROXMOX_CSI_CHART_VERSION
     KYVERNO_CHART_VERSION KYVERNO_CLI_VERSION
@@ -3901,7 +3899,7 @@ SNAPSHOT = frozenset(
         "CLUSTER_SET_ID", "PROXMOX_IDENTITY_SUFFIX",
         "OPENTOFU_VERSION",
         "IPAM_IMAGE",
-        "ARGOCD_VERSION", "ARGOCD_CLI_VERSION",
+        "ARGOCD_VERSION",
         "WORKLOAD_GITOPS_MODE", "WORKLOAD_APP_OF_APPS_GIT_URL", "WORKLOAD_APP_OF_APPS_GIT_PATH", "WORKLOAD_APP_OF_APPS_GIT_REF",
         "PROXMOX_CSI_CHART_VERSION",
         "KYVERNO_CHART_VERSION", "KYVERNO_CLI_VERSION",

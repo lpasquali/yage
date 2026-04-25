@@ -1,12 +1,17 @@
 package kindsync
 
 import (
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/kubectlx"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
 	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
@@ -20,7 +25,7 @@ import (
 // apply_bootstrap_config_to_management_cluster pair — emits a warn for
 // now so callers see the gap.
 func SyncBootstrapConfigToKind(cfg *config.Config) error {
-	if !shell.CommandExists("kubectl") || !shell.CommandExists("kind") {
+	if !shell.CommandExists("kind") {
 		return nil
 	}
 	ctx, ok := kubectlx.ResolveBootstrapContext(cfg)
@@ -49,7 +54,7 @@ func SyncBootstrapConfigToKind(cfg *config.Config) error {
 // Also calls update_capmox_manager_secret_on_kind so capmox-system's live
 // copy is restored on the next sync.
 func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
-	if !shell.CommandExists("kubectl") || !shell.CommandExists("kind") {
+	if !shell.CommandExists("kind") {
 		return nil
 	}
 	ctx, ok := kubectlx.ResolveBootstrapContext(cfg)
@@ -152,7 +157,7 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 // Merges existing Secret data with a generated proxmox-admin.yaml blob
 // (PROXMOX_URL + PROXMOX_ADMIN_* lines). No-op when all admin env vars
 // are empty and there is nothing to write.
-func applyAdminYAMLToKind(cfg *config.Config, ctx, targetSecret string) error {
+func applyAdminYAMLToKind(cfg *config.Config, kctx, targetSecret string) error {
 	if targetSecret == "" {
 		return nil
 	}
@@ -190,52 +195,35 @@ func applyAdminYAMLToKind(cfg *config.Config, ctx, targetSecret string) error {
 		return nil
 	}
 
+	cli, err := k8sclient.ForContext(kctx)
+	if err != nil {
+		logx.Warn("Failed to load kubeconfig for %s.", kctx)
+		return err
+	}
+	bg := context.Background()
+
 	// Fetch existing Secret, preserve *all* existing data entries (no
 	// key whitelist for admin), overlay the admin YAML under the
 	// configured key.
-	raw, _, _ := shell.Capture(
-		"kubectl", "--context", ctx, "get", "secret", targetSecret,
-		"-n", cfg.ProxmoxBootstrapSecretNamespace, "-o", "json",
-	)
-	var cur struct {
-		Metadata struct {
-			Labels map[string]string `json:"labels,omitempty"`
-		} `json:"metadata,omitempty"`
-		Data map[string]string `json:"data,omitempty"`
-	}
-	_ = json.Unmarshal([]byte(raw), &cur)
-
-	data := map[string]string{}
-	for k, v := range cur.Data {
-		if v != "" {
-			data[k] = v
+	data := map[string][]byte{}
+	var existingLabels map[string]string
+	cur, getErr := cli.Typed.CoreV1().Secrets(cfg.ProxmoxBootstrapSecretNamespace).
+		Get(bg, targetSecret, metav1.GetOptions{})
+	if getErr == nil && cur != nil {
+		for k, v := range cur.Data {
+			if len(v) > 0 {
+				data[k] = v
+			}
 		}
+		existingLabels = cur.Labels
 	}
 	ak := cfg.ProxmoxBootstrapAdminSecretKey
 	if ak == "" {
 		ak = "proxmox-admin.yaml"
 	}
-	data[ak] = base64.StdEncoding.EncodeToString([]byte(text))
+	data[ak] = []byte(text)
 
-	meta := map[string]any{
-		"name":      targetSecret,
-		"namespace": cfg.ProxmoxBootstrapSecretNamespace,
-	}
-	if len(cur.Metadata.Labels) > 0 {
-		meta["labels"] = cur.Metadata.Labels
-	}
-	obj := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Secret",
-		"metadata":   meta,
-		"type":       "Opaque",
-		"data":       data,
-	}
-	doc, err := json.Marshal(obj)
-	if err != nil {
-		return err
-	}
-	if err := shell.Pipe(string(doc), "kubectl", "--context", ctx, "apply", "-f", "-"); err != nil {
+	if err := applySecret(bg, cli, cfg.ProxmoxBootstrapSecretNamespace, targetSecret, data, existingLabels); err != nil {
 		logx.Warn("Failed to update %s/%s (proxmox-admin.yaml).", cfg.ProxmoxBootstrapSecretNamespace, targetSecret)
 		return err
 	}
@@ -252,24 +240,26 @@ func UpdateCapmoxManagerSecretOnKind(cfg *config.Config) error {
 	if cfg.ProxmoxURL == "" || cfg.ProxmoxToken == "" || cfg.ProxmoxSecret == "" {
 		return nil
 	}
-	ctx := "kind-" + cfg.KindClusterName
-	if err := shell.Run("kubectl", "--context", ctx, "get", "namespace", "capmox-system"); err != nil {
-		logx.Warn("namespace capmox-system not on %s — skip capmox-manager-credentials update.", ctx)
+	kctx := "kind-" + cfg.KindClusterName
+	cli, err := k8sclient.ForContext(kctx)
+	if err != nil {
+		logx.Warn("Failed to load kubeconfig for %s — skip capmox-manager-credentials update.", kctx)
 		return nil
 	}
-	doc := fmt.Sprintf(`{
-      "apiVersion":"v1","kind":"Secret","type":"Opaque",
-      "metadata":{"name":"capmox-manager-credentials","namespace":"capmox-system"},
-      "data":{"url":%q,"token":%q,"secret":%q}
-    }`,
-		base64.StdEncoding.EncodeToString([]byte(cfg.ProxmoxURL)),
-		base64.StdEncoding.EncodeToString([]byte(cfg.ProxmoxToken)),
-		base64.StdEncoding.EncodeToString([]byte(cfg.ProxmoxSecret)),
-	)
-	if err := shell.Pipe(doc, "kubectl", "--context", ctx, "apply", "-f", "-"); err != nil {
-		logx.Die("Failed to update capmox-system/capmox-manager-credentials on %s.", ctx)
+	bg := context.Background()
+	if _, err := cli.Typed.CoreV1().Namespaces().Get(bg, "capmox-system", metav1.GetOptions{}); err != nil {
+		logx.Warn("namespace capmox-system not on %s — skip capmox-manager-credentials update.", kctx)
+		return nil
 	}
-	logx.Log("Updated capmox-system/capmox-manager-credentials on %s.", ctx)
+	data := map[string][]byte{
+		"url":    []byte(cfg.ProxmoxURL),
+		"token":  []byte(cfg.ProxmoxToken),
+		"secret": []byte(cfg.ProxmoxSecret),
+	}
+	if err := applySecret(bg, cli, "capmox-system", "capmox-manager-credentials", data, nil); err != nil {
+		logx.Die("Failed to update capmox-system/capmox-manager-credentials on %s: %v", kctx, err)
+	}
+	logx.Log("Updated capmox-system/capmox-manager-credentials on %s.", kctx)
 	return nil
 }
 
@@ -277,41 +267,90 @@ func UpdateCapmoxManagerSecretOnKind(cfg *config.Config) error {
 // Best-effort: if the deployment is not ready, warn and continue — bash
 // uses `|| warn` so never fails the script.
 func RolloutRestartCapmoxController(cfg *config.Config) {
-	ctx := "kind-" + cfg.KindClusterName
-	if err := shell.Run("kubectl", "--context", ctx, "-n", "capmox-system",
-		"rollout", "restart", "deployment/capmox-controller-manager"); err != nil {
+	kctx := "kind-" + cfg.KindClusterName
+	cli, err := k8sclient.ForContext(kctx)
+	if err != nil {
 		logx.Warn("capmox-controller-manager restart skipped or not ready (check capmox-system).")
 		return
 	}
-	if err := shell.Run("kubectl", "--context", ctx, "-n", "capmox-system",
-		"rollout", "status", "deployment/capmox-controller-manager", "--timeout=180s"); err != nil {
+	if err := rolloutRestartDeployment(cli, "capmox-system", "capmox-controller-manager"); err != nil {
+		logx.Warn("capmox-controller-manager restart skipped or not ready (check capmox-system).")
+		return
+	}
+	if err := waitDeploymentReady(cli, "capmox-system", "capmox-controller-manager", 180*time.Second); err != nil {
 		logx.Warn("capmox-controller-manager restart skipped or not ready (check capmox-system).")
 	}
 }
 
 // RolloutRestartProxmoxCSIOnWorkload ports rollout_restart_proxmox_csi_on_workload.
 // Fetches the workload cluster's kubeconfig from the capi Secret on kind,
-// writes it to a temp file, and restarts proxmox-csi-plugin-controller in
-// the CSI namespace on the workload. No-op when the kubeconfig secret or
-// the target deployment are missing.
+// builds an in-process client against it, and restarts
+// proxmox-csi-plugin-controller in the CSI namespace on the workload.
+// No-op when the kubeconfig secret or the target deployment are missing.
 func RolloutRestartProxmoxCSIOnWorkload(cfg *config.Config) {
-	ctx := "kind-" + cfg.KindClusterName
-	kcfg, err := writeWorkloadKubeconfig(cfg, ctx)
+	kctx := "kind-" + cfg.KindClusterName
+	kcfg, err := writeWorkloadKubeconfig(cfg, kctx)
 	if err != nil {
 		logx.Warn("No workload kubeconfig — skip Proxmox CSI controller restart on workload.")
 		return
 	}
 	defer removeFile(kcfg)
 
+	cli, err := k8sclient.ForKubeconfigFile(kcfg)
+	if err != nil {
+		logx.Warn("Failed to load workload kubeconfig — skip Proxmox CSI controller restart.")
+		return
+	}
 	ns := cfg.ProxmoxCSINamespace
-	if err := shell.Run("kubectl", "--kubeconfig", kcfg, "-n", ns,
-		"get", "deploy", "proxmox-csi-plugin-controller"); err != nil {
+	bg := context.Background()
+	if _, err := cli.Typed.AppsV1().Deployments(ns).Get(bg, "proxmox-csi-plugin-controller", metav1.GetOptions{}); err != nil {
 		logx.Warn("proxmox-csi controller deployment not found in %s — skip restart.", ns)
 		return
 	}
-	_ = shell.Run("kubectl", "--kubeconfig", kcfg, "-n", ns,
-		"rollout", "restart", "deploy/proxmox-csi-plugin-controller")
-	_ = shell.Run("kubectl", "--kubeconfig", kcfg, "-n", ns,
-		"rollout", "status", "deploy/proxmox-csi-plugin-controller", "--timeout=300s")
+	_ = rolloutRestartDeployment(cli, ns, "proxmox-csi-plugin-controller")
+	_ = waitDeploymentReady(cli, ns, "proxmox-csi-plugin-controller", 300*time.Second)
 	logx.Log("Restarted Proxmox CSI controller on workload %s.", cfg.WorkloadClusterName)
+}
+
+// rolloutRestartDeployment mirrors `kubectl rollout restart deploy/X` —
+// patches the spec.template.metadata.annotations[kubectl.kubernetes.io/restartedAt]
+// with the current RFC3339 timestamp; the deployment controller picks
+// that up as a pod-template change and rolls.
+func rolloutRestartDeployment(cli *k8sclient.Client, ns, name string) error {
+	patch := fmt.Sprintf(
+		`{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":%q}}}}}`,
+		time.Now().Format(time.RFC3339),
+	)
+	_, err := cli.Typed.AppsV1().Deployments(ns).Patch(
+		context.Background(), name, types.StrategicMergePatchType,
+		[]byte(patch), metav1.PatchOptions{},
+	)
+	return err
+}
+
+// waitDeploymentReady mirrors `kubectl rollout status deploy/X --timeout=...`.
+// Polls the Deployment status until updated/ready replicas match the
+// spec or timeout elapses.
+func waitDeploymentReady(cli *k8sclient.Client, ns, name string, timeout time.Duration) error {
+	return k8sclient.PollUntil(context.Background(), 2*time.Second, timeout,
+		func(ctx context.Context) (bool, error) {
+			d, err := cli.Typed.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return false, nil
+			}
+			if d.Generation > d.Status.ObservedGeneration {
+				return false, nil
+			}
+			desired := int32(1)
+			if d.Spec.Replicas != nil {
+				desired = *d.Spec.Replicas
+			}
+			if d.Status.UpdatedReplicas < desired {
+				return false, nil
+			}
+			if d.Status.AvailableReplicas < desired {
+				return false, nil
+			}
+			return true, nil
+		})
 }

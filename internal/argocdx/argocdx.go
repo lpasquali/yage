@@ -11,6 +11,7 @@
 package argocdx
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -21,42 +22,65 @@ import (
 	"syscall"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/yaml"
+
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
 	"github.com/lpasquali/bootstrap-capi/internal/sysinfo"
 )
 
 // ReadInitialAdminPassword ports argocd_read_initial_admin_password.
-// Tries both the Helm-chart Secret argocd-initial-admin-secret and the
-// Operator's argocd-cluster Secret, returning the decoded password or
-// "" if neither has a readable password.
+// Tries the Helm-chart Secret argocd-initial-admin-secret, the Operator's
+// argocd-cluster Secret, and the legacy argocd-secret (skipping the bcrypt
+// hash bash skips), returning the password or "" if none found.
+//
+// Note: the first parameter ctx is the kubectl-context name (a string),
+// not a context.Context. Preserving the original signature so callers in
+// other packages keep compiling.
 func ReadInitialAdminPassword(ctx, namespace string) string {
 	if namespace == "" {
 		namespace = "argocd"
 	}
-	build := func(sec, key string) []string {
-		a := []string{"kubectl"}
-		if ctx != "" {
-			a = append(a, "--context", ctx)
-		}
-		return append(a, "get", "secret", sec, "-n", namespace,
-			"-o", "jsonpath={.data."+key+"}")
+	cli, err := k8sclient.ForContext(ctx)
+	if err != nil {
+		return ""
 	}
-	for _, probe := range []struct{ sec, key string }{
-		{"argocd-initial-admin-secret", "password"},
-		{"argocd-cluster", `admin\.password`},
-	} {
-		out, _, _ := shell.Capture(build(probe.sec, probe.key)...)
-		out = strings.TrimSpace(out)
-		if out == "" {
+	return readAdminPasswordFromClient(cli, namespace)
+}
+
+// readAdminPasswordFromClient is the shared probe loop used by both
+// ReadInitialAdminPassword (kube-context flavour) and
+// ReadInitialAdminPasswordWithKubeconfig (kubeconfig-file flavour).
+func readAdminPasswordFromClient(cli *k8sclient.Client, namespace string) string {
+	probes := []struct {
+		sec, key   string
+		skipBcrypt bool
+	}{
+		{"argocd-initial-admin-secret", "password", false},
+		{"argocd-cluster", "admin.password", false},
+		{"argocd-secret", "admin.password", true},
+	}
+	bg := context.Background()
+	for _, probe := range probes {
+		sec, err := cli.Typed.CoreV1().Secrets(namespace).Get(bg, probe.sec, metav1.GetOptions{})
+		if err != nil {
 			continue
 		}
-		dec, err := base64.StdEncoding.DecodeString(out)
-		if err != nil || len(dec) == 0 {
+		// Secret.Data is already base64-decoded by client-go.
+		raw, ok := sec.Data[probe.key]
+		if !ok || len(raw) == 0 {
 			continue
 		}
-		return string(dec)
+		if probe.skipBcrypt && strings.HasPrefix(string(raw), "$2") {
+			continue
+		}
+		return string(raw)
 	}
 	return ""
 }
@@ -67,30 +91,45 @@ func ReadInitialAdminPassword(ctx, namespace string) string {
 // returns an error when a unique match could not be inferred.
 func StandaloneDiscoverWorkloadKubeconfigRef(cfg *config.Config) error {
 	kctx := "kind-" + cfg.KindClusterName
-	if !contextExists(kctx) {
+	if !k8sclient.ContextExists(kctx) {
 		return fmt.Errorf("kube context %s not found", kctx)
 	}
+	cli, err := k8sclient.ForContext(kctx)
+	if err != nil {
+		return fmt.Errorf("kube client for %s: %w", kctx, err)
+	}
+	bg := context.Background()
+	secretName := cfg.WorkloadClusterName + "-kubeconfig"
 	// Fast path: secret already present.
-	if err := shell.Run("kubectl", "--context", kctx,
-		"get", "secret", cfg.WorkloadClusterName+"-kubeconfig",
-		"-n", cfg.WorkloadClusterNamespace); err == nil {
+	if _, err := cli.Typed.CoreV1().Secrets(cfg.WorkloadClusterNamespace).
+		Get(bg, secretName, metav1.GetOptions{}); err == nil {
 		return nil
 	}
+
+	clusterGVR := schema.GroupVersionResource{
+		Group:    "cluster.x-k8s.io",
+		Version:  "v1beta1",
+		Resource: "clusters",
+	}
+
 	// Try to resolve namespace from the unique CAPI Cluster named
 	// cfg.WorkloadClusterName.
-	out, _, _ := shell.Capture(
-		"kubectl", "--context", kctx, "get", "cluster", "-A",
-		"-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name", "--no-headers",
-	)
+	list, err := cli.Dynamic.Resource(clusterGVR).Namespace("").List(bg, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("listing CAPI clusters: %w", err)
+	}
 	var nsMatches []string
-	for _, ln := range strings.Split(out, "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
+	type nsName struct{ ns, name string }
+	var allClusters []nsName
+	for _, item := range list.Items {
+		ns := item.GetNamespace()
+		nm := item.GetName()
+		if nm == "" {
 			continue
 		}
-		fields := strings.Fields(ln)
-		if len(fields) == 2 && fields[1] == cfg.WorkloadClusterName {
-			nsMatches = append(nsMatches, fields[0])
+		allClusters = append(allClusters, nsName{ns, nm})
+		if nm == cfg.WorkloadClusterName {
+			nsMatches = append(nsMatches, ns)
 		}
 	}
 	if len(nsMatches) == 1 {
@@ -99,8 +138,8 @@ func StandaloneDiscoverWorkloadKubeconfigRef(cfg *config.Config) error {
 			logx.Log("Resolved namespace to %s (CAPI Cluster %s).",
 				cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName)
 		}
-		if err := shell.Run("kubectl", "--context", kctx, "get", "secret",
-			cfg.WorkloadClusterName+"-kubeconfig", "-n", cfg.WorkloadClusterNamespace); err == nil {
+		if _, err := cli.Typed.CoreV1().Secrets(cfg.WorkloadClusterNamespace).
+			Get(bg, cfg.WorkloadClusterName+"-kubeconfig", metav1.GetOptions{}); err == nil {
 			return nil
 		}
 	} else if len(nsMatches) > 1 {
@@ -114,19 +153,14 @@ func StandaloneDiscoverWorkloadKubeconfigRef(cfg *config.Config) error {
 	}
 
 	// Fallback: pick the only CAPI cluster with a *-kubeconfig Secret.
-	out2, _, _ := shell.Capture(
-		"kubectl", "--context", kctx, "get", "cluster", "-A",
-		"-o", "jsonpath={range .items[*]}{.metadata.namespace}\t{.metadata.name}\n{end}",
-	)
 	var cands []string
-	for _, ln := range strings.Split(out2, "\n") {
-		parts := strings.SplitN(ln, "\t", 2)
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	for _, c := range allClusters {
+		if c.ns == "" || c.name == "" {
 			continue
 		}
-		if err := shell.Run("kubectl", "--context", kctx,
-			"get", "secret", parts[1]+"-kubeconfig", "-n", parts[0]); err == nil {
-			cands = append(cands, parts[0]+"/"+parts[1])
+		if _, err := cli.Typed.CoreV1().Secrets(c.ns).
+			Get(bg, c.name+"-kubeconfig", metav1.GetOptions{}); err == nil {
+			cands = append(cands, c.ns+"/"+c.name)
 		}
 	}
 	switch len(cands) {
@@ -164,32 +198,43 @@ func PrintAccessInfo(cfg *config.Config) {
 	fmt.Printf("\n\033[1;33m[CAPI / Proxmox workload] cluster %s / Argo namespace %s\033[0m\n",
 		cfg.WorkloadClusterName, cfg.WorkloadArgoCDNamespace)
 
-	if err := shell.Run("kubectl", "--context", kctx, "get", "secret",
-		cfg.WorkloadClusterName+"-kubeconfig", "-n", cfg.WorkloadClusterNamespace); err != nil {
+	mgmt, err := k8sclient.ForContext(kctx)
+	if err != nil {
+		logx.Warn("Cannot access management context %s: %v", kctx, err)
+		return
+	}
+	bg := context.Background()
+	if _, err := mgmt.Typed.CoreV1().Secrets(cfg.WorkloadClusterNamespace).
+		Get(bg, cfg.WorkloadClusterName+"-kubeconfig", metav1.GetOptions{}); err != nil {
 		logx.Warn("Secret %s/%s-kubeconfig not found. Use --workload-cluster-name / --workload-cluster-namespace (or env), CAPI_MANIFEST, or wait until CAPI creates this Secret in the Cluster's namespace.",
 			cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName)
-		if err := shell.Run("kubectl", "--context", kctx, "get", "cluster", "-A"); err == nil {
-			out, _, _ := shell.Capture("kubectl", "--context", kctx,
-				"get", "cluster", "-A",
-				"-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name", "--no-headers")
-			logx.Log("  CAPI Clusters (management): %s", strings.ReplaceAll(strings.TrimSpace(out), "\n", " "))
+		clusterGVR := schema.GroupVersionResource{Group: "cluster.x-k8s.io", Version: "v1beta1", Resource: "clusters"}
+		if list, lerr := mgmt.Dynamic.Resource(clusterGVR).Namespace("").List(bg, metav1.ListOptions{}); lerr == nil {
+			parts := make([]string, 0, len(list.Items))
+			for _, it := range list.Items {
+				parts = append(parts, it.GetNamespace()+"/"+it.GetName())
+			}
+			logx.Log("  CAPI Clusters (management): %s", strings.Join(parts, " "))
 		}
 		return
 	}
 	kcfg, err := writeWorkloadKubeconfig(cfg, kctx)
 	if err == nil {
 		defer os.Remove(kcfg)
-		if err := runWith("KUBECONFIG", kcfg, "kubectl", "get", "namespace", cfg.WorkloadArgoCDNamespace); err == nil {
-			pw := ReadInitialAdminPasswordWithKubeconfig(kcfg, cfg.WorkloadArgoCDNamespace)
-			if pw != "" {
-				logx.Log("  Initial admin password: %s", pw)
+		// Try a typed client against the workload kubeconfig and check namespace presence.
+		if wcli, werr := k8sclient.ForKubeconfigFile(kcfg); werr == nil {
+			if _, nserr := wcli.Typed.CoreV1().Namespaces().Get(bg, cfg.WorkloadArgoCDNamespace, metav1.GetOptions{}); nserr == nil {
+				pw := readAdminPasswordFromClient(wcli, cfg.WorkloadArgoCDNamespace)
+				if pw != "" {
+					logx.Log("  Initial admin password: %s", pw)
+				} else {
+					logx.Warn("  Admin password not found in %s (checked argocd-initial-admin-secret, argocd-cluster, argocd-secret — not installed or password rotated?).",
+						cfg.WorkloadArgoCDNamespace)
+				}
 			} else {
-				logx.Warn("  Admin password not found in %s (checked argocd-initial-admin-secret, argocd-cluster, argocd-secret — not installed or password rotated?).",
+				logx.Warn("  Namespace %s not on workload — run bootstrap with workload Argo enabled first.",
 					cfg.WorkloadArgoCDNamespace)
 			}
-		} else {
-			logx.Warn("  Namespace %s not on workload — run bootstrap with workload Argo enabled first.",
-				cfg.WorkloadArgoCDNamespace)
 		}
 	}
 	fmt.Printf("  Write kubeconfig and port-forward (local port matches ARGOCD_PORT_FORWARD_PORT, default %s):\n", port)
@@ -202,7 +247,7 @@ func PrintAccessInfo(cfg *config.Config) {
 }
 
 // ReadInitialAdminPasswordWithKubeconfig reads the admin password using
-// KUBECONFIG env override (for the workload cluster).  Probes, in order:
+// a specific kubeconfig file (the workload cluster). Probes, in order:
 //   - argocd-initial-admin-secret / password   (Helm chart default)
 //   - argocd-cluster / admin.password          (Argo CD Operator)
 //   - argocd-secret / admin.password           (fallback: only if plaintext, not bcrypt)
@@ -210,37 +255,23 @@ func ReadInitialAdminPasswordWithKubeconfig(kubeconfig, namespace string) string
 	if namespace == "" {
 		namespace = "argocd"
 	}
-	for _, probe := range []struct{ sec, key string }{
-		{"argocd-initial-admin-secret", "password"},
-		{"argocd-cluster", `admin\.password`},
-		{"argocd-secret", `admin\.password`},
-	} {
-		c := exec.Command("kubectl", "get", "secret", probe.sec,
-			"-n", namespace, "-o", "jsonpath={.data."+probe.key+"}")
-		c.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
-		out, err := c.Output()
-		if err != nil {
-			continue
-		}
-		s := strings.TrimSpace(string(out))
-		if s == "" {
-			continue
-		}
-		dec, err := base64.StdEncoding.DecodeString(s)
-		if err != nil || len(dec) == 0 {
-			continue
-		}
-		// argocd-secret stores a bcrypt hash — skip if it looks like one.
-		if strings.HasPrefix(string(dec), "$2") {
-			continue
-		}
-		return string(dec)
+	cli, err := k8sclient.ForKubeconfigFile(kubeconfig)
+	if err != nil {
+		return ""
 	}
-	return ""
+	return readAdminPasswordFromClient(cli, namespace)
 }
 
 // RunPortForwards ports argocd_run_port_forwards. Blocks until the
 // user interrupts; always removes the tmp kubeconfig.
+//
+// NOTE: this is intentionally still a kubectl shell-out. Implementing
+// SPDY port-forward in-process (k8s.io/client-go/tools/portforward +
+// SPDY transport + own ready/done channels + signal/close coordination)
+// is roughly 80 lines of plumbing for a user-blocking print-and-exit
+// command. The pre-flight checks (context exists, kubeconfig secret
+// present, namespace present) are done in-process via typed clients;
+// only the long-lived forwarding child process is a subprocess.
 func RunPortForwards(cfg *config.Config) {
 	kctx := "kind-" + cfg.KindClusterName
 	port := cfg.ArgoCDPortForwardPort
@@ -251,12 +282,17 @@ func RunPortForwards(cfg *config.Config) {
 		logx.Warn("port-forward: only the provisioned cluster is supported (ARGOCD_PORT_FORWARD_TARGET=workload); ignoring %s.",
 			cfg.ArgoCDPortForwardTarget)
 	}
-	if !contextExists(kctx) {
+	if !k8sclient.ContextExists(kctx) {
 		logx.Die("port-forward: kubectl context %s not found (need management cluster to read %s-kubeconfig).",
 			kctx, cfg.WorkloadClusterName)
 	}
-	if err := shell.Run("kubectl", "--context", kctx, "get", "secret",
-		cfg.WorkloadClusterName+"-kubeconfig", "-n", cfg.WorkloadClusterNamespace); err != nil {
+	mgmt, err := k8sclient.ForContext(kctx)
+	if err != nil {
+		logx.Die("port-forward: cannot connect to %s: %v", kctx, err)
+	}
+	bg := context.Background()
+	if _, err := mgmt.Typed.CoreV1().Secrets(cfg.WorkloadClusterNamespace).
+		Get(bg, cfg.WorkloadClusterName+"-kubeconfig", metav1.GetOptions{}); err != nil {
 		logx.Die("port-forward: %s/%s-kubeconfig not found (is the CAPI cluster ready?).",
 			cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName)
 	}
@@ -264,11 +300,17 @@ func RunPortForwards(cfg *config.Config) {
 	if err != nil {
 		logx.Die("port-forward: could not read workload kubeconfig")
 	}
-	if err := runWith("KUBECONFIG", kcfg, "kubectl", "get", "namespace", cfg.WorkloadArgoCDNamespace); err != nil {
+	wcli, err := k8sclient.ForKubeconfigFile(kcfg)
+	if err != nil {
+		os.Remove(kcfg)
+		logx.Die("port-forward: cannot read workload kubeconfig: %v", err)
+	}
+	if _, err := wcli.Typed.CoreV1().Namespaces().Get(bg, cfg.WorkloadArgoCDNamespace, metav1.GetOptions{}); err != nil {
 		os.Remove(kcfg)
 		logx.Die("port-forward: namespace %s not found on the CAPI cluster — is workload Argo installed?",
 			cfg.WorkloadArgoCDNamespace)
 	}
+	// Long-lived shell-out: see function-level NOTE for rationale.
 	cmd := exec.Command("kubectl", "port-forward", "--address", "127.0.0.1",
 		"-n", cfg.WorkloadArgoCDNamespace,
 		"svc/argocd-server", port+":443")
@@ -308,71 +350,99 @@ func ApplyRedisSecretToWorkload(cfg *config.Config, writeWorkloadKubeconfig func
 			cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName, cfg.KindClusterName)
 	}
 	defer os.Remove(wk)
+
+	cli, err := k8sclient.ForKubeconfigFile(wk)
+	if err != nil {
+		logx.Die("Cannot connect to workload cluster for argocd-redis: %v", err)
+	}
+	bg := context.Background()
+
 	ns := cfg.WorkloadArgoCDNamespace
 	if ns == "" {
 		ns = "argocd"
 	}
-	nsDoc := fmt.Sprintf(`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q}}`, ns)
-	if err := shell.Pipe(nsDoc, "kubectl", "--kubeconfig", wk, "apply", "-f", "-"); err != nil {
+	if err := cli.EnsureNamespace(bg, ns); err != nil {
 		logx.Die("Failed to ensure namespace %s on the workload for argocd-redis.", ns)
 	}
-	if err := shell.Run("kubectl", "--kubeconfig", wk, "-n", ns, "get", "secret", "argocd-redis"); err == nil {
+	if _, err := cli.Typed.CoreV1().Secrets(ns).Get(bg, "argocd-redis", metav1.GetOptions{}); err == nil {
 		logx.Log("Workload %s/argocd-redis already present — not overwriting (idempotent bootstrap).", ns)
 		return
+	} else if !apierrors.IsNotFound(err) {
+		logx.Die("Failed to check %s/argocd-redis on the workload cluster: %v", ns, err)
 	}
 	pw := randomBase64(32)
-	doc := fmt.Sprintf(`{"apiVersion":"v1","kind":"Secret","type":"Opaque","metadata":{"name":"argocd-redis","namespace":%q},"data":{"auth":%q}}`,
-		ns, base64.StdEncoding.EncodeToString([]byte(pw)))
-	if err := shell.Pipe(doc, "kubectl", "--kubeconfig", wk, "apply", "-f", "-"); err != nil {
-		logx.Die("Failed to create argocd-redis on the workload cluster.")
+	sec := &corev1.Secret{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "argocd-redis",
+			Namespace: ns,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"auth": []byte(pw),
+		},
+	}
+	if err := applyTypedSecret(bg, cli, sec); err != nil {
+		logx.Die("Failed to create argocd-redis on the workload cluster: %v", err)
 	}
 	logx.Log("Created %s/argocd-redis on the workload (key auth) via kind/management bootstrap.", ns)
 }
 
-// --- helpers ---
-
-func contextExists(ctx string) bool {
-	out, _, _ := shell.Capture("kubectl", "config", "get-contexts", "-o", "name")
-	for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", ""), "\n") {
-		if ln == ctx {
-			return true
-		}
+// applyTypedSecret server-side-applies a corev1.Secret using the typed
+// CoreV1 SecretInterface, mirroring the apply path of k8sclient but for
+// a strongly-typed object.
+func applyTypedSecret(ctx context.Context, cli *k8sclient.Client, sec *corev1.Secret) error {
+	jdata, err := yaml.Marshal(sec)
+	if err != nil {
+		return fmt.Errorf("marshal secret: %w", err)
 	}
-	return false
+	jsonBody, err := yaml.YAMLToJSON(jdata)
+	if err != nil {
+		return fmt.Errorf("yaml→json: %w", err)
+	}
+	_, err = cli.Typed.CoreV1().Secrets(sec.Namespace).Patch(
+		ctx, sec.Name, types.ApplyPatchType, jsonBody,
+		metav1.PatchOptions{
+			FieldManager: k8sclient.FieldManager,
+			Force:        boolPtr(true),
+		},
+	)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
+func boolPtr(b bool) *bool { return &b }
+
+// --- helpers ---
+
+// writeWorkloadKubeconfig reads the workload kubeconfig Secret from the
+// management cluster (typed client) and materialises it to a temp file.
 func writeWorkloadKubeconfig(cfg *config.Config, mgmtCtx string) (string, error) {
-	out, _, _ := shell.Capture(
-		"kubectl", "--context", mgmtCtx,
-		"-n", cfg.WorkloadClusterNamespace,
-		"get", "secret", cfg.WorkloadClusterName+"-kubeconfig",
-		"-o", "jsonpath={.data.value}",
-	)
-	if strings.TrimSpace(out) == "" {
-		return "", fmt.Errorf("workload kubeconfig secret empty")
-	}
-	dec, err := base64.StdEncoding.DecodeString(strings.TrimSpace(out))
+	cli, err := k8sclient.ForContext(mgmtCtx)
 	if err != nil {
 		return "", err
+	}
+	sec, err := cli.Typed.CoreV1().Secrets(cfg.WorkloadClusterNamespace).
+		Get(context.Background(), cfg.WorkloadClusterName+"-kubeconfig", metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	val, ok := sec.Data["value"]
+	if !ok || len(val) == 0 {
+		return "", fmt.Errorf("workload kubeconfig secret empty")
 	}
 	f, err := os.CreateTemp("", "workload-kubeconfig-")
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	if _, err := f.Write(dec); err != nil {
+	if _, err := f.Write(val); err != nil {
 		return "", err
 	}
 	_ = f.Chmod(0o600)
 	return f.Name(), nil
-}
-
-func runWith(envKey, envVal string, argv ...string) error {
-	c := exec.Command(argv[0], argv[1:]...)
-	c.Env = append(os.Environ(), envKey+"="+envVal)
-	c.Stdout = nil
-	c.Stderr = nil
-	return c.Run()
 }
 
 // randomBase64 returns a URL-safe base64 string of n random bytes.

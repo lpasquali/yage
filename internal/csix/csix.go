@@ -7,14 +7,20 @@
 package csix
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/yaml"
+
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
 // LoadVarsFromConfig ports load_csi_vars_from_config. Fills empty
@@ -70,8 +76,13 @@ func ApplyConfigSecretToWorkload(cfg *config.Config, writeWorkloadKubeconfig fun
 	}
 	defer os.Remove(wk)
 
-	nsDoc := fmt.Sprintf(`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q}}`, cfg.ProxmoxCSINamespace)
-	if err := shell.Pipe(nsDoc, "kubectl", "--kubeconfig", wk, "apply", "-f", "-"); err != nil {
+	cli, err := k8sclient.ForKubeconfigFile(wk)
+	if err != nil {
+		logx.Die("Cannot connect to workload cluster for Proxmox CSI config Secret: %v", err)
+	}
+	bg := context.Background()
+
+	if err := cli.EnsureNamespace(bg, cfg.ProxmoxCSINamespace); err != nil {
 		logx.Die("Failed to ensure namespace %s on the workload.", cfg.ProxmoxCSINamespace)
 	}
 
@@ -93,39 +104,53 @@ clusters:
 	)
 
 	secretName := cfg.WorkloadClusterName + "-proxmox-csi-config"
-	if err := applyConfigSecret(wk, cfg.ProxmoxCSINamespace, secretName, cfgYAML); err != nil {
-		logx.Die("Failed to apply Proxmox CSI config Secret on workload cluster.")
+	if err := applyConfigSecret(bg, cli, cfg.ProxmoxCSINamespace, secretName, cfgYAML); err != nil {
+		logx.Die("Failed to apply Proxmox CSI config Secret on workload cluster: %v", err)
 	}
 	// Mirror under the short name used by workload-app-of-apps default path.
 	if secretName != "proxmox-csi-config" {
-		if err := applyConfigSecret(wk, cfg.ProxmoxCSINamespace, "proxmox-csi-config", cfgYAML); err != nil {
-			logx.Die("Failed to apply proxmox-csi-config alias Secret on workload cluster.")
+		if err := applyConfigSecret(bg, cli, cfg.ProxmoxCSINamespace, "proxmox-csi-config", cfgYAML); err != nil {
+			logx.Die("Failed to apply proxmox-csi-config alias Secret on workload cluster: %v", err)
 		}
 	}
 	logx.Log("Applied %s (and proxmox-csi-config when names differ) — Proxmox API credentials in %s; Argo Application will not embed them.",
 		secretName, cfg.ProxmoxCSINamespace)
 }
 
-// applyConfigSecret materializes a generic Secret with a config.yaml
-// key via `kubectl create ... --dry-run=client -o yaml | kubectl apply`.
-func applyConfigSecret(kubeconfig, namespace, name, body string) error {
-	f, err := os.CreateTemp("", "csi-cfg-")
+// applyConfigSecret server-side-applies a generic Secret holding a
+// single config.yaml key in the named namespace. Replaces the previous
+// `kubectl create secret generic ... | kubectl apply -f -` pipeline.
+func applyConfigSecret(ctx context.Context, cli *k8sclient.Client, namespace, name, body string) error {
+	sec := &corev1.Secret{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"config.yaml": []byte(body),
+		},
+	}
+	yamlBody, err := yaml.Marshal(sec)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal secret: %w", err)
 	}
-	defer os.Remove(f.Name())
-	if _, err := f.WriteString(body); err != nil {
-		f.Close()
-		return err
+	jsonBody, err := yaml.YAMLToJSON(yamlBody)
+	if err != nil {
+		return fmt.Errorf("yaml→json: %w", err)
 	}
-	f.Close()
-	out, _, err := shell.Capture("kubectl", "--kubeconfig", kubeconfig,
-		"-n", namespace,
-		"create", "secret", "generic", name,
-		"--from-file=config.yaml="+f.Name(),
-		"--dry-run=client", "-o", "yaml")
-	if err != nil || out == "" {
-		return fmt.Errorf("dry-run failed: %v", err)
+	_, err = cli.Typed.CoreV1().Secrets(namespace).Patch(
+		ctx, name, types.ApplyPatchType, jsonBody,
+		metav1.PatchOptions{
+			FieldManager: k8sclient.FieldManager,
+			Force:        boolPtr(true),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("apply secret %s/%s: %w", namespace, name, err)
 	}
-	return shell.Pipe(out, "kubectl", "--kubeconfig", kubeconfig, "apply", "-f", "-")
+	return nil
 }
+
+func boolPtr(b bool) *bool { return &b }

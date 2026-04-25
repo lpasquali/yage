@@ -1,17 +1,21 @@
 package kindsync
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/kubectlx"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
 // configYAMLHeader is the non-secret notice prepended to config.yaml —
@@ -54,9 +58,6 @@ func configYAMLHeader(cfg *config.Config) string {
 // data, and ProxmoxKindCAPMOXActive=true when the capmox-system
 // Secret was the one that filled URL/token/secret.
 func MergeProxmoxBootstrapSecretsFromKind(cfg *config.Config) {
-	if !shell.CommandExists("kubectl") {
-		return
-	}
 	ctx, ok := kubectlx.ResolveBootstrapContext(cfg)
 	if !ok {
 		return
@@ -399,7 +400,7 @@ func fillEmptyFromMap(cfg *config.Config, kv map[string]string) bool {
 // ApplyBootstrapConfigToManagementCluster ports
 // apply_bootstrap_config_to_management_cluster.
 func ApplyBootstrapConfigToManagementCluster(cfg *config.Config) error {
-	ctx, ok := kubectlx.ResolveBootstrapContext(cfg)
+	kctx, ok := kubectlx.ResolveBootstrapContext(cfg)
 	if !ok {
 		logx.Warn("Skipping bootstrap config Secret apply — no kind management context in kubeconfig (set KIND_CLUSTER_NAME / --kind-cluster-name or kind export kubeconfig).")
 		return nil
@@ -410,39 +411,24 @@ func ApplyBootstrapConfigToManagementCluster(cfg *config.Config) error {
 	}
 	body := configYAMLHeader(cfg) + cfg.SnapshotYAML()
 
-	tmpf, err := os.CreateTemp("", "bootstrap-cfg-*.yaml")
+	cli, err := k8sclient.ForContext(kctx)
 	if err != nil {
-		return err
+		logx.Die("Failed to load kubeconfig for %s: %v", kctx, err)
 	}
-	defer os.Remove(tmpf.Name())
-	if _, err := tmpf.WriteString(body); err != nil {
-		tmpf.Close()
-		return err
-	}
-	if err := tmpf.Close(); err != nil {
+	bg := context.Background()
+
+	if err := cli.EnsureNamespace(bg, cfg.ProxmoxBootstrapSecretNamespace); err != nil {
 		return err
 	}
 
-	if err := ensureNamespace(ctx, cfg.ProxmoxBootstrapSecretNamespace); err != nil {
-		return err
-	}
-
-	// `kubectl create secret generic ... --from-file=KEY=PATH --dry-run=client -o yaml | kubectl apply -f -`
-	secretYAML, _, err := shell.Capture(
-		"kubectl", "--context", ctx,
-		"-n", cfg.ProxmoxBootstrapSecretNamespace,
-		"create", "secret", "generic", cfg.ProxmoxBootstrapConfigSecretName,
-		"--from-file="+key+"="+tmpf.Name(),
-		"--dry-run=client", "-o", "yaml",
-	)
-	if err != nil || secretYAML == "" {
-		logx.Die("Failed to apply %s on management cluster.", cfg.ProxmoxBootstrapConfigSecretName)
-	}
-	if err := shell.Pipe(secretYAML, "kubectl", "--context", ctx, "apply", "-f", "-"); err != nil {
-		logx.Die("Failed to apply %s on management cluster.", cfg.ProxmoxBootstrapConfigSecretName)
+	// Server-side apply the Secret (idempotent equivalent of
+	// `kubectl create secret generic ... --dry-run=client -o yaml | kubectl apply -f -`).
+	if err := applySecret(bg, cli, cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapConfigSecretName,
+		map[string][]byte{key: []byte(body)}, nil); err != nil {
+		logx.Die("Failed to apply %s on management cluster: %v", cfg.ProxmoxBootstrapConfigSecretName, err)
 	}
 	logx.Log("Updated bootstrap config Secret %s/%s on %s (key %s: non-secret snapshot + file header; API tokens are in capmox/csi/admin Secrets in that namespace — never in this file).",
-		cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapConfigSecretName, ctx, key)
+		cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapConfigSecretName, kctx, key)
 	return nil
 }
 
@@ -450,9 +436,6 @@ func ApplyBootstrapConfigToManagementCluster(cfg *config.Config) error {
 // Used very early (before CLI is parsed) to populate cfg from an existing
 // kind Secret. Returns silently when not available.
 func TryLoadBootstrapConfigFromKind(cfg *config.Config) {
-	if !shell.CommandExists("kubectl") {
-		return
-	}
 	ctx, ok := kubectlx.ResolveBootstrapContext(cfg)
 	if !ok {
 		return
@@ -479,16 +462,62 @@ func TryLoadBootstrapConfigFromKind(cfg *config.Config) {
 
 // --- small helpers ---
 
-func getSecretJSON(ctx, ns, name string) string {
+// getSecretJSON returns a JSON serialisation of the named Secret on the
+// given context, or "" when the Secret is missing or the context cannot
+// be loaded. The serialisation matches what `kubectl get secret -o json`
+// produced previously: corev1.Secret.Data is a map[string][]byte, and
+// json.Marshal encodes []byte values as base64 strings — so existing
+// callers that base64-decode the .data[key] still see the same bytes.
+func getSecretJSON(kctx, ns, name string) string {
 	if ns == "" || name == "" {
 		return ""
 	}
-	out, _, _ := shell.Capture(
-		"kubectl", "--context", ctx, "get", "secret", name,
-		"-n", ns, "-o", "json",
-	)
-	return out
+	cli, err := k8sclient.ForContext(kctx)
+	if err != nil {
+		return ""
+	}
+	sec, err := cli.Typed.CoreV1().Secrets(ns).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+	out, err := json.Marshal(sec)
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }
+
+// applySecret server-side-applies a Secret on the given context. The Type
+// is forced to corev1.SecretTypeOpaque, matching the bash `--from-file` /
+// `--from-literal` defaults. Labels, when non-nil, are written through;
+// pass nil to leave any pre-existing labels alone (SSA only sets fields
+// the manifest specifies).
+func applySecret(ctx context.Context, cli *k8sclient.Client, ns, name string, data map[string][]byte, labels map[string]string) error {
+	sec := corev1.Secret{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Secret",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: ns,
+			Labels:    labels,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: data,
+	}
+	body, err := json.Marshal(sec)
+	if err != nil {
+		return err
+	}
+	_, err = cli.Typed.CoreV1().Secrets(ns).Patch(ctx, name, types.ApplyPatchType, body, metav1.PatchOptions{
+		FieldManager: k8sclient.FieldManager,
+		Force:        boolPtr(true),
+	})
+	return err
+}
+
+func boolPtr(b bool) *bool { return &b }
 
 // decodeSecretDataKey base64-decodes secretJSON's .data[key] value. Returns
 // "" if the key is missing or the JSON can't be parsed.

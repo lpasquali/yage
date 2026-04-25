@@ -1,16 +1,21 @@
 package bootstrap
 
 import (
-	"encoding/base64"
-	"encoding/json"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/yaml"
+
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
 // EnsureCAPIManifestPath ports bootstrap_ensure_capi_manifest_path
@@ -74,44 +79,32 @@ func TryLoadCAPIManifestFromSecret(cfg *config.Config) {
 	if !cfg.BootstrapCAPIUseSecret || cfg.CAPIManifest == "" {
 		return
 	}
-	if !shell.CommandExists("kubectl") {
+	ctxName := "kind-" + cfg.KindClusterName
+	if !k8sclient.ContextExists(ctxName) {
 		return
 	}
-	ctx := "kind-" + cfg.KindClusterName
-	if !contextExists(ctx) {
+	cli, err := k8sclient.ForContext(ctxName)
+	if err != nil {
 		return
 	}
-	// namespace + secret existence checks are cheap; bail early on either.
-	if err := shell.Run("kubectl", "--context", ctx, "get", "ns", cfg.CAPIManifestSecretNamespace); err != nil {
+	bg := context.Background()
+	if _, err := cli.Typed.CoreV1().Namespaces().Get(bg, cfg.CAPIManifestSecretNamespace, metav1.GetOptions{}); err != nil {
 		return
 	}
-	if err := shell.Run("kubectl", "--context", ctx, "get", "secret",
-		"-n", cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName); err != nil {
+	sec, err := cli.Typed.CoreV1().Secrets(cfg.CAPIManifestSecretNamespace).
+		Get(bg, cfg.CAPIManifestSecretName, metav1.GetOptions{})
+	if err != nil {
 		return
 	}
-	raw, _, _ := shell.Capture(
-		"kubectl", "--context", ctx, "get", "secret",
-		"-n", cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName,
-		"-o", "json",
-	)
-	if raw == "" {
-		return
-	}
-	var sec struct {
-		Data map[string]string `json:"data"`
-	}
-	if err := json.Unmarshal([]byte(raw), &sec); err != nil {
-		return
-	}
-	body, err := base64.StdEncoding.DecodeString(sec.Data[cfg.CAPIManifestSecretKey])
-	if err != nil || len(body) == 0 {
+	body, ok := sec.Data[cfg.CAPIManifestSecretKey]
+	if !ok || len(body) == 0 {
 		return
 	}
 	if err := os.WriteFile(cfg.CAPIManifest, body, 0o600); err != nil {
 		return
 	}
 	logx.Log("Loaded workload manifest from Secret %s/%s (key %s, context %s).",
-		cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, cfg.CAPIManifestSecretKey, ctx)
+		cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, cfg.CAPIManifestSecretKey, ctxName)
 }
 
 // PushCAPIManifestToSecret ports capi_manifest_push_to_secret
@@ -132,49 +125,72 @@ func PushCAPIManifestToSecret(cfg *config.Config) {
 	if fi.Size() >= 1000000 {
 		logx.Die("Workload manifest is %d bytes (Secret data limit is ~1 MiB). Set CAPI_MANIFEST or use --capi-manifest with a file path, or reduce the manifest.", fi.Size())
 	}
-	ctx := "kind-" + cfg.KindClusterName
-	nsDoc := fmt.Sprintf(`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q}}`,
-		cfg.CAPIManifestSecretNamespace)
-	_ = shell.Pipe(nsDoc, "kubectl", "--context", ctx, "apply", "-f", "-")
-
-	secretYAML, _, _ := shell.Capture(
-		"kubectl", "--context", ctx,
-		"-n", cfg.CAPIManifestSecretNamespace,
-		"create", "secret", "generic", cfg.CAPIManifestSecretName,
-		"--from-file="+cfg.CAPIManifestSecretKey+"="+cfg.CAPIManifest,
-		"--dry-run=client", "-o", "yaml",
-	)
-	if secretYAML == "" {
-		logx.Die("Failed to store workload manifest in Secret %s/%s (key %s).",
-			cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, cfg.CAPIManifestSecretKey)
+	ctxName := "kind-" + cfg.KindClusterName
+	cli, err := k8sclient.ForContext(ctxName)
+	if err != nil {
+		logx.Die("Failed to store workload manifest in Secret %s/%s: cannot build kube client for %s: %v",
+			cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, ctxName, err)
 	}
-	if err := shell.Pipe(secretYAML, "kubectl", "--context", ctx, "apply", "-f", "-"); err != nil {
-		logx.Die("Failed to store workload manifest in Secret %s/%s (key %s).",
-			cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, cfg.CAPIManifestSecretKey)
+	bg := context.Background()
+	if err := cli.EnsureNamespace(bg, cfg.CAPIManifestSecretNamespace); err != nil {
+		logx.Die("Failed to ensure namespace %s: %v", cfg.CAPIManifestSecretNamespace, err)
 	}
-	_ = shell.Run("kubectl", "--context", ctx, "-n", cfg.CAPIManifestSecretNamespace,
-		"label", "secret", cfg.CAPIManifestSecretName,
-		"app.kubernetes.io/managed-by=bootstrap-capi", "--overwrite")
+	body, err := os.ReadFile(cfg.CAPIManifest)
+	if err != nil {
+		logx.Die("Failed to read CAPI manifest %s: %v", cfg.CAPIManifest, err)
+	}
+	sec := &corev1.Secret{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.CAPIManifestSecretName,
+			Namespace: cfg.CAPIManifestSecretNamespace,
+			Labels:    map[string]string{"app.kubernetes.io/managed-by": "bootstrap-capi"},
+		},
+		Data: map[string][]byte{cfg.CAPIManifestSecretKey: body},
+	}
+	jsonBody, err := yaml.Marshal(sec)
+	if err == nil {
+		jsonBody, err = yaml.YAMLToJSON(jsonBody)
+	}
+	if err != nil {
+		logx.Die("Failed to encode workload manifest Secret: %v", err)
+	}
+	if _, err := cli.Typed.CoreV1().Secrets(cfg.CAPIManifestSecretNamespace).
+		Patch(bg, cfg.CAPIManifestSecretName, types.ApplyPatchType, jsonBody, metav1.PatchOptions{
+			FieldManager: k8sclient.FieldManager,
+			Force:        boolPtrLocal(true),
+		}); err != nil {
+		logx.Die("Failed to store workload manifest in Secret %s/%s (key %s): %v",
+			cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, cfg.CAPIManifestSecretKey, err)
+	}
 	logx.Log("Wrote workload manifest to Secret %s/%s (key %s). No persistent file under ~/.bootstrap-capi — debug via k9s or kubectl get secret -n %s %s -o yaml.",
 		cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, cfg.CAPIManifestSecretKey,
 		cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName)
 	TouchWorkloadGencodeStamp(cfg)
 }
 
+// boolPtrLocal returns a pointer to b — package-local helper to avoid an
+// import cycle with the foundation when both are in the same module.
+func boolPtrLocal(b bool) *bool { return &b }
+
 // DeleteCAPIManifestSecret ports capi_manifest_delete_secret (L4439-L4448).
 func DeleteCAPIManifestSecret(cfg *config.Config) {
 	if !cfg.BootstrapCAPIUseSecret {
 		return
 	}
-	if !shell.CommandExists("kubectl") {
+	ctxName := "kind-" + cfg.KindClusterName
+	if !k8sclient.ContextExists(ctxName) {
 		return
 	}
-	ctx := "kind-" + cfg.KindClusterName
-	if !contextExists(ctx) {
+	cli, err := k8sclient.ForContext(ctxName)
+	if err != nil {
 		return
 	}
-	_ = shell.Run("kubectl", "--context", ctx, "delete", "secret",
-		"-n", cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, "--ignore-not-found")
+	bg := context.Background()
+	if err := cli.Typed.CoreV1().Secrets(cfg.CAPIManifestSecretNamespace).
+		Delete(bg, cfg.CAPIManifestSecretName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		logx.Warn("delete CAPI manifest Secret: %v", err)
+	}
 }
 
 // ResolvedLocalConfigYAMLPath ports bootstrap_resolved_local_config_yaml_path

@@ -1,19 +1,32 @@
 package bootstrap
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/lpasquali/bootstrap-capi/internal/config"
 	"github.com/lpasquali/bootstrap-capi/internal/csix"
 	"github.com/lpasquali/bootstrap-capi/internal/helmvalues"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
 	"github.com/lpasquali/bootstrap-capi/internal/postsync"
 	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
 	"github.com/lpasquali/bootstrap-capi/internal/wlargocd"
 )
+
+// argoAppGVR is reused by waiters and renderers when reaching for the
+// argoproj.io Application CRD on the workload cluster.
+var argoAppGVR = schema.GroupVersionResource{
+	Group:    "argoproj.io",
+	Version:  "v1alpha1",
+	Resource: "applications",
+}
 
 // ApplyWorkloadArgoCDApplications ports apply_workload_argocd_applications
 // (L7039-L7311). Renders every enabled in-cluster Application (metrics-
@@ -184,8 +197,12 @@ storageClass:
 		logx.Log("No in-cluster Argo CD Applications to apply (all add-ons disabled).")
 		return
 	}
-	if err := shell.Pipe(body, "kubectl", "--kubeconfig", wk, "apply", "-f", "-"); err != nil {
-		logx.Die("Failed to apply in-cluster Argo CD Applications on the workload cluster.")
+	cli, err := k8sclient.ForKubeconfigFile(wk)
+	if err != nil {
+		logx.Die("Failed to build kube client for workload kubeconfig: %v", err)
+	}
+	if err := cli.ApplyMultiDocYAML(context.Background(), []byte(body)); err != nil {
+		logx.Die("Failed to apply in-cluster Argo CD Applications on the workload cluster: %v", err)
 	}
 	logx.Log("In-cluster Argo CD Applications submitted on the workload.")
 }
@@ -233,20 +250,57 @@ func WaitForWorkloadArgoCDApplicationsHealthy(cfg *config.Config) {
 		logx.Die("Could not read workload kubeconfig to wait for in-cluster Argo CD Applications.")
 	}
 	defer os.Remove(wk)
+	cli, err := k8sclient.ForKubeconfigFile(wk)
+	if err != nil {
+		logx.Die("Could not build kube client for workload kubeconfig: %v", err)
+	}
+	bg := context.Background()
 	for _, app := range apps {
 		logx.Log("Waiting for Argo Application %s (workload) to become Synced+Healthy...", app)
-		if err := shell.Run("kubectl", "--kubeconfig", wk,
-			"-n", cfg.WorkloadArgoCDNamespace, "wait",
-			"--for=jsonpath={.status.sync.status}=Synced",
-			"application/"+app, "--timeout=30m"); err != nil {
-			logx.Die("Argo Application %s (workload) did not reach Synced.", app)
-		}
-		if err := shell.Run("kubectl", "--kubeconfig", wk,
-			"-n", cfg.WorkloadArgoCDNamespace, "wait",
-			"--for=jsonpath={.status.health.status}=Healthy",
-			"application/"+app, "--timeout=30m"); err != nil {
-			logx.Die("Argo Application %s (workload) did not reach Healthy.", app)
+		if err := waitArgoApplicationCondition(cli, bg, cfg.WorkloadArgoCDNamespace, app, "Synced", "Healthy", 30*time.Minute); err != nil {
+			logx.Die("Argo Application %s (workload) did not reach Synced+Healthy: %v", app, err)
 		}
 	}
 	logx.Log("All in-cluster Argo CD Applications on the workload are Synced+Healthy.")
+}
+
+// waitArgoApplicationCondition polls the workload Argo Application until
+// status.sync.status == wantSync AND status.health.status == wantHealth, or
+// the timeout fires. Replaces the two `kubectl wait --for=jsonpath` calls.
+func waitArgoApplicationCondition(cli *k8sclient.Client, bg context.Context, ns, name, wantSync, wantHealth string, timeout time.Duration) error {
+	return k8sclient.PollUntil(bg, 5*time.Second, timeout, func(ctx context.Context) (bool, error) {
+		u, err := cli.Dynamic.Resource(argoAppGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if k8sclient.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		sync, _, _ := unstructuredStr(u.Object, "status", "sync", "status")
+		health, _, _ := unstructuredStr(u.Object, "status", "health", "status")
+		return sync == wantSync && health == wantHealth, nil
+	})
+}
+
+// unstructuredStr fetches a string at a dotted path inside an Unstructured
+// object's nested map. Returns "", false when any segment is missing or
+// not a string.
+func unstructuredStr(obj map[string]interface{}, path ...string) (string, bool, error) {
+	cur := obj
+	for i, p := range path {
+		v, ok := cur[p]
+		if !ok || v == nil {
+			return "", false, nil
+		}
+		if i == len(path)-1 {
+			s, ok := v.(string)
+			return s, ok, nil
+		}
+		next, ok := v.(map[string]interface{})
+		if !ok {
+			return "", false, nil
+		}
+		cur = next
+	}
+	return "", false, nil
 }

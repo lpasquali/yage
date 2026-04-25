@@ -19,6 +19,15 @@ import (
 
 // Backup ports kind_bootstrap_state_backup.
 //
+// TODO: backup is intentionally still implemented via `kubectl get ... -o json`
+// shell-outs. Re-implementing it on top of the typed/dynamic client in
+// internal/k8sclient would be straightforward, but the resulting tarball
+// layout (bytes inside data/<ns>/objects.jsonl in particular) MUST stay
+// byte-compatible with the bash-produced format so existing backups remain
+// restorable. Reaching that compatibility bar against arbitrary
+// CRDs+namespace contents is high-risk; the kubectl-based path is the
+// canonical reference. Migrate when there is a comprehensive round-trip test.
+//
 // Steps:
 //  1. require kubectl on PATH and the kind-<KIND_CLUSTER_NAME> context to exist.
 //  2. resolve destination path (absolute; default "bootstrap-kind-backup-<ts>.tar")

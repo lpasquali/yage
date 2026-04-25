@@ -1,13 +1,20 @@
 package caaph
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
 // ApplyWorkloadArgoHelmProxies ports caaph_apply_workload_argo_helm_proxies
@@ -88,8 +95,12 @@ func ApplyWorkloadArgoHelmProxies(cfg *config.Config, installOperator func()) {
 	fmt.Fprintln(&sb, "          syncOptions:")
 	fmt.Fprintln(&sb, "            - CreateNamespace=true")
 
-	if err := shell.Pipe(sb.String(), "kubectl", "--context", mctx, "apply", "-f", "-"); err != nil {
-		logx.Die("Failed to apply HelmChartProxy (argocd-apps / app-of-apps).")
+	cli, err := k8sclient.ForContext(mctx)
+	if err != nil {
+		logx.Die("Failed to load management context %s: %v", mctx, err)
+	}
+	if err := cli.ApplyYAML(context.Background(), []byte(sb.String())); err != nil {
+		logx.Die("Failed to apply HelmChartProxy (argocd-apps / app-of-apps): %v", err)
 	}
 	logx.Log("Applied HelmChartProxy %s-caaph-argocd-apps (root app-of-apps Application name: %s; repo %s).",
 		cfg.WorkloadClusterName, cfg.WorkloadClusterName, cfg.WorkloadAppOfAppsGitURL)
@@ -110,19 +121,36 @@ func WaitWorkloadArgoCDServer(cfg *config.Config, writeWorkloadKubeconfig func()
 		ns = "argocd"
 	}
 	logx.Log("Waiting for Argo CD server (workload %s, ns %s)…", cfg.WorkloadClusterName, ns)
-	for i := 0; i < 120; i++ {
-		if err := shell.Run("kubectl", "--kubeconfig", wk, "-n", ns,
-			"get", "deploy", "argocd-server"); err == nil {
-			if err := shell.Run("kubectl", "--kubeconfig", wk,
-				"wait", "-n", ns, "deploy/argocd-server",
-				"--for=condition=Available", "--timeout=2m"); err == nil {
-				logx.Log("Argo CD server is available on the workload cluster.")
-				return
-			}
-		}
-		time.Sleep(5 * time.Second)
+
+	cli, err := k8sclient.ForKubeconfigFile(wk)
+	if err != nil {
+		logx.Warn("Argo CD server: cannot load workload kubeconfig: %v", err)
+		return
 	}
-	logx.Warn("Argo CD server did not become Available in time — check HelmReleaseProxy and pods on the workload.")
+
+	// Bash polled in a 120 × 5s loop with an inner 2m kubectl wait — total
+	// about 10 minutes. Match that envelope with PollUntil(5s, 10m).
+	err = k8sclient.PollUntil(context.Background(), 5*time.Second, 10*time.Minute,
+		func(c context.Context) (bool, error) {
+			dep, err := cli.Typed.AppsV1().Deployments(ns).Get(c, "argocd-server", metav1.GetOptions{})
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					return false, nil
+				}
+				return false, nil
+			}
+			for _, cond := range dep.Status.Conditions {
+				if string(cond.Type) == "Available" && cond.Status == corev1.ConditionTrue {
+					return true, nil
+				}
+			}
+			return false, nil
+		})
+	if err != nil {
+		logx.Warn("Argo CD server did not become Available in time — check HelmReleaseProxy and pods on the workload.")
+		return
+	}
+	logx.Log("Argo CD server is available on the workload cluster.")
 }
 
 // LogWorkloadArgoAppsStatus ports caaph_log_workload_argo_apps_status.
@@ -140,23 +168,50 @@ func LogWorkloadArgoAppsStatus(cfg *config.Config, writeWorkloadKubeconfig func(
 		ns = "argocd"
 	}
 	logx.Log("App-of-apps: this script only waits for argocd-server — it does not wait for the argocd-apps Helm install, Git sync, or platform Deployments. Check sync below.")
-	if err := shell.Run("kubectl", "--kubeconfig", wk, "-n", ns,
-		"get", "applications.argoproj.io", "-o", "name"); err != nil {
+
+	cli, err := k8sclient.ForKubeconfigFile(wk)
+	if err != nil {
+		logx.Warn("Could not load workload kubeconfig: %v", err)
+		return
+	}
+	ctx := context.Background()
+	appsGVR := schema.GroupVersionResource{
+		Group:    "argoproj.io",
+		Version:  "v1alpha1",
+		Resource: "applications",
+	}
+
+	list, err := cli.Dynamic.Resource(appsGVR).Namespace(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
 		logx.Warn("Could not list Application resources in %s (CRD or RBAC) — is Argo fully installed on the workload?", ns)
 		return
 	}
-	_ = shell.Run("kubectl", "--kubeconfig", wk, "-n", ns, "get", "applications.argoproj.io")
-	if err := shell.Run("kubectl", "--kubeconfig", wk, "-n", ns,
-		"get", "application/"+cfg.WorkloadClusterName); err != nil {
-		logx.Warn("No root Application %s in %s yet. Often: CAAPH is still running the 'argocd-apps' install on the workload, the HelmChartProxy does not match the cluster (CAPI Cluster needs label caaph=enabled), or the chart failed; check: kubectl get helmchartproxy -A, controller logs, and Argo/Helm on the workload.", cfg.WorkloadClusterName, ns)
+
+	// Mirror `kubectl get applications.argoproj.io` output (one name per
+	// line, then a tabular listing).
+	for _, item := range list.Items {
+		fmt.Println("application.argoproj.io/" + item.GetName())
+	}
+	for _, item := range list.Items {
+		sync, _, _ := unstructuredString(item.Object, "status", "sync", "status")
+		health, _, _ := unstructuredString(item.Object, "status", "health", "status")
+		fmt.Printf("%s\t%s\t%s\n", item.GetName(), sync, health)
+	}
+
+	root, err := cli.Dynamic.Resource(appsGVR).Namespace(ns).
+		Get(ctx, cfg.WorkloadClusterName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			logx.Warn("No root Application %s in %s yet. Often: CAAPH is still running the 'argocd-apps' install on the workload, the HelmChartProxy does not match the cluster (CAPI Cluster needs label caaph=enabled), or the chart failed; check: kubectl get helmchartproxy -A, controller logs, and Argo/Helm on the workload.", cfg.WorkloadClusterName, ns)
+		} else {
+			logx.Warn("Could not get root Application %s/%s: %v", ns, cfg.WorkloadClusterName, err)
+		}
 		return
 	}
-	_ = shell.Run("kubectl", "--kubeconfig", wk, "-n", ns,
-		"get", "application/"+cfg.WorkloadClusterName,
-		"-o", "custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status")
-	sync, _, _ := shell.Capture("kubectl", "--kubeconfig", wk, "-n", ns,
-		"get", "application/"+cfg.WorkloadClusterName,
-		"-o", "jsonpath={.status.sync.status}")
+	sync, _, _ := unstructuredString(root.Object, "status", "sync", "status")
+	health, _, _ := unstructuredString(root.Object, "status", "health", "status")
+	fmt.Printf("NAME\tSYNC\tHEALTH\n%s\t%s\t%s\n", root.GetName(), sync, health)
+
 	sync = strings.TrimSpace(sync)
 	if sync != "" && sync != "Synced" {
 		logx.Warn("Root app %s is not Synced yet (%s) — from a machine with workload kube: argocd app sync %s (or use the Argo CD UI), then watch child apps.",
@@ -164,13 +219,31 @@ func LogWorkloadArgoAppsStatus(cfg *config.Config, writeWorkloadKubeconfig func(
 	}
 }
 
+// unstructuredString fetches a string value at a nested path from an
+// unstructured object map; returns ("", false, nil) on missing/non-string.
+func unstructuredString(obj map[string]any, path ...string) (string, bool, error) {
+	cur := any(obj)
+	for _, k := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return "", false, nil
+		}
+		v, ok := m[k]
+		if !ok {
+			return "", false, nil
+		}
+		cur = v
+	}
+	s, ok := cur.(string)
+	if !ok {
+		return "", false, nil
+	}
+	return s, true, nil
+}
+
 func removePath(p string) {
 	if p == "" {
 		return
 	}
-	_ = shell.Run("sh", "-c", "rm -f -- "+shellQuote(p))
-}
-
-func shellQuote(s string) string {
-	return `'` + strings.ReplaceAll(s, `'`, `'\''`) + `'`
+	_ = os.Remove(p)
 }

@@ -7,42 +7,43 @@
 //   - wait_for_service_endpoint                             ~L2059-2070
 //   - apply_workload_cluster_manifest_to_management_cluster ~L2075-2154
 //   - warn_regenerated_capi_manifest_immutable_risk         ~L2604-2613
+//
+// All kubectl shell-outs in this file have been migrated to the in-process
+// k8sclient (client-go) layer.
 package kubectlx
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/yaml"
+
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
 // ResolveBootstrapContext ports _resolve_bootstrap_kubectl_context.
 // Returns "kind-<KIND_CLUSTER_NAME>" if that context exists, otherwise
 // the current context if it is a kind context, otherwise "" + false.
 func ResolveBootstrapContext(cfg *config.Config) (string, bool) {
-	if !shell.CommandExists("kubectl") {
-		return "", false
-	}
 	name := cfg.KindClusterName
 	if name == "" {
 		name = "capi-provisioner"
 	}
 	want := "kind-" + name
-	out, _, _ := shell.Capture("kubectl", "config", "get-contexts", "-o", "name")
-	for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", ""), "\n") {
+	for _, ln := range k8sclient.ListContexts() {
 		if ln == want {
 			return want, true
 		}
 	}
-	cur, _, _ := shell.Capture("kubectl", "config", "current-context")
-	cur = strings.TrimSpace(strings.ReplaceAll(cur, "\r", ""))
+	cur := strings.TrimSpace(k8sclient.CurrentContext())
 	if strings.HasPrefix(cur, "kind-") {
 		return cur, true
 	}
@@ -56,13 +57,20 @@ func WaitForServiceEndpoint(ns, svc string, timeout time.Duration) {
 	if timeout == 0 {
 		timeout = 300 * time.Second
 	}
+	cli, err := k8sclient.ForCurrent()
+	if err != nil {
+		logx.Die("WaitForServiceEndpoint: load kubeconfig: %v", err)
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		out, _, _ := shell.Capture("kubectl", "get", "endpoints", svc, "-n", ns,
-			"-o", "jsonpath={.subsets[*].addresses[*].ip}")
-		if strings.TrimSpace(out) != "" {
-			logx.Log("Webhook endpoint ready: %s/%s", ns, svc)
-			return
+		ep, err := cli.Typed.CoreV1().Endpoints(ns).Get(context.Background(), svc, metav1.GetOptions{})
+		if err == nil {
+			for _, sub := range ep.Subsets {
+				if len(sub.Addresses) > 0 {
+					logx.Log("Webhook endpoint ready: %s/%s", ns, svc)
+					return
+				}
+			}
 		}
 		time.Sleep(5 * time.Second)
 	}
@@ -72,14 +80,12 @@ func WaitForServiceEndpoint(ns, svc string, timeout time.Duration) {
 // ApplyWorkloadManifestToManagementCluster ports
 // apply_workload_cluster_manifest_to_management_cluster.
 //
-// Splits the multi-doc YAML on "\n---\n" boundaries; for each document:
-//  1. runs `kubectl create --dry-run=client -o json -f -` to discover kind/
-//     apiVersion/name/namespace;
-//  2. if the doc is a ProxmoxCluster and a non-deleting object of that name
-//     exists, skips the apply (avoids a no-op PATCH through the capmox
-//     mutating webhook which has been known to flake with connection-refused
-//     on reruns);
-//  3. otherwise runs `kubectl apply -f -` with the doc on stdin.
+// Splits the multi-doc YAML on "\n---\n" boundaries; for each document,
+// when it is a ProxmoxCluster and a non-deleting object of that name
+// already exists, skips the apply (avoids a no-op PATCH through the
+// capmox mutating webhook which has been known to flake with
+// connection-refused on reruns); otherwise server-side-applies the doc
+// through the dynamic client.
 //
 // Returns an error on the first failure, matching the bash `|| return $rc`
 // semantics.
@@ -91,76 +97,75 @@ func ApplyWorkloadManifestToManagementCluster(cfg *config.Config, manifestPath s
 	if err != nil {
 		return err
 	}
-	ctx := "kind-" + cfg.KindClusterName
+	kctx := "kind-" + cfg.KindClusterName
+	cli, err := k8sclient.ForContext(kctx)
+	if err != nil {
+		return fmt.Errorf("load context %s: %w", kctx, err)
+	}
+
+	ctx := context.Background()
 
 	// Split on "\n---\n" boundaries, trim, drop empty shards. Matches the
 	// exact split used in the bash inline Python.
-	parts := strings.Split(string(raw), "\n---\n")
-	for _, p := range parts {
+	for _, p := range strings.Split(string(raw), "\n---\n") {
 		doc := strings.TrimSpace(p)
 		if doc == "" {
 			continue
 		}
-		doc += "\n"
 
-		// 1. dry-run to get metadata.
-		dry := exec.Command("kubectl", "--context", ctx, "create",
-			"--dry-run=client", "-o", "json", "-f", "-")
-		dry.Stdin = strings.NewReader(doc)
-		var dryOut, dryErr bytes.Buffer
-		dry.Stdout = &dryOut
-		dry.Stderr = &dryErr
-		if err := dry.Run(); err != nil {
-			// Fall through to a real apply, letting kubectl report the
-			// actual error. Matches bash behaviour (the dry-run stderr is
-			// echoed to stderr, then apply runs anyway).
-			if dryErr.Len() > 0 {
-				_, _ = os.Stderr.Write(dryErr.Bytes())
-			}
-			if err := shell.Pipe(doc, "kubectl", "--context", ctx, "apply", "-f", "-"); err != nil {
-				return err
-			}
+		u := &unstructured.Unstructured{}
+		if err := yaml.Unmarshal([]byte(doc), &u.Object); err != nil {
+			return fmt.Errorf("parse manifest doc: %w", err)
+		}
+		if u.Object == nil || u.GetKind() == "" {
 			continue
 		}
 
-		var obj struct {
-			Kind       string `json:"kind"`
-			APIVersion string `json:"apiVersion"`
-			Metadata   struct {
-				Name      string `json:"name"`
-				Namespace string `json:"namespace"`
-			} `json:"metadata"`
-		}
-		if err := json.Unmarshal(dryOut.Bytes(), &obj); err != nil {
-			return fmt.Errorf("parse dry-run output: %w", err)
-		}
-		name := obj.Metadata.Name
-		ns := obj.Metadata.Namespace
+		gvk := u.GroupVersionKind()
+		name := u.GetName()
+		ns := u.GetNamespace()
 		if ns == "" {
 			ns = "default"
 		}
 
-		// 2. skip ProxmoxCluster if already reconciled.
-		if obj.Kind == "ProxmoxCluster" &&
-			strings.Contains(obj.APIVersion, "infrastructure.cluster.x-k8s.io") &&
+		// Skip ProxmoxCluster if already reconciled.
+		if gvk.Kind == "ProxmoxCluster" &&
+			strings.Contains(gvk.Group, "infrastructure.cluster.x-k8s.io") &&
 			name != "" {
-			out, _, err := shell.Capture("kubectl", "--context", ctx, "get", "proxmoxcluster",
-				name, "-n", ns, "-o", "jsonpath={.metadata.deletionTimestamp}")
-			if err == nil && strings.TrimSpace(out) == "" {
-				fmt.Fprintf(os.Stderr,
-					"Skipping apply for existing ProxmoxCluster %s/%s "+
-						"(already reconciled; avoids redundant webhook/patch).\n",
-					ns, name)
-				continue
+			if existing, err := getResource(ctx, cli, gvk, ns, name); err == nil && existing != nil {
+				if existing.GetDeletionTimestamp() == nil {
+					fmt.Fprintf(os.Stderr,
+						"Skipping apply for existing ProxmoxCluster %s/%s "+
+							"(already reconciled; avoids redundant webhook/patch).\n",
+						ns, name)
+					continue
+				}
 			}
 		}
 
-		// 3. apply.
-		if err := shell.Pipe(doc, "kubectl", "--context", ctx, "apply", "-f", "-"); err != nil {
+		if err := cli.ApplyUnstructured(ctx, u); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// getResource returns the named object via the dynamic client, mapping
+// the GVK to its REST resource. Returns (nil, nil) when the object is
+// absent.
+func getResource(ctx context.Context, cli *k8sclient.Client, gvk schema.GroupVersionKind, ns, name string) (*unstructured.Unstructured, error) {
+	mapping, err := cli.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := cli.Dynamic.Resource(mapping.Resource).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if k8sclient.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return obj, nil
 }
 
 // WarnRegeneratedManifestImmutableRisk ports
@@ -174,26 +179,27 @@ func WarnRegeneratedManifestImmutableRisk(cfg *config.Config) {
 	if !cfg.BootstrapClusterctlRegeneratedManifest {
 		return
 	}
-	if !shell.CommandExists("kubectl") {
+	kctx := "kind-" + cfg.KindClusterName
+	if !k8sclient.ContextExists(kctx) {
 		return
 	}
-	ctx := "kind-" + cfg.KindClusterName
-	out, _, _ := shell.Capture("kubectl", "config", "get-contexts", "-o", "name")
-	found := false
-	for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", ""), "\n") {
-		if ln == ctx {
-			found = true
-			break
-		}
-	}
-	if !found {
+	cli, err := k8sclient.ForContext(kctx)
+	if err != nil {
 		return
 	}
-	// kubectl get cluster — we only care about exit status, not output.
-	c := exec.Command("kubectl", "--context", ctx, "get", "cluster",
-		cfg.WorkloadClusterName, "-n", cfg.WorkloadClusterNamespace)
-	c.Stdout, c.Stderr = nil, nil
-	if err := c.Run(); err != nil {
+	gvk := schema.GroupVersionKind{
+		Group:   "cluster.x-k8s.io",
+		Version: "v1beta1",
+		Kind:    "Cluster",
+	}
+	// Try v1beta1 first, then v1beta2 — RESTMapping resolves whichever
+	// exists.
+	mapping, err := cli.Mapper.RESTMapping(gvk.GroupKind())
+	if err != nil {
+		return
+	}
+	if _, err := cli.Dynamic.Resource(mapping.Resource).Namespace(cfg.WorkloadClusterNamespace).
+		Get(context.Background(), cfg.WorkloadClusterName, metav1.GetOptions{}); err != nil {
 		return
 	}
 	logx.Warn(
@@ -205,4 +211,3 @@ func WarnRegeneratedManifestImmutableRisk(cfg *config.Config) {
 		cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName,
 	)
 }
-

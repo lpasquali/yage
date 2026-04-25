@@ -19,6 +19,13 @@ import (
 
 // Restore ports kind_bootstrap_state_restore.
 //
+// TODO: restore still drives `kubectl --context X apply -f -` on each cleaned
+// JSON document. Migrating to internal/k8sclient.Client.ApplyUnstructured
+// would remove the kubectl dependency, but the kubectl path also benefits
+// from kubectl's apply semantics (last-applied-configuration handling, CRD
+// readiness retries, etc.) that we'd have to reproduce. Keeping the
+// shell-out is the pragmatic choice until backup is also migrated.
+//
 // Steps:
 //  1. require kubectl and an archive path that exists.
 //  2. resolve kind-<KIND_CLUSTER_NAME> context.

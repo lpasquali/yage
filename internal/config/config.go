@@ -24,8 +24,9 @@ type Config struct {
 	ClusterctlVersion string
 	CiliumCLIVersion  string
 	CiliumVersion     string
-	ArgoCDCLIVersion  string
-	ArgoCDVersion     string // application image tag, ArgoCD CR spec.version
+	// ArgoCDVersion drives both the argocd CLI release tag and the
+	// ArgoCD CR spec.version; the two are kept in lockstep upstream.
+	ArgoCDVersion         string
 	ArgoCDOperatorVersion string
 	KyvernoCLIVersion string
 	CmctlVersion      string
@@ -351,7 +352,6 @@ func Load() *Config {
 	c.ClusterctlVersion = getenv("CLUSTERCTL_VERSION", "v1.11.8")
 	c.CiliumCLIVersion = getenv("CILIUM_CLI_VERSION", "v0.19.2")
 	c.CiliumVersion = getenv("CILIUM_VERSION", "1.19.3")
-	c.ArgoCDCLIVersion = getenv("ARGOCD_CLI_VERSION", "v3.3.8")
 	c.ArgoCDVersion = getenv("ARGOCD_VERSION", "v3.3.8")
 	c.ArgoCDOperatorVersion = getenv("ARGOCD_OPERATOR_VERSION", "v0.16.0")
 	c.KyvernoCLIVersion = getenv("KYVERNO_CLI_VERSION", "v1.17.1")

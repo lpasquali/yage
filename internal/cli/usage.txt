@@ -282,8 +282,7 @@
 #   (internal) ARGOCD_PORT_FORWARD_STANDALONE  set by --argocd-port-forward; not needed when using flags
 #   WORKLOAD_ROLLOUT_MODE            argocd | capi | all (for --workload-rollout; default: argocd)
 #   WORKLOAD_ROLLOUT_NO_WAIT         true: skip wait for in-cluster Argo apps healthy
-#   ARGOCD_VERSION                   Argo CD container/CLI app version (default: v3.3.8; keep in sync with ARGOCD_CLI_VERSION for login)
-#   ARGOCD_CLI_VERSION               argocd CLI release tag (default: v3.3.8; align with ARGOCD_VERSION / https://github.com/argoproj/argo-cd/releases/latest)
+#   ARGOCD_VERSION                   Argo CD app/server version + argocd CLI release tag (default: v3.3.8; CLI and ArgoCD CR are kept in lockstep upstream)
 #   KYVERNO_CLI_VERSION              kyverno CLI release tag (default: v1.17.1); Linux amd64/arm64; Argo + Kyverno
 #   KYVERNO_TOLERATE_CONTROL_PLANE  true|false; add Helm global.tolerations for control-plane taints (default: true; needed on many CAPI/single-CP nodes)
 #   CMCTL_VERSION                    cmctl release tag (default: v2.4.1); Linux amd64/arm64; Argo + cert-manager

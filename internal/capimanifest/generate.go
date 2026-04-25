@@ -1,7 +1,7 @@
 package capimanifest
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,10 +10,14 @@ import (
 	"regexp"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
 	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
 // TryFillWorkloadInputsFromManagement ports
@@ -24,48 +28,60 @@ import (
 // ProxmoxCluster when the workload is selected. Guards respect the
 // *_EXPLICIT flags so CLI-locked keys aren't overwritten.
 func TryFillWorkloadInputsFromManagement(cfg *config.Config) {
-	if !shell.CommandExists("kubectl") {
+	mctx := "kind-" + cfg.KindClusterName
+	if !k8sclient.ContextExists(mctx) {
 		return
 	}
-	ctx := "kind-" + cfg.KindClusterName
-	if !kubeContextExists(ctx) {
+	cli, err := k8sclient.ForContext(mctx)
+	if err != nil {
 		return
 	}
-	if err := shell.Run("kubectl", "--context", ctx, "get", "crd",
-		"proxmoxmachinetemplates.infrastructure.cluster.x-k8s.io"); err != nil {
+	ctx := context.Background()
+
+	pmtGVR := schema.GroupVersionResource{
+		Group:    "infrastructure.cluster.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "proxmoxmachinetemplates",
+	}
+	pcGVR := schema.GroupVersionResource{
+		Group:    "infrastructure.cluster.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "proxmoxclusters",
+	}
+
+	pmtList, err := cli.Dynamic.Resource(pmtGVR).Namespace("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		// CRD missing or not yet installed — bail like bash did when
+		// `kubectl get crd proxmoxmachinetemplates...` failed.
+		if apierrors.IsNotFound(err) || isNoMatchError(err) {
+			return
+		}
 		return
 	}
 
 	if cfg.ProxmoxTemplateID == "" {
-		out, _, _ := shell.Capture(
-			"kubectl", "--context", ctx, "get",
-			"proxmoxmachinetemplates.infrastructure.cluster.x-k8s.io", "-A",
-			"-o", "jsonpath={range .items[*]}{.spec.template.spec.templateID}\n{end}",
-		)
-		for _, ln := range strings.Split(out, "\n") {
-			ln = strings.TrimSpace(ln)
-			if ln != "" && regexp.MustCompile(`^[0-9]+$`).MatchString(ln) {
-				cfg.ProxmoxTemplateID = ln
-				logx.Log("Set PROXMOX_TEMPLATE_ID=%s from an existing ProxmoxMachineTemplate on %s.", ln, ctx)
+		idRE := regexp.MustCompile(`^[0-9]+$`)
+		for _, item := range pmtList.Items {
+			id, _, _ := unstructuredString(item.Object, "spec", "template", "spec", "templateID")
+			id = strings.TrimSpace(id)
+			if id != "" && idRE.MatchString(id) {
+				cfg.ProxmoxTemplateID = id
+				logx.Log("Set PROXMOX_TEMPLATE_ID=%s from an existing ProxmoxMachineTemplate on %s.", id, mctx)
 				break
 			}
 		}
 	}
 
 	if cfg.ProxmoxNode == "" {
-		out, _, _ := shell.Capture(
-			"kubectl", "--context", ctx, "get",
-			"proxmoxmachinetemplates.infrastructure.cluster.x-k8s.io", "-A",
-			"-o", "jsonpath={range .items[*]}{.spec.template.spec.sourceNode}\n{end}",
-		)
-		for _, ln := range strings.Split(out, "\n") {
-			ln = strings.TrimSpace(ln)
-			if ln != "" {
-				cfg.ProxmoxNode = ln
+		for _, item := range pmtList.Items {
+			node, _, _ := unstructuredString(item.Object, "spec", "template", "spec", "sourceNode")
+			node = strings.TrimSpace(node)
+			if node != "" {
+				cfg.ProxmoxNode = node
 				if !cfg.AllowedNodesExplicit && cfg.AllowedNodes == "" {
 					cfg.AllowedNodes = cfg.ProxmoxNode
 				}
-				logx.Log("Set PROXMOX_NODE from ProxmoxMachineTemplate sourceNode on %s.", ctx)
+				logx.Log("Set PROXMOX_NODE from ProxmoxMachineTemplate sourceNode on %s.", mctx)
 				break
 			}
 		}
@@ -75,85 +91,129 @@ func TryFillWorkloadInputsFromManagement(cfg *config.Config) {
 	if cfg.WorkloadClusterName == "" || cfg.WorkloadClusterNamespace == "" {
 		return
 	}
-	if err := shell.Run("kubectl", "--context", ctx, "get", "crd",
-		"proxmoxclusters.infrastructure.cluster.x-k8s.io"); err != nil {
+
+	clusterGVR := schema.GroupVersionResource{
+		Group:    "cluster.x-k8s.io",
+		Version:  "v1beta1",
+		Resource: "clusters",
+	}
+	clusterObj, err := cli.Dynamic.Resource(clusterGVR).
+		Namespace(cfg.WorkloadClusterNamespace).
+		Get(ctx, cfg.WorkloadClusterName, metav1.GetOptions{})
+	if err != nil {
 		return
 	}
-	clusterJSON, _, _ := shell.Capture(
-		"kubectl", "--context", ctx, "get", "cluster",
-		"-n", cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName, "-o", "json",
-	)
-	if clusterJSON == "" {
+	infraKind, _, _ := unstructuredString(clusterObj.Object, "spec", "infrastructureRef", "kind")
+	infraName, _, _ := unstructuredString(clusterObj.Object, "spec", "infrastructureRef", "name")
+	if infraKind != "" && !strings.EqualFold(infraKind, "ProxmoxCluster") {
 		return
 	}
-	var cs struct {
-		Spec struct {
-			InfrastructureRef struct {
-				Kind string `json:"kind"`
-				Name string `json:"name"`
-			} `json:"infrastructureRef"`
-		} `json:"spec"`
-	}
-	if err := json.Unmarshal([]byte(clusterJSON), &cs); err != nil {
-		return
-	}
-	if cs.Spec.InfrastructureRef.Kind != "" &&
-		!strings.EqualFold(cs.Spec.InfrastructureRef.Kind, "ProxmoxCluster") {
-		return
-	}
-	pcName := cs.Spec.InfrastructureRef.Name
+	pcName := infraName
 	if pcName == "" {
 		pcName = cfg.WorkloadClusterName
 	}
-	pcJSON, _, err := shell.Capture(
-		"kubectl", "--context", ctx, "get", "proxmoxcluster",
-		"-n", cfg.WorkloadClusterNamespace, pcName, "-o", "json",
-	)
-	if err != nil || pcJSON == "" {
+
+	pcObj, err := cli.Dynamic.Resource(pcGVR).
+		Namespace(cfg.WorkloadClusterNamespace).
+		Get(ctx, pcName, metav1.GetOptions{})
+	if err != nil {
+		// Fallback to workload cluster name (matches bash retry).
 		pcName = cfg.WorkloadClusterName
-		pcJSON, _, _ = shell.Capture(
-			"kubectl", "--context", ctx, "get", "proxmoxcluster",
-			"-n", cfg.WorkloadClusterNamespace, pcName, "-o", "json",
-		)
+		pcObj, err = cli.Dynamic.Resource(pcGVR).
+			Namespace(cfg.WorkloadClusterNamespace).
+			Get(ctx, pcName, metav1.GetOptions{})
+		if err != nil {
+			return
+		}
 	}
-	if pcJSON == "" {
-		return
-	}
-	var pc struct {
-		Spec struct {
-			DNSServers []string `json:"dnsServers"`
-			IPv4Config struct {
-				Gateway   string `json:"gateway"`
-				Prefix    any    `json:"prefix"`
-				Addresses []string `json:"addresses"`
-			} `json:"ipv4Config"`
-			AllowedNodes []string `json:"allowedNodes"`
-		} `json:"spec"`
-	}
-	if err := json.Unmarshal([]byte(pcJSON), &pc); err != nil {
-		return
-	}
-	if !cfg.DNSServersExplicit && len(pc.Spec.DNSServers) > 0 {
-		cfg.DNSServers = strings.Join(pc.Spec.DNSServers, ",")
+
+	dnsServers := unstructuredStringSlice(pcObj.Object, "spec", "dnsServers")
+	gw, _, _ := unstructuredString(pcObj.Object, "spec", "ipv4Config", "gateway")
+	prefix, hasPrefix := unstructuredField(pcObj.Object, "spec", "ipv4Config", "prefix")
+	addresses := unstructuredStringSlice(pcObj.Object, "spec", "ipv4Config", "addresses")
+	allowedNodes := unstructuredStringSlice(pcObj.Object, "spec", "allowedNodes")
+
+	if !cfg.DNSServersExplicit && len(dnsServers) > 0 {
+		cfg.DNSServers = strings.Join(dnsServers, ",")
 		logx.Log("Set DNS_SERVERS from ProxmoxCluster %s/%s (aligned with the running cluster).",
 			cfg.WorkloadClusterNamespace, pcName)
 	}
-	if !cfg.GatewayExplicit && strings.TrimSpace(pc.Spec.IPv4Config.Gateway) != "" {
-		cfg.Gateway = strings.TrimSpace(pc.Spec.IPv4Config.Gateway)
+	if !cfg.GatewayExplicit && strings.TrimSpace(gw) != "" {
+		cfg.Gateway = strings.TrimSpace(gw)
 		logx.Log("Set GATEWAY from ProxmoxCluster %s.", pcName)
 	}
-	if !cfg.IPPrefixExplicit && pc.Spec.IPv4Config.Prefix != nil {
-		cfg.IPPrefix = fmt.Sprint(pc.Spec.IPv4Config.Prefix)
+	if !cfg.IPPrefixExplicit && hasPrefix && prefix != nil {
+		cfg.IPPrefix = fmt.Sprint(prefix)
 		logx.Log("Set IP_PREFIX from ProxmoxCluster %s.", pcName)
 	}
-	if !cfg.NodeIPRangesExplicit && len(pc.Spec.IPv4Config.Addresses) > 0 {
-		cfg.NodeIPRanges = strings.Join(pc.Spec.IPv4Config.Addresses, ",")
+	if !cfg.NodeIPRangesExplicit && len(addresses) > 0 {
+		cfg.NodeIPRanges = strings.Join(addresses, ",")
 		logx.Log("Set NODE_IP_RANGES from ProxmoxCluster %s.", pcName)
 	}
-	if !cfg.AllowedNodesExplicit && len(pc.Spec.AllowedNodes) > 0 {
-		cfg.AllowedNodes = strings.Join(pc.Spec.AllowedNodes, ",")
+	if !cfg.AllowedNodesExplicit && len(allowedNodes) > 0 {
+		cfg.AllowedNodes = strings.Join(allowedNodes, ",")
 		logx.Log("Set ALLOWED_NODES from ProxmoxCluster %s.", pcName)
 	}
+}
+
+// isNoMatchError matches REST-mapping errors (CRD not installed). The
+// dynamic client returns a meta.NoKindMatchError-shaped error which
+// apierrors.IsNotFound doesn't recognise.
+func isNoMatchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no matches for kind") ||
+		strings.Contains(msg, "no matches for")
+}
+
+// unstructuredString fetches a string field from a nested map.
+func unstructuredString(obj map[string]any, path ...string) (string, bool, error) {
+	v, ok := unstructuredField(obj, path...)
+	if !ok {
+		return "", false, nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", false, nil
+	}
+	return s, true, nil
+}
+
+// unstructuredStringSlice fetches a []string from a nested []any field.
+func unstructuredStringSlice(obj map[string]any, path ...string) []string {
+	v, ok := unstructuredField(obj, path...)
+	if !ok {
+		return nil
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, item := range arr {
+		if s, ok := item.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func unstructuredField(obj map[string]any, path ...string) (any, bool) {
+	cur := any(obj)
+	for _, k := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		v, ok := m[k]
+		if !ok {
+			return nil, false
+		}
+		cur = v
+	}
+	return cur, true
 }
 
 // GenerateWorkloadManifestIfMissing ports generate_workload_manifest_if_missing
@@ -167,6 +227,13 @@ func TryFillWorkloadInputsFromManagement(cfg *config.Config) {
 // bootstrap.SyncClusterctlConfigFile).
 //
 // syncBootstrapConfigToKind is similarly injected.
+//
+// TODO: `clusterctl generate cluster` is intentionally retained as a
+// shell-out — sigs.k8s.io/cluster-api/cmd/clusterctl/client exists but
+// pulling it would add ~50MB of CAPI/controller-runtime/client-go-extras
+// dependencies for a single call site. The exec.Command boundary is the
+// least-bad option until/unless the rest of the binary already depends
+// on it.
 func GenerateWorkloadManifestIfMissing(
 	cfg *config.Config,
 	isStale func() bool,
@@ -440,16 +507,6 @@ func EnsureWorkloadClusterLabel(cfg *config.Config, manifestPath, clusterName st
 }
 
 // --- helpers ---
-
-func kubeContextExists(ctx string) bool {
-	out, _, _ := shell.Capture("kubectl", "config", "get-contexts", "-o", "name")
-	for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", ""), "\n") {
-		if ln == ctx {
-			return true
-		}
-	}
-	return false
-}
 
 func fileExists(p string) bool {
 	_, err := os.Stat(p)

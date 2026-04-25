@@ -92,7 +92,6 @@ func (c *Config) Snapshot() []SnapshotField {
 		sp("IPAM_IMAGE", &c.IPAMImage),
 		// --- ArgoCD ---
 		sp("ARGOCD_VERSION", &c.ArgoCDVersion),
-		sp("ARGOCD_CLI_VERSION", &c.ArgoCDCLIVersion),
 		// --- Workload GitOps ---
 		sp("WORKLOAD_GITOPS_MODE", &c.WorkloadGitopsMode),
 		sp("WORKLOAD_APP_OF_APPS_GIT_URL", &c.WorkloadAppOfAppsGitURL),

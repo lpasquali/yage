@@ -8,16 +8,32 @@
 //   - apply_workload_cilium_helmchartproxy                     ~L5515-5533
 //   - apply_workload_cilium_lbb_to_workload_if_enabled         ~L5536-5558
 //   - apply_workload_argocd_operator_and_argocd_cr             ~L5562-5695
+//
+// All kubectl shell-outs in this package have been migrated to the
+// in-process k8sclient (client-go) layer except `kubectl apply -k <git-url>`
+// for the Argo CD Operator install — replicating kustomize-from-Git in Go
+// would require pulling sigs.k8s.io/kustomize/api (~10MB of deps) for a
+// single call site, so that one shell-out is intentionally retained.
 package caaph
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/lpasquali/bootstrap-capi/internal/ciliumx"
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
 	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
 	"github.com/lpasquali/bootstrap-capi/internal/shell"
@@ -33,7 +49,10 @@ import (
 //	caaph.cilium.k8s-service-port: "<CONTROL_PLANE_ENDPOINT_PORT>"
 //
 // Empty values are skipped (except the "caaph" key which is always added
-// with value "enabled").
+// with value "enabled"). The manifest file on disk is updated, and (when
+// the management cluster context exists) the same labels are patched onto
+// the live Cluster object via a JSON merge patch through the dynamic
+// client.
 func PatchClusterCAAPHHelmLabels(cfg *config.Config, manifestPath string) error {
 	if manifestPath == "" {
 		manifestPath = cfg.CAPIManifest
@@ -134,7 +153,56 @@ func PatchClusterCAAPHHelmLabels(cfg *config.Config, manifestPath string) error 
 		}
 		docs[i] = strings.Join(newLines, "\n")
 	}
-	return os.WriteFile(manifestPath, []byte(strings.Join(docs, "\n---\n")), 0o644)
+	if err := os.WriteFile(manifestPath, []byte(strings.Join(docs, "\n---\n")), 0o644); err != nil {
+		return err
+	}
+
+	// Also patch the live Cluster object's labels (if the management cluster
+	// is reachable). The workload manifest update above only matters when
+	// the manifest is re-applied; patching the live object ensures CAAPH
+	// notices the labels immediately.
+	mctx := "kind-" + cfg.KindClusterName
+	if !k8sclient.ContextExists(mctx) {
+		return nil
+	}
+	if cfg.WorkloadClusterName == "" || cfg.WorkloadClusterNamespace == "" {
+		return nil
+	}
+	cli, err := k8sclient.ForContext(mctx)
+	if err != nil {
+		return nil
+	}
+	patchLabels := map[string]string{}
+	for _, lbl := range labels {
+		if lbl.v == "" && lbl.k != "caaph" {
+			continue
+		}
+		patchLabels[lbl.k] = lbl.v
+	}
+	if len(patchLabels) == 0 {
+		return nil
+	}
+	body, _ := json.Marshal(map[string]any{
+		"metadata": map[string]any{
+			"labels": patchLabels,
+		},
+	})
+	gvk := schema.GroupVersionKind{
+		Group:   "cluster.x-k8s.io",
+		Version: "v1beta1",
+		Kind:    "Cluster",
+	}
+	mapping, mErr := cli.Mapper.RESTMapping(gvk.GroupKind())
+	if mErr != nil {
+		return nil
+	}
+	_, _ = cli.Dynamic.Resource(mapping.Resource).
+		Namespace(cfg.WorkloadClusterNamespace).
+		Patch(context.Background(), cfg.WorkloadClusterName,
+			types.MergePatchType, body, metav1.PatchOptions{
+				FieldManager: k8sclient.FieldManager,
+			})
+	return nil
 }
 
 // CiliumHelmChartProxyYAML ports caaph_print_helmchartproxy_cilium_yaml.
@@ -216,8 +284,8 @@ func CiliumHelmChartProxyYAML(cfg *config.Config, kprOn bool) string {
 
 // ApplyWorkloadCiliumHelmChartProxy ports
 // apply_workload_cilium_helmchartproxy. Validates the kube-proxy /
-// Hubble config, renders the HCP, and kubectl applies it against the
-// kind management cluster.
+// Hubble config, renders the HCP, and SSAs it through the in-process
+// dynamic client against the kind management cluster.
 func ApplyWorkloadCiliumHelmChartProxy(cfg *config.Config) {
 	mctx := "kind-" + cfg.KindClusterName
 	logx.Log("Cilium: installing via Cluster API add-on provider Helm (HelmChartProxy → workload cluster) per https://cluster-api.sigs.k8s.io/tasks/workload-bootstrap-gitops …")
@@ -231,8 +299,12 @@ func ApplyWorkloadCiliumHelmChartProxy(cfg *config.Config) {
 		logx.Die("CILIUM_HUBBLE_UI requires CILIUM_HUBBLE=true")
 	}
 	doc := CiliumHelmChartProxyYAML(cfg, kpr)
-	if err := shell.Pipe(doc, "kubectl", "--context", mctx, "apply", "-f", "-"); err != nil {
-		logx.Die("Failed to apply HelmChartProxy (Cilium) on the management cluster.")
+	cli, err := k8sclient.ForContext(mctx)
+	if err != nil {
+		logx.Die("Failed to load management context %s: %v", mctx, err)
+	}
+	if err := cli.ApplyYAML(context.Background(), []byte(doc)); err != nil {
+		logx.Die("Failed to apply HelmChartProxy (Cilium) on the management cluster: %v", err)
 	}
 	gwLog := ""
 	if sysinfo.IsTrue(cfg.CiliumGatewayAPIEnabled) {
@@ -281,7 +353,15 @@ func ApplyWorkloadCiliumLBBToWorkload(cfg *config.Config, writeWorkloadKubeconfi
 	logx.Log("Cilium LB-IPAM: applying CiliumLoadBalancerIPPool to workload (%s / %s).",
 		fallbackStr(cfg.CiliumLBIPAMPoolName, cfg.WorkloadClusterName+"-lb-pool"),
 		fallbackStr(cfg.CiliumLBIPAMPoolCIDR, "derived"))
-	_ = shell.Run("kubectl", "--kubeconfig", kcfg, "apply", "-f", f.Name())
+	manifest, err := os.ReadFile(f.Name())
+	if err != nil {
+		return
+	}
+	cli, err := k8sclient.ForKubeconfigFile(kcfg)
+	if err != nil {
+		return
+	}
+	_ = cli.ApplyMultiDocYAML(context.Background(), manifest)
 }
 
 // ApplyWorkloadArgoCDOperatorAndCR ports
@@ -289,6 +369,11 @@ func ApplyWorkloadCiliumLBBToWorkload(cfg *config.Config, writeWorkloadKubeconfi
 // writeWorkloadKubeconfig returns the path to a tmp kubeconfig that
 // targets the workload cluster (managed by the caller so the cleanup is
 // predictable).
+//
+// The Argo CD Operator install itself is `kubectl apply -k <git-url>` —
+// kustomize-from-Git is intentionally retained as a shell-out (see
+// package doc). Everything else (waits, env-patch, ArgoCD CR apply) goes
+// through the in-process k8sclient.
 func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfig func() (string, error)) {
 	wk, err := writeWorkloadKubeconfig()
 	if err != nil || wk == "" {
@@ -300,6 +385,9 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfi
 	opURL := fmt.Sprintf("https://github.com/argoproj-labs/argocd-operator/config/default?ref=%s", cfg.ArgoCDOperatorVersion)
 	logx.Log("Installing Argo CD Operator on the workload cluster (ref %s; kubectl apply -k --server-side %s)…",
 		cfg.ArgoCDOperatorVersion, opURL)
+	// TODO: kustomize-from-Git is hard to replicate without
+	// sigs.k8s.io/kustomize/api/krusty (~10MB more deps). Keep this one
+	// kubectl shell-out; everything else in this function uses k8sclient.
 	if err := shell.Run("kubectl", "--kubeconfig", wk, "apply",
 		"--server-side", "--force-conflicts",
 		"--field-manager=bootstrap-capi-argocd-operator",
@@ -308,11 +396,15 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfi
 			cfg.ArgoCDOperatorVersion)
 	}
 
+	cli, err := k8sclient.ForKubeconfigFile(wk)
+	if err != nil {
+		logx.Die("Failed to load workload kubeconfig: %v", err)
+	}
+	ctx := context.Background()
+
 	logx.Log("Waiting for Argo CD Operator controller (initial start)…")
-	if err := shell.Run("kubectl", "--kubeconfig", wk, "wait",
-		"-n", "argocd-operator-system",
-		"deploy/argocd-operator-controller-manager",
-		"--for=condition=Available", "--timeout=300s"); err != nil {
+	if err := waitDeploymentAvailable(ctx, cli, "argocd-operator-system",
+		"argocd-operator-controller-manager", 5*time.Minute); err != nil {
 		logx.Die("Argo CD Operator controller is not Available in argocd-operator-system (see pods in that namespace).")
 	}
 
@@ -321,28 +413,17 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfi
 		ns = "argocd"
 	}
 	logx.Log("Allowing cluster-scoped sync from Argo in %s (ARGOCD_CLUSTER_CONFIG_NAMESPACES on the operator)…", ns)
-	if err := shell.Run("kubectl", "--kubeconfig", wk,
-		"-n", "argocd-operator-system",
-		"set", "env", "deploy/argocd-operator-controller-manager",
-		"ARGOCD_CLUSTER_CONFIG_NAMESPACES="+ns, "--overwrite"); err != nil {
-		logx.Die("Failed to patch argocd-operator-controller-manager with ARGOCD_CLUSTER_CONFIG_NAMESPACES.")
+	if err := patchOperatorEnv(ctx, cli, "argocd-operator-system",
+		"argocd-operator-controller-manager", "ARGOCD_CLUSTER_CONFIG_NAMESPACES", ns); err != nil {
+		logx.Die("Failed to patch argocd-operator-controller-manager with ARGOCD_CLUSTER_CONFIG_NAMESPACES: %v", err)
 	}
-	if err := shell.Run("kubectl", "--kubeconfig", wk,
-		"-n", "argocd-operator-system",
-		"rollout", "status", "deploy/argocd-operator-controller-manager",
-		"--timeout=300s"); err != nil {
-		logx.Warn("Argo CD Operator rollout after env patch not reported ready in 300s — continuing.")
-	}
-	if err := shell.Run("kubectl", "--kubeconfig", wk, "wait",
-		"-n", "argocd-operator-system",
-		"deploy/argocd-operator-controller-manager",
-		"--for=condition=Available", "--timeout=300s"); err != nil {
+	if err := waitDeploymentAvailable(ctx, cli, "argocd-operator-system",
+		"argocd-operator-controller-manager", 5*time.Minute); err != nil {
 		logx.Die("Argo CD Operator controller is not Available after config patch.")
 	}
 
-	nsDoc := fmt.Sprintf(`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q}}`, ns)
-	if err := shell.Pipe(nsDoc, "kubectl", "--kubeconfig", wk, "apply", "-f", "-"); err != nil {
-		logx.Die("Failed to ensure namespace %s on the workload cluster.", ns)
+	if err := cli.EnsureNamespace(ctx, ns); err != nil {
+		logx.Die("Failed to ensure namespace %s on the workload cluster: %v", ns, err)
 	}
 
 	promEnabled := sysinfo.IsTrue(cfg.ArgoCDOperatorArgoCDPrometheusEnabled)
@@ -352,19 +433,99 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfi
 
 	cr := buildArgoCDCR(cfg.ArgoCDVersion, ns, promEnabled, monEnabled, disableIngress, serverInsecure)
 	logx.Log("Creating ArgoCD custom resource (argocd/%s)…", ns)
-	if err := shell.Pipe(cr, "kubectl", "--kubeconfig", wk, "apply", "-f", "-"); err != nil {
-		logx.Die("Failed to apply ArgoCD custom resource on the workload cluster.")
+	if err := cli.ApplyYAML(ctx, []byte(cr)); err != nil {
+		logx.Die("Failed to apply ArgoCD custom resource on the workload cluster: %v", err)
 	}
 	if disableIngress {
 		logx.Log("ArgoCD CR: operator-managed server/gRPC Ingress disabled — expose Argo with Gateway API (e.g. workload-app-of-apps examples/gateway-api) or port-forward.")
 	}
-	if err := shell.Run("kubectl", "--kubeconfig", wk,
-		"-n", ns, "get", "deploy", "argocd-server"); err == nil {
-		_ = shell.Run("kubectl", "--kubeconfig", wk,
-			"-n", ns, "rollout", "restart", "deploy/argocd-server")
-		logx.Log("Restarted argocd-server after ArgoCD CR (argocd-redis pre-provisioned from bootstrap).")
+	// Restart argocd-server if it already exists (so the new CR settings
+	// take effect immediately and the pre-provisioned argocd-redis Secret
+	// is picked up).
+	if _, err := cli.Typed.AppsV1().Deployments(ns).Get(ctx, "argocd-server", metav1.GetOptions{}); err == nil {
+		// "kubectl rollout restart" is a strategic-merge patch that bumps
+		// spec.template.metadata.annotations[kubectl.kubernetes.io/restartedAt].
+		ts := time.Now().UTC().Format(time.RFC3339)
+		body := fmt.Sprintf(
+			`{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":%q}}}}}`,
+			ts,
+		)
+		if _, err := cli.Typed.AppsV1().Deployments(ns).Patch(ctx, "argocd-server",
+			types.StrategicMergePatchType, []byte(body), metav1.PatchOptions{
+				FieldManager: k8sclient.FieldManager,
+			}); err == nil {
+			logx.Log("Restarted argocd-server after ArgoCD CR (argocd-redis pre-provisioned from bootstrap).")
+		}
 	}
 	logx.Log("Argo CD Operator will reconcile Argo CD in %s (admin password: secret argocd-cluster, key admin.password, when ready).", ns)
+}
+
+// waitDeploymentAvailable polls until the named Deployment has at least
+// one available replica AND its Available=True condition is set.
+func waitDeploymentAvailable(ctx context.Context, cli *k8sclient.Client, ns, name string, timeout time.Duration) error {
+	return k8sclient.PollUntil(ctx, 5*time.Second, timeout, func(c context.Context) (bool, error) {
+		dep, err := cli.Typed.AppsV1().Deployments(ns).Get(c, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			// Transient API errors during operator startup — keep polling.
+			return false, nil
+		}
+		if dep.Status.AvailableReplicas <= 0 {
+			return false, nil
+		}
+		for _, cond := range dep.Status.Conditions {
+			// The corev1 import ensures we link the right symbol; the
+			// condition type strings come from appsv1 but match well-known
+			// values.
+			if string(cond.Type) == "Available" && cond.Status == corev1.ConditionTrue {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+}
+
+// patchOperatorEnv applies a strategic-merge patch that sets one env var
+// on the first container of the named Deployment.
+func patchOperatorEnv(ctx context.Context, cli *k8sclient.Client, ns, name, envKey, envVal string) error {
+	// Read the current deployment so we know the first container's name —
+	// strategic-merge patches that target list-elements need the merge key
+	// (`name`) populated.
+	dep, err := cli.Typed.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if len(dep.Spec.Template.Spec.Containers) == 0 {
+		return fmt.Errorf("deployment %s/%s has no containers", ns, name)
+	}
+	cname := dep.Spec.Template.Spec.Containers[0].Name
+	patch := map[string]any{
+		"spec": map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []map[string]any{
+						{
+							"name": cname,
+							"env": []map[string]any{
+								{"name": envKey, "value": envVal},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	_, err = cli.Typed.AppsV1().Deployments(ns).Patch(ctx, name,
+		types.StrategicMergePatchType, body, metav1.PatchOptions{
+			FieldManager: k8sclient.FieldManager,
+		})
+	return err
 }
 
 // buildArgoCDCR emits the ArgoCD CR YAML. Flags match the bash
@@ -448,3 +609,4 @@ func fallbackStr(a, b string) string {
 	}
 	return b
 }
+

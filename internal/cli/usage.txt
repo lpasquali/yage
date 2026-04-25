@@ -43,6 +43,12 @@ OPTIONS
                                       internal/capimanifest/k3s_template.yaml).
         --allow-resource-overcommit   Downgrade the capacity check to a warning instead of failing
                                       the run when the plan exceeds --resource-budget-fraction.
+        --system-apps-cpu-millicores N    Cluster-wide CPU reserve for system add-ons bootstrap-capi
+                                          installs (kyverno + cert-manager + proxmox-csi controller +
+                                          argocd + keycloak + external-secrets + infisical). Default
+                                          2000 = 2 cores. The remainder of worker capacity is split
+                                          equally across db / observability / product buckets.
+        --system-apps-memory-mib N        Cluster-wide memory reserve for the same set; default 4096.
 
   kind cluster
         --kind-cluster-name NAME      Management kind cluster name (default: capi-provisioner)

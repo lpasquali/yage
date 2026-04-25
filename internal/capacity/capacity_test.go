@@ -64,6 +64,45 @@ func TestK3sOverflowAlsoFails(t *testing.T) {
 	}
 }
 
+// TestAllocationsThirdsAfterReserve — with 2 workers × 2 cores × 4 GiB
+// the cluster has 4 cores / 8 GiB total. Default reserve is 2 cores /
+// 4 GiB → remainder 2 cores / 4 GiB → each of three buckets gets
+// 666 mCPU / 1365 MiB.
+func TestAllocationsThirdsAfterReserve(t *testing.T) {
+	cfg := defaultishCfg()
+	cfg.SystemAppsCPUMillicores = 2000
+	cfg.SystemAppsMemoryMiB = 4096
+	a := AllocationsFor(cfg)
+	if a.TotalCPUMillicores != 4000 || a.TotalMemoryMiB != 8192 {
+		t.Fatalf("total wrong: %+v", a)
+	}
+	if a.RemainCPUMillicores != 2000 || a.RemainMemoryMiB != 4096 {
+		t.Fatalf("remainder wrong: %+v", a)
+	}
+	wantBucketCPU := 2000 / 3
+	wantBucketMem := int64(4096 / 3)
+	if a.BucketCPUMillicores != wantBucketCPU || a.BucketMemoryMiB != wantBucketMem {
+		t.Fatalf("bucket wrong: got %d/%d want %d/%d",
+			a.BucketCPUMillicores, a.BucketMemoryMiB, wantBucketCPU, wantBucketMem)
+	}
+	if a.IsOverReserved() {
+		t.Errorf("default config should not be over-reserved")
+	}
+}
+
+// TestAllocationsOverReserved — system reserve exceeds workers when
+// the cluster is too small.
+func TestAllocationsOverReserved(t *testing.T) {
+	cfg := defaultishCfg()
+	cfg.WorkerMachineCount = "1"
+	cfg.SystemAppsCPUMillicores = 8000 // way more than 1 worker provides
+	cfg.SystemAppsMemoryMiB = 16384
+	a := AllocationsFor(cfg)
+	if !a.IsOverReserved() {
+		t.Fatalf("should be over-reserved: %+v", a)
+	}
+}
+
 // TestPivotAddsMgmt — k3s plan includes mgmt cluster only when pivot
 // is enabled.
 func TestPivotAddsMgmt(t *testing.T) {

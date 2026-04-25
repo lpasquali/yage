@@ -300,6 +300,14 @@ func Parse(c *config.Config, argv []string) {
 			c.DryRun = true
 		case "--allow-resource-overcommit":
 			c.AllowResourceOvercommit = true
+		case "--system-apps-cpu-millicores":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil {
+				c.SystemAppsCPUMillicores = n
+			}
+		case "--system-apps-memory-mib":
+			if n, err := strconv.ParseInt(shiftVal(a), 10, 64); err == nil {
+				c.SystemAppsMemoryMiB = n
+			}
 		case "--bootstrap-mode":
 			c.BootstrapMode = strings.ToLower(shiftVal(a))
 		case "--resource-budget-fraction":

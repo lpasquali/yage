@@ -45,6 +45,7 @@ func PrintPlan(cfg *config.Config) {
 	planPhase210ArgoCD(w, cfg)
 	planFinal(w, cfg)
 	planCapacity(w, cfg)
+	planAllocations(w, cfg)
 
 	fmt.Fprintln(w, hr)
 	fmt.Fprintln(w, "✅ Dry run complete — NO state was changed.")
@@ -294,6 +295,36 @@ func planCapacity(w *os.File, cfg *config.Config) {
 	} else {
 		bullet(w, "✅ plan fits within %.0f%% budget.", threshold*100)
 	}
+}
+
+// planAllocations prints the workload-cluster-side allocation plan:
+// total worker capacity, system-apps reserve, and the three equal
+// buckets (db / observability / product) that share the remainder.
+//
+// Surfaces a warning when the system reserve alone exceeds total
+// worker capacity (operator must either grow workers or pin add-ons
+// to the control-plane node).
+func planAllocations(w *os.File, cfg *config.Config) {
+	section(w, "Workload allocations (per-bucket budget on workers)")
+	a := capacity.AllocationsFor(cfg)
+	bullet(w, "total worker capacity:    %d millicores, %d MiB (workers=%s × %s sockets × %s cores × %s MiB)",
+		a.TotalCPUMillicores, a.TotalMemoryMiB,
+		cfg.WorkerMachineCount, cfg.WorkerNumSockets, cfg.WorkerNumCores, cfg.WorkerMemoryMiB)
+	bullet(w, "system-apps reserve:      %d millicores, %d MiB",
+		a.SystemAppsCPUMillicores, a.SystemAppsMemoryMiB)
+	bullet(w, "  ├─ argocd (operator + server + repo + redis), kyverno, cert-manager,")
+	bullet(w, "  ├─ proxmox-csi (controller), keycloak (SSO), external-secrets, infisical")
+	bullet(w, "  └─ tune via SYSTEM_APPS_CPU_MILLICORES / SYSTEM_APPS_MEMORY_MIB")
+	if a.IsOverReserved() {
+		bullet(w, "❌ system reserve (%d mCPU / %d MiB) exceeds total worker capacity (%d / %d)",
+			a.SystemAppsCPUMillicores, a.SystemAppsMemoryMiB, a.TotalCPUMillicores, a.TotalMemoryMiB)
+		bullet(w, "   grow worker count / sizing, OR untaint the control-plane node and let it host system pods")
+		return
+	}
+	bullet(w, "remaining after reserve:  %d millicores, %d MiB", a.RemainCPUMillicores, a.RemainMemoryMiB)
+	bullet(w, "  ├─ database:           %d millicores, %d MiB  (cnpg, postgres, redis, …)", a.BucketCPUMillicores, a.BucketMemoryMiB)
+	bullet(w, "  ├─ observability:      %d millicores, %d MiB  (vmsingle, OTel, Grafana, Loki, …)", a.BucketCPUMillicores, a.BucketMemoryMiB)
+	bullet(w, "  └─ product apps:       %d millicores, %d MiB  (Argo-deployed user workloads)", a.BucketCPUMillicores, a.BucketMemoryMiB)
 }
 
 func firstNonEmptyStr(vals ...string) string {

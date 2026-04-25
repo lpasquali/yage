@@ -92,6 +92,14 @@ type Config struct {
 	// over-the-budget capacity check to a warning instead of failing
 	// the run.
 	AllowResourceOvercommit     bool
+	// SystemAppsCPUMillicores / SystemAppsMemoryMiB define the cluster-
+	// wide reserve for the system add-ons bootstrap-capi installs:
+	// kyverno, cert-manager, proxmox-csi (controller), argocd (operator
+	// + server + repo + redis), keycloak (SSO), external-secrets, and
+	// infisical. The remainder of the workload cluster's worker capacity
+	// is split into three equal buckets (db / observability / product).
+	SystemAppsCPUMillicores     int    // default 2000 = 2 cores
+	SystemAppsMemoryMiB         int64  // default 4096 = 4 GiB
 	// BootstrapMode selects the Kubernetes flavor:
 	//   - "kubeadm" (default): standard upstream Kubernetes via kubeadm,
 	//     control-plane runs etcd + apiserver + controller-manager +
@@ -508,6 +516,8 @@ func Load() *Config {
 	c.AllowResourceOvercommit = envBool("ALLOW_RESOURCE_OVERCOMMIT", false)
 	c.ResourceBudgetFraction = envFloat("RESOURCE_BUDGET_FRACTION", 2.0/3.0)
 	c.BootstrapMode = getenv("BOOTSTRAP_MODE", "kubeadm")
+	c.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
+	c.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
 
 	// --- Kind / management ----
 	c.ClusterID = getenv("CLUSTER_ID", "1")

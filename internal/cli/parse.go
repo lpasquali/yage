@@ -322,6 +322,18 @@ func Parse(c *config.Config, argv []string) {
 			c.AWSFargatePodCPU = shiftVal(a)
 		case "--aws-fargate-pod-memory-gib":
 			c.AWSFargatePodMemoryGiB = shiftVal(a)
+		case "--aws-overhead-tier":
+			c.AWSOverheadTier = strings.ToLower(shiftVal(a))
+		case "--aws-nat-gateway-count":
+			c.AWSNATGatewayCount = shiftVal(a)
+		case "--aws-alb-count":
+			c.AWSALBCount = shiftVal(a)
+		case "--aws-nlb-count":
+			c.AWSNLBCount = shiftVal(a)
+		case "--aws-data-transfer-gb":
+			c.AWSDataTransferGB = shiftVal(a)
+		case "--aws-cloudwatch-logs-gb":
+			c.AWSCloudWatchLogsGB = shiftVal(a)
 		case "--resource-budget-fraction":
 			v := shiftVal(a)
 			if f, err := strconv.ParseFloat(v, 64); err == nil {

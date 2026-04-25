@@ -51,6 +51,16 @@ OPTIONS
                                       EKS modes require --bootstrap-mode kubeadm (EKS is upstream
                                       Kubernetes managed by AWS; K3s isn't compatible).
                                       See docs/aws-cost-tiers.md for tier examples.
+        --aws-overhead-tier TIER      AWS service overhead bundle for the cost estimator:
+                                        dev        — 0 NAT GWs, 1 ALB, 20 GB egress, 2 GB CloudWatch
+                                        prod       — 1 NAT GW, 1 ALB, 100 GB egress, 10 GB CloudWatch (default)
+                                        enterprise — 3 NAT GWs (multi-AZ HA), 2 ALBs, 1 NLB, 500 GB egress,
+                                                     50 GB CloudWatch
+        --aws-nat-gateway-count N     Override NAT GW count (~$32/mo each + processing).
+        --aws-alb-count N             Override ALB count (~$46/mo each at typical LCU).
+        --aws-nlb-count N             Override NLB count (~$30/mo each at typical LCU).
+        --aws-data-transfer-gb N      Internet egress estimate ($0.09/GB above free tier).
+        --aws-cloudwatch-logs-gb N    CloudWatch Logs ingested per month ($0.50/GB).
         --allow-resource-overcommit   Downgrade the capacity check to a warning instead of failing
                                       the run when the plan exceeds --resource-budget-fraction.
         --system-apps-cpu-millicores N    Cluster-wide CPU reserve for system add-ons bootstrap-capi

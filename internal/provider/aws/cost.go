@@ -191,13 +191,30 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		total += it.SubtotalUSD
 	}
 
-	note := "us-east-1 on-demand prices (730 h/month), gp3 EBS only. Excludes NAT Gateway, ELB, data transfer, CloudWatch, Route53. Spot pricing typically saves 60-70 %."
+	// Append AWS service overhead (NAT, ALB/NLB, CloudWatch, Route53,
+	// data egress) — the dependencies a CAPA-bootstrapped cluster
+	// pulls in beyond raw compute. Tier + per-component overrides on
+	// cfg drive the counts.
+	items, _ = addServiceOverhead(items, cfg)
+
+	// Recompute the grand total over all items (compute + overhead).
+	total = 0.0
+	for _, it := range items {
+		total += it.SubtotalUSD
+	}
+
+	tierLabel := orDefault(cfg.AWSOverheadTier, "prod")
+	noteBase := fmt.Sprintf("us-east-1 prices, %s overhead tier (NAT/ALB/CloudWatch/Route53/egress included).", tierLabel)
+	note := ""
 	switch mode {
 	case "eks":
-		note = "us-east-1 prices: EKS CP flat $73/mo + Managed Node Group EC2 + EBS. Same exclusions as unmanaged."
+		note = noteBase + " EKS CP flat $73/mo + Managed Node Group EC2 + EBS."
 	case "eks-fargate":
-		note = "us-east-1 prices: EKS CP flat $73/mo + Fargate per pod-vCPU-hour + GB-hour. AWS_FARGATE_POD_COUNT/CPU/MEMORY_GIB drive the pod estimate; real bills depend on actual pod count + uptime."
+		note = noteBase + " EKS CP $73/mo + Fargate per pod-vCPU-hour + GB-hour."
+	default:
+		note = noteBase + " Self-managed CP + EC2 workers + EBS."
 	}
+	note += " Spot pricing not modeled (typical 60-70% off EC2; ~70% off Fargate)."
 	return provider.CostEstimate{
 		TotalUSDMonthly: total,
 		Items:           items,

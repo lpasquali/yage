@@ -127,6 +127,21 @@ type Config struct {
 	AWSFargatePodCount          string
 	AWSFargatePodCPU            string // vCPU per Fargate task; "0.25" "0.5" "1" "2" "4"
 	AWSFargatePodMemoryGiB      string // GiB per Fargate task; pairs with CPU per AWS rules
+	// AWSOverheadTier picks the bundled "everything else" cost
+	// estimate (NAT Gateway, ALB/NLB, CloudWatch, Route53, ECR, VPC
+	// endpoints, data transfer):
+	//   - "dev"        — single-AZ, no NAT, 1 ALB, minimal CloudWatch
+	//   - "prod"       — 1 NAT GW, 1 ALB, CloudWatch, Route53        (default)
+	//   - "enterprise" — 3 NAT GWs (multi-AZ HA), 2 ALBs, VPC endpoints
+	// Per-component overrides are also available; see AWSNATGatewayCount,
+	// AWSALBCount, AWSNLBCount, AWSDataTransferGB, AWSCloudWatchLogsGB.
+	AWSOverheadTier             string
+	AWSNATGatewayCount          string // overrides the tier default
+	AWSALBCount                 string
+	AWSNLBCount                 string
+	AWSDataTransferGB           string // monthly egress estimate
+	AWSCloudWatchLogsGB         string
+	AWSRoute53HostedZones       string
 	// BootstrapMode selects the Kubernetes flavor:
 	//   - "kubeadm" (default): standard upstream Kubernetes via kubeadm,
 	//     control-plane runs etcd + apiserver + controller-manager +
@@ -562,6 +577,16 @@ func Load() *Config {
 	c.AWSFargatePodCount = getenv("AWS_FARGATE_POD_COUNT", "10")
 	c.AWSFargatePodCPU = getenv("AWS_FARGATE_POD_CPU", "0.5")
 	c.AWSFargatePodMemoryGiB = getenv("AWS_FARGATE_POD_MEMORY_GIB", "1")
+	c.AWSOverheadTier = getenv("AWS_OVERHEAD_TIER", "prod")
+	// Per-component overrides default to empty so the tier defaults
+	// apply; setting any of these to a non-empty value pins that
+	// component regardless of tier.
+	c.AWSNATGatewayCount = getenv("AWS_NAT_GATEWAY_COUNT", "")
+	c.AWSALBCount = getenv("AWS_ALB_COUNT", "")
+	c.AWSNLBCount = getenv("AWS_NLB_COUNT", "")
+	c.AWSDataTransferGB = getenv("AWS_DATA_TRANSFER_GB", "")
+	c.AWSCloudWatchLogsGB = getenv("AWS_CLOUDWATCH_LOGS_GB", "")
+	c.AWSRoute53HostedZones = getenv("AWS_ROUTE53_HOSTED_ZONES", "")
 	c.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
 	c.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
 

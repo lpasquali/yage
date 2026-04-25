@@ -1,49 +1,66 @@
 # AWS cost tiers — what does $X/month buy you?
 
 bootstrap-capi's AWS provider ships an in-binary monthly cost
-estimator (compute + EBS only, us-east-1 on-demand prices). Surface
-it in any run via `--dry-run` — when `--infrastructure-provider aws`
-the plan grows an "Estimated monthly cost" section.
+estimator that includes both **compute** (EC2/EBS/Fargate/EKS-CP)
+**and the AWS service overhead** a CAPA-bootstrapped cluster pulls
+in: NAT Gateway, ALB/NLB, CloudWatch Logs, Route53, internet egress.
+Surfaced via `--dry-run` when `--infrastructure-provider aws`.
 
-The tiers below are smoke-tested against the same estimator
-(`internal/provider/aws/cost.go`). All numbers exclude data egress,
-NAT Gateway, Application/Network Load Balancer, Route53,
-CloudWatch logs, IAM, and KMS — those are workload-shape dependent.
-Spot pricing typically lops off another 60–70 %.
+The overhead is parameterised by `--aws-overhead-tier`:
 
-## Tiers
+| Tier | NAT GWs | ALBs | NLBs | Egress (GB/mo) | CloudWatch (GB/mo) | Route53 zones |
+|---|---:|---:|---:|---:|---:|---:|
+| `dev` | 0 (public subnets) | 1 | 0 | 20 | 2 | 0 |
+| `prod` (default) | 1 | 1 | 0 | 100 | 10 | 1 |
+| `enterprise` | 3 (multi-AZ HA) | 2 | 1 | 500 | 50 | 2 |
 
-| Monthly bill | Config | What it buys |
-|---:|---|---|
-| **~$15** | 1× t4g.small (k3s, single-node) | Hobby cluster on a Graviton burstable. Workload + control-plane on one node; no HA. K3s required (kubeadm doesn't fit the 2 GiB RAM). |
-| **~$31** | 1× t4g.small CP + 1× t4g.small worker | Smallest realistic 2-node K3s. Workload tolerates one VM reboot. No system-apps reserve room — system add-ons would have to share the worker with applications. |
-| **~$100** | 1× t3.medium CP + 2× t3.medium workers (kubeadm) | Dev/test cluster. 2 vCPU + 4 GiB per node = workable kubeadm. Default bootstrap-capi system-apps reserve (2 cores / 4 GiB) leaves ~2 cores / 4 GiB for workload — enough to demo the bucket allocations. |
-| **~$256** | 1× t3.large CP + 3× t3.large workers (kubeadm) | Team dev / staging. ~24 GiB / 8 vCPU total worker capacity; system reserve takes 4 GiB / 2 vCPU; remaining ~16 GiB / 6 vCPU split into db/obs/product thirds. |
-| **~$622** | 3× t3.large CP (HA) + 3× m5.xlarge workers (kubeadm) | Small production. HA control plane (etcd survives 1 CP loss); workers have m5 sustained CPU. Storage: bump `WORKER_BOOT_VOLUME_SIZE` for any stateful workload — CSI handles persistence. |
-| **~$2,700** | 3× m5.xlarge CP + 8× m5.2xlarge workers | Medium production. ~64 vCPU / 256 GiB worker capacity; system reserve a rounding error; observability + db each get ~85 GiB / 21 vCPU. |
-| **~$7,600** | 3× m5.2xlarge CP + 12× m5.4xlarge workers | Large production. ~192 vCPU / 768 GiB worker capacity. Realistic for a multi-tenant Argo-deployed platform with SPIRE + observability + 30+ apps. |
-| **~$114k** | 3× m5.4xlarge CP + 100× m5.8xlarge workers | "Big" tier (illustrative). 3,200 vCPU / 12.8 TiB workers. At this scale you'd want savings plans (50 %+ discount), spot for stateless workers, and probably mixed instance types. The estimator reports the on-demand sticker price. |
+Per-component overrides on top of the tier:
+`--aws-nat-gateway-count N`, `--aws-alb-count N`, `--aws-nlb-count N`,
+`--aws-data-transfer-gb N`, `--aws-cloudwatch-logs-gb N`.
+
+Still excluded (workload-shape dependent and out-of-scope for
+bootstrap-time planning): per-volume EBS snapshots, ECR storage,
+KMS, AWS Backup, GuardDuty / Security Hub / WAF / Shield, Inspector,
+Config, Secrets Manager line items beyond what the cluster spawns.
+Spot pricing not modeled (typical 60-70 % off EC2; ~70 % off
+Fargate Spot).
+
+## Tiers (compute + dev overhead)
+
+Numbers below pair compute with the matching `--aws-overhead-tier`:
+small dev clusters use `dev` (no NAT, 1 ALB only); production tiers
+use `prod` (1 NAT GW, 1 ALB, CloudWatch, Route53). Switch tiers on
+the same compute to see overhead grow.
+
+| Monthly | Config | Tier | What it buys |
+|---:|---|---|---|
+| **~$116** | 1× t3.medium CP + 1× t3.medium worker (kubeadm) | dev | Smallest sane dev cluster: 1 ALB ($46/mo) eats most of the bill above the ~$67 EC2+EBS. K3s + 1 t4g.small isn't worth saving compute when 1 ALB still costs $46. |
+| **~$716** | 3× t3.large CP HA + 3× m5.xlarge workers | prod | Small production with NAT + ALB + CloudWatch + Route53 (~$94 of overhead on top of the ~$622 compute). |
+| **~$2,146** | 3× m5.xlarge CP + 5× m5.2xlarge workers | enterprise | 3 NAT GWs + 2 ALBs + 1 NLB + heavy CloudWatch + 500 GB egress = ~$300 of overhead on top of compute. Multi-AZ HA. |
+| **~$8,000** | 3× m5.2xlarge CP + 12× m5.4xlarge workers | enterprise | Large production. Compute dominates (~$7,600); overhead a rounding error at this scale. |
+| **~$114k+** | 3× m5.4xlarge CP + 100× m5.8xlarge workers | enterprise | Big. Savings plans + spot mandatory at this scale; on-demand sticker is the worst case. |
 
 ## Reading the dry-run output
 
-```
-$ bootstrap-capi --dry-run \
-    --infrastructure-provider aws \
-    --bootstrap-mode kubeadm \
-    --control-plane-count 3 --worker-count 3 \
-    --aws-control-plane-machine-type t3.large \
-    --aws-node-machine-type m5.xlarge
+A real plan now shows compute *and* overhead lines:
 
-▸ Estimated monthly cost (us-east-1 on-demand)
-    • workload control-plane (t3.large)    3 × $60.74 = $182.22
-    • CP boot volumes (40 GB gp3 each)     3 ×  $3.20 =   $9.60
-    • workload workers (m5.xlarge)         3 × $140.16 = $420.48
-    • worker boot volumes (40 GB gp3 each) 3 ×  $3.20 =   $9.60
-    TOTAL: ~$621.90/month
-    Note: us-east-1 on-demand prices, gp3 EBS only. Excludes NAT
-    Gateway, ELB, data transfer, CloudWatch, Route53. Spot pricing
-    typically saves 60-70 %.
 ```
+▸ Estimated monthly cost (provider: aws)
+    EKS managed control plane (flat per cluster)        ~$  73.00
+    workload workers (EKS Managed Node Group) (m5.xlarge)  ~$ 420.48
+    worker boot volumes (40 GB gp3 each)                ~$   9.60
+    NAT Gateway (~30 GB processed/mo each)              ~$  34.20
+    Application Load Balancer (Argo CD ingress / app)   ~$  45.62
+    Internet egress (~100 GB/mo)                        ~$   9.00
+    CloudWatch Logs (10 GB ingested/mo)                 ~$   5.30
+    Route53 hosted zones                                ~$   0.50
+    TOTAL: ~$597.71/month
+```
+
+Switching to `--aws-overhead-tier dev` on the same compute drops
+the overhead to ~$48 (1 ALB, no NAT, less CloudWatch); switching to
+`enterprise` raises it to ~$300+ (3 NATs, 2 ALBs, 1 NLB, 500 GB
+egress, 50 GB CloudWatch).
 
 ## Sizing for a budget — back-of-envelope
 

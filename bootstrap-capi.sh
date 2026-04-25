@@ -637,6 +637,12 @@ WORKLOAD_WORKER_TEMPLATE_ID="${WORKLOAD_WORKER_TEMPLATE_ID:-}"
 MGMT_CONTROL_PLANE_TEMPLATE_ID="${MGMT_CONTROL_PLANE_TEMPLATE_ID:-}"
 MGMT_WORKER_TEMPLATE_ID="${MGMT_WORKER_TEMPLATE_ID:-}"
 PROXMOX_BRIDGE="${PROXMOX_BRIDGE:-vmbr0}"
+# Proxmox pool tags (organizational + ACL only; not a resource quota).
+# Default each cluster into its own pool so the Proxmox UI groups VMs
+# by cluster and pool-scoped permissions are easy to delegate.
+# bootstrap-capi auto-creates these via the admin API before manifest apply.
+PROXMOX_POOL="${PROXMOX_POOL:-${WORKLOAD_CLUSTER_NAME:-capi-quickstart}}"
+MGMT_PROXMOX_POOL="${MGMT_PROXMOX_POOL:-${MGMT_CLUSTER_NAME:-capi-management}}"
 CONTROL_PLANE_ENDPOINT_IP="${CONTROL_PLANE_ENDPOINT_IP:-192.168.0.20}"
 CONTROL_PLANE_ENDPOINT_PORT="${CONTROL_PLANE_ENDPOINT_PORT:-6443}"
 NODE_IP_RANGES="${NODE_IP_RANGES:-192.168.0.21-192.168.0.30}"

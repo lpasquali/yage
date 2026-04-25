@@ -313,6 +313,16 @@ type Config struct {
 	ProxmoxTopologyZone   string
 	ProxmoxTemplateID    string
 	ProxmoxBridge        string
+	// ProxmoxPool / MgmtProxmoxPool are Proxmox VE pool names that
+	// VMs created by CAPMOX will be tagged with. Pools group VMs in
+	// the Proxmox UI and gate ACLs (delegating start/stop/console
+	// permissions); they do NOT enforce CPU/memory quotas — that
+	// remains per-VM + per-storage. Empty default means "no pool";
+	// when set, bootstrap-capi pre-creates the pool via the admin API
+	// before applying the CAPI manifest, so CAPMOX won't fail on a
+	// missing pool reference.
+	ProxmoxPool          string
+	MgmtProxmoxPool      string
 
 	// ---- Network / IP ----
 	ControlPlaneEndpointIP   string
@@ -817,6 +827,11 @@ func Load() *Config {
 	// Proxmox CSI on the management cluster: off by default (stateless).
 	c.MgmtProxmoxCSIEnabled = envBool("MGMT_PROXMOX_CSI_ENABLED", false)
 	c.MgmtCAPIManifest = getenv("MGMT_CAPI_MANIFEST", "")
+
+	// Pool defaults to the matching cluster name so each cluster
+	// gets its own organizational bucket. User can override or set empty.
+	c.ProxmoxPool = getenv("PROXMOX_POOL", c.WorkloadClusterName)
+	c.MgmtProxmoxPool = getenv("MGMT_PROXMOX_POOL", c.MgmtClusterName)
 
 	return c
 }

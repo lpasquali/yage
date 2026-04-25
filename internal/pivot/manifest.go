@@ -135,6 +135,7 @@ func renderManagementManifest(cfg *config.Config, clusterctlCfgPath string) (str
 		"PROXMOX_REGION="+cfg.ProxmoxRegion,
 		"PROXMOX_NODE="+cfg.ProxmoxNode,
 		"PROXMOX_TEMPLATE_ID="+cfg.ProxmoxTemplateID,
+		"PROXMOX_POOL="+cfg.MgmtProxmoxPool,
 		"TEMPLATE_VMID="+cfg.ProxmoxTemplateID,
 		"BRIDGE="+bridge,
 		"PROXMOX_SOURCENODE="+sourceNode,

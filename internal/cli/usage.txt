@@ -69,6 +69,13 @@ OPTIONS
     -r, --region REGION               Proxmox region/datacenter for workload clusters
     -n, --node NODE                   Proxmox node to deploy workload VMs
         --bridge BRIDGE               Bridge interface name (default: vmbr0)
+        --proxmox-pool NAME           Proxmox pool tag for workload-cluster VMs (default:
+                                      capi-<workload-cluster-name>). Pools are organizational +
+                                      ACL groupings, NOT resource quotas — they group VMs in the
+                                      Proxmox UI and let you delegate start/stop/console
+                                      permissions per pool. bootstrap-capi auto-creates the pool
+                                      via the admin API before manifest apply.
+        --mgmt-proxmox-pool NAME      Same, for management-cluster VMs (default: capi-<mgmt-cluster-name>).
         --template-id ID              Catch-all Proxmox template VM ID (default: 104)
         --template-vmid ID            Deprecated alias for --template-id
         --workload-control-plane-template-id ID  Per-machine-type override

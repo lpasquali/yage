@@ -363,6 +363,66 @@ func ResolveAvailableClusterSetIDForRoles(cfg *config.Config) error {
 	}
 }
 
+// EnsurePool creates a Proxmox pool with the given name if it doesn't
+// already exist. Idempotent: returns nil when the pool is already
+// present (Proxmox returns 500 with "already exists" on duplicate
+// POST). Uses the admin token (the clusterctl token usually doesn't
+// have Pool.Allocate). Caller skips when name is empty.
+//
+// Bash equivalent: pveum pool add <name> ; we don't have pveum here,
+// so we POST /api2/json/pools directly.
+func EnsurePool(cfg *config.Config, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return nil
+	}
+	if cfg.ProxmoxAdminUsername == "" || cfg.ProxmoxAdminToken == "" {
+		return fmt.Errorf("EnsurePool %s: admin credentials missing (PROXMOX_ADMIN_USERNAME / PROXMOX_ADMIN_TOKEN)", name)
+	}
+	base := strings.TrimRight(HostBaseURL(cfg), "/")
+	if base == "" {
+		return fmt.Errorf("EnsurePool %s: PROXMOX_URL is empty", name)
+	}
+	auth := "PVEAPIToken=" + cfg.ProxmoxAdminUsername + "=" + cfg.ProxmoxAdminToken
+
+	// Idempotency probe: GET /pools/<name> — 200 means it exists.
+	if statusCode(base+"/api2/json/pools/"+name, auth, isInsecure(cfg.ProxmoxAdminInsecure)) == 200 {
+		return nil
+	}
+
+	// Create. Use POST /api2/json/pools with form body poolid=<name>.
+	body := strings.NewReader("poolid=" + name)
+	req, err := http.NewRequest(http.MethodPost, base+"/api2/json/pools", body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	c := httpClient(isInsecure(cfg.ProxmoxAdminInsecure))
+	resp, err := c.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 200 {
+		return nil
+	}
+	// Some Proxmox versions return 500 with text body containing
+	// "already exists" on duplicate poolid — treat as success.
+	bb, _ := io.ReadAll(resp.Body)
+	if strings.Contains(strings.ToLower(string(bb)), "already exists") {
+		return nil
+	}
+	return fmt.Errorf("create pool %s: HTTP %d: %s", name, resp.StatusCode, string(bb))
+}
+
+func isInsecure(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "true", "1", "yes", "y", "on":
+		return true
+	}
+	return false
+}
+
 // minString returns the smallest string in s (stable equivalent of
 // sorted(s)[0] for a non-empty slice).
 func minString(s []string) string {

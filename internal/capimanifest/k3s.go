@@ -76,10 +76,14 @@ func k3sValues(cfg *config.Config, mgmt bool) map[string]string {
 		"PROXMOX_MEMORY_ADJUSTMENT":         cfg.ProxmoxMemoryAdjustment,
 		"DNS_SERVERS":                       cfg.DNSServers,
 		"VM_SSH_KEYS":                       readAuthorizedKeysOrConfig(cfg),
+		// Pool is the Proxmox pool tag VMs land in. Workload uses
+		// ProxmoxPool; mgmt overrides below.
+		"PROXMOX_POOL":                      cfg.ProxmoxPool,
 	}
 	if mgmt {
 		v["NAMESPACE"] = cfg.MgmtClusterNamespace
 		v["CLUSTER_NAME"] = cfg.MgmtClusterName
+		v["PROXMOX_POOL"] = cfg.MgmtProxmoxPool
 		v["KUBERNETES_VERSION"] = cfg.MgmtKubernetesVersion
 		v["CONTROL_PLANE_MACHINE_COUNT"] = cfg.MgmtControlPlaneMachineCount
 		v["WORKER_MACHINE_COUNT"] = cfg.MgmtWorkerMachineCount

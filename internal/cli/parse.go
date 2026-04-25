@@ -94,6 +94,10 @@ func Parse(c *config.Config, argv []string) {
 			c.MgmtWorkerTemplateID = shiftVal(a)
 		case "--bridge":
 			c.ProxmoxBridge = shiftVal(a)
+		case "--proxmox-pool":
+			c.ProxmoxPool = shiftVal(a)
+		case "--mgmt-proxmox-pool":
+			c.MgmtProxmoxPool = shiftVal(a)
 		case "--control-plane-endpoint-ip":
 			c.ControlPlaneEndpointIP = shiftVal(a)
 		case "--control-plane-endpoint-port":

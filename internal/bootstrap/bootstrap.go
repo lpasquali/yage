@@ -737,6 +737,25 @@ func Run(cfg *config.Config) int {
 		logx.Die("%v", err)
 	}
 
+	// --- Pre-create Proxmox pools (organizational + ACL grouping).
+	// CAPMOX rejects a pool reference that doesn't exist, so we
+	// create the workload pool here and (when --pivot is enabled) the
+	// mgmt pool too. Idempotent: existing pools are silently kept.
+	if cfg.ProxmoxPool != "" {
+		if err := proxmox.EnsurePool(cfg, cfg.ProxmoxPool); err != nil {
+			logx.Warn("Proxmox pool %s: %v — VMs may fail to register; create it manually if needed.", cfg.ProxmoxPool, err)
+		} else {
+			logx.Log("Proxmox pool '%s' ensured (workload).", cfg.ProxmoxPool)
+		}
+	}
+	if cfg.PivotEnabled && cfg.MgmtProxmoxPool != "" {
+		if err := proxmox.EnsurePool(cfg, cfg.MgmtProxmoxPool); err != nil {
+			logx.Warn("Proxmox pool %s: %v — mgmt VMs may fail to register; create it manually if needed.", cfg.MgmtProxmoxPool, err)
+		} else {
+			logx.Log("Proxmox pool '%s' ensured (management).", cfg.MgmtProxmoxPool)
+		}
+	}
+
 	// --- 9.5 Pivot to a Proxmox-hosted management cluster (bash L8848-L8884) ---
 	// CAPI bootstrap-and-pivot pattern. When PivotEnabled is true: kind
 	// provisions a single-node management cluster on Proxmox, clusterctl

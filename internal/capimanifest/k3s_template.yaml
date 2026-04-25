@@ -101,6 +101,7 @@ spec:
     spec:
       sourceNode: ${PROXMOX_SOURCENODE}
       templateID: ${PROXMOX_TEMPLATE_ID}
+      pool: ${PROXMOX_POOL}
       vmIDRange:
         start: 1000
         end: 1099
@@ -166,6 +167,7 @@ spec:
     spec:
       sourceNode: ${PROXMOX_SOURCENODE}
       templateID: ${PROXMOX_TEMPLATE_ID}
+      pool: ${PROXMOX_POOL}
       vmIDRange:
         start: 2000
         end: 2099

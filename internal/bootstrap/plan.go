@@ -184,6 +184,9 @@ func planPhase29Workload(w *os.File, cfg *config.Config) {
 	cpTpl := firstNonEmptyStr(cfg.WorkloadControlPlaneTemplateID, cfg.ProxmoxTemplateID)
 	wkTpl := firstNonEmptyStr(cfg.WorkloadWorkerTemplateID, cfg.ProxmoxTemplateID)
 	bullet(w, "Proxmox templates: control-plane=%s, worker=%s (catch-all PROXMOX_TEMPLATE_ID=%s)", cpTpl, wkTpl, cfg.ProxmoxTemplateID)
+	if cfg.ProxmoxPool != "" {
+		bullet(w, "Proxmox pool: %q (auto-created via admin API; tags VMs for ACLs/UI grouping)", cfg.ProxmoxPool)
+	}
 	bullet(w, "Cilium HCP: kpr=%s, ingress=%s, hubble=%s, LB-IPAM=%s, GatewayAPI=%s",
 		cfg.CiliumKubeProxyReplacement, cfg.CiliumIngress, cfg.CiliumHubble, cfg.CiliumLBIPAM, cfg.CiliumGatewayAPIEnabled)
 	if cfg.ProxmoxCSIEnabled {
@@ -210,6 +213,9 @@ func planPhase295Pivot(w *os.File, cfg *config.Config) {
 	bullet(w, "  Proxmox templates: control-plane=%s, worker=%s", mgmtCPTpl, mgmtWkTpl)
 	bullet(w, "  Cilium: hubble=%s, LB-IPAM=%s; CSI: %v",
 		cfg.MgmtCiliumHubble, cfg.MgmtCiliumLBIPAM, cfg.MgmtProxmoxCSIEnabled)
+	if cfg.MgmtProxmoxPool != "" {
+		bullet(w, "  Proxmox pool: %q (auto-created)", cfg.MgmtProxmoxPool)
+	}
 	bullet(w, "clusterctl init on mgmt (idempotent)")
 	if cfg.PivotDryRun {
 		bullet(w, "clusterctl move --dry-run (logs plan, no state moves) — exit here")

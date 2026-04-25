@@ -125,6 +125,8 @@ func (c *Config) Snapshot() []SnapshotField {
 		sp("PROXMOX_CLOUDINIT_STORAGE", &c.ProxmoxCloudinitStorage),
 		sp("PROXMOX_TEMPLATE_ID", &c.ProxmoxTemplateID),
 		sp("PROXMOX_BRIDGE", &c.ProxmoxBridge),
+		sp("PROXMOX_POOL", &c.ProxmoxPool),
+		sp("MGMT_PROXMOX_POOL", &c.MgmtProxmoxPool),
 		// --- Network (EXPLICIT-guarded) ---
 		sp("CONTROL_PLANE_ENDPOINT_IP", &c.ControlPlaneEndpointIP),
 		sp("CONTROL_PLANE_ENDPOINT_PORT", &c.ControlPlaneEndpointPort),

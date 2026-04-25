@@ -11,6 +11,7 @@
 package capacity
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -102,14 +103,11 @@ func FetchHostCapacity(cfg *config.Config) (*HostCapacity, error) {
 
 	var nodesEnv struct {
 		Data []struct {
-			Node     string `json:"node"`
-			MaxCPU   int    `json:"maxcpu"`
-			CPU      int    `json:"cpu"` // current load (1.0 = full core)
-			MaxMem   int64  `json:"maxmem"`
-			Mem      int64  `json:"mem"`
-			MaxDisk  int64  `json:"maxdisk"`
-			Disk     int64  `json:"disk"`
-			Status   string `json:"status"`
+			Node    string `json:"node"`
+			MaxCPU  int    `json:"maxcpu"`
+			MaxMem  int64  `json:"maxmem"`
+			MaxDisk int64  `json:"maxdisk"`
+			Status  string `json:"status"`
 		} `json:"data"`
 	}
 	if err := fetchJSON(nodesURL, auth, insecure, &nodesEnv); err != nil {
@@ -143,7 +141,6 @@ func FetchHostCapacity(cfg *config.Config) (*HostCapacity, error) {
 			Node    string `json:"node"`
 			Type    string `json:"type"`
 			MaxDisk int64  `json:"maxdisk"`
-			Disk    int64  `json:"disk"`
 			Shared  int    `json:"shared"`
 			Status  string `json:"status"`
 		} `json:"data"`
@@ -327,7 +324,10 @@ func authForCfg(cfg *config.Config) (auth string, insecure bool, base string, er
 	default:
 		return "", false, "", fmt.Errorf("no Proxmox credentials available (set --admin-username/--admin-token or --proxmox-token/--proxmox-secret)")
 	}
-	insecure = cfg.ProxmoxAdminInsecure == "true"
+	switch strings.ToLower(strings.TrimSpace(cfg.ProxmoxAdminInsecure)) {
+	case "true", "1", "yes", "y", "on":
+		insecure = true
+	}
 	base = strings.TrimRight(proxmox.HostBaseURL(cfg), "/")
 	if base == "" {
 		return "", false, "", fmt.Errorf("PROXMOX_URL is empty")
@@ -343,7 +343,7 @@ func fetchJSON(url, auth string, insecure bool, out any) error {
 	req.Header.Set("Authorization", auth)
 	tr := &http.Transport{}
 	if insecure {
-		tr.TLSClientConfig = nil
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	c := &http.Client{Transport: tr}
 	resp, err := c.Do(req)

@@ -100,6 +100,16 @@ type Config struct {
 	// is split into three equal buckets (db / observability / product).
 	SystemAppsCPUMillicores     int    // default 2000 = 2 cores
 	SystemAppsMemoryMiB         int64  // default 4096 = 4 GiB
+	// AWSControlPlaneMachineType / AWSNodeMachineType drive the
+	// EC2 instance types CAPA provisions for the workload cluster
+	// when --infrastructure-provider aws. Defaults match the CAPA
+	// quick-start (t3.large CP, t3.medium worker). The AWS provider
+	// also uses these to estimate monthly cost in dry-run.
+	AWSControlPlaneMachineType  string
+	AWSNodeMachineType          string
+	AWSRegion                   string
+	AWSSSHKeyName               string
+	AWSAMIID                    string
 	// BootstrapMode selects the Kubernetes flavor:
 	//   - "kubeadm" (default): standard upstream Kubernetes via kubeadm,
 	//     control-plane runs etcd + apiserver + controller-manager +
@@ -526,6 +536,11 @@ func Load() *Config {
 	c.AllowResourceOvercommit = envBool("ALLOW_RESOURCE_OVERCOMMIT", false)
 	c.ResourceBudgetFraction = envFloat("RESOURCE_BUDGET_FRACTION", 2.0/3.0)
 	c.BootstrapMode = getenv("BOOTSTRAP_MODE", "kubeadm")
+	c.AWSControlPlaneMachineType = getenv("AWS_CONTROL_PLANE_MACHINE_TYPE", "t3.large")
+	c.AWSNodeMachineType = getenv("AWS_NODE_MACHINE_TYPE", "t3.medium")
+	c.AWSRegion = getenv("AWS_REGION", "us-east-1")
+	c.AWSSSHKeyName = getenv("AWS_SSH_KEY_NAME", "")
+	c.AWSAMIID = getenv("AWS_AMI_ID", "")
 	c.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
 	c.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
 

@@ -16,9 +16,12 @@ import (
 	"os"
 	"strings"
 
+	"errors"
+
 	"github.com/lpasquali/bootstrap-capi/internal/capacity"
 	"github.com/lpasquali/bootstrap-capi/internal/config"
 	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
+	"github.com/lpasquali/bootstrap-capi/internal/provider"
 	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
@@ -46,6 +49,7 @@ func PrintPlan(cfg *config.Config) {
 	planFinal(w, cfg)
 	planCapacity(w, cfg)
 	planAllocations(w, cfg)
+	planMonthlyCost(w, cfg)
 
 	fmt.Fprintln(w, hr)
 	fmt.Fprintln(w, "✅ Dry run complete — NO state was changed.")
@@ -331,6 +335,35 @@ func planAllocations(w *os.File, cfg *config.Config) {
 	bullet(w, "  ├─ database:           %d millicores, %d MiB  (cnpg, postgres, redis, …)", a.BucketCPUMillicores, a.BucketMemoryMiB)
 	bullet(w, "  ├─ observability:      %d millicores, %d MiB  (vmsingle, OTel, Grafana, Loki, …)", a.BucketCPUMillicores, a.BucketMemoryMiB)
 	bullet(w, "  └─ product apps:       %d millicores, %d MiB  (Argo-deployed user workloads)", a.BucketCPUMillicores, a.BucketMemoryMiB)
+}
+
+// planMonthlyCost prints the provider-supplied monthly cost
+// estimate when one is available (currently AWS only). Self-hosted
+// providers (Proxmox, vSphere, CAPD) and ones with too-variable
+// pricing (OpenStack) return ErrNotApplicable and the section is
+// skipped silently — see docs/aws-cost-tiers.md for the AWS table.
+func planMonthlyCost(w *os.File, cfg *config.Config) {
+	p, err := provider.For(cfg)
+	if err != nil {
+		return
+	}
+	est, err := p.EstimateMonthlyCostUSD(cfg)
+	if err != nil {
+		if errors.Is(err, provider.ErrNotApplicable) {
+			return
+		}
+		section(w, "Estimated monthly cost")
+		bullet(w, "(estimate query failed: %v)", err)
+		return
+	}
+	section(w, "Estimated monthly cost (provider: "+p.Name()+")")
+	for _, it := range est.Items {
+		bullet(w, "%-40s %d × $%7.2f = $%9.2f", it.Name, it.Qty, it.UnitUSDMonthly, it.SubtotalUSD)
+	}
+	bullet(w, "TOTAL: ~$%.2f / month", est.TotalUSDMonthly)
+	if est.Note != "" {
+		bullet(w, "note: %s", est.Note)
+	}
 }
 
 func firstNonEmptyStr(vals ...string) string {

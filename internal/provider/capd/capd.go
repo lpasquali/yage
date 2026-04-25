@@ -159,3 +159,12 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
 	return provider.ErrNotApplicable
 }
+
+// EstimateMonthlyCostUSD — provider doesn't track variable usage
+// pricing in the same shape as AWS on-demand instances. Self-hosted
+// (Proxmox), private (vSphere), or pricing-too-variable (OpenStack)
+// providers return ErrNotApplicable; the orchestrator displays the
+// estimate only when it's available.
+func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+	return provider.CostEstimate{}, provider.ErrNotApplicable
+}

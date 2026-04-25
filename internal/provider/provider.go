@@ -124,6 +124,32 @@ type Provider interface {
 	// we ship. Return ErrNotApplicable when the provider's CSI is
 	// install-as-helm-only (or doesn't exist).
 	EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error
+
+	// EstimateMonthlyCostUSD returns a rough monthly billing estimate
+	// in USD for the planned cluster (compute + storage; not network
+	// egress, NAT, ELB extras unless documented). Implementations are
+	// best-effort napkin math — they read cfg.<provider>InstanceType-
+	// style fields against a small in-binary price table. Return
+	// ErrNotApplicable when the provider is self-hosted (Proxmox) or
+	// pricing is too variable (private OpenStack, on-prem vSphere).
+	EstimateMonthlyCostUSD(cfg *config.Config) (CostEstimate, error)
+}
+
+// CostEstimate is the breakdown returned by EstimateMonthlyCostUSD.
+type CostEstimate struct {
+	TotalUSDMonthly float64
+	Items           []CostItem
+	// Note is a short caveat the orchestrator surfaces alongside
+	// the total ("on-demand us-east-1 prices, gp3 EBS, no spot").
+	Note string
+}
+
+// CostItem is one line in the cost breakdown.
+type CostItem struct {
+	Name            string  // "workload control-plane (3× t3.medium)"
+	UnitUSDMonthly  float64 // per-replica per-month cost
+	Qty             int
+	SubtotalUSD     float64
 }
 
 // --- registry ---

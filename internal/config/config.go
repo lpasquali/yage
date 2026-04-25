@@ -92,6 +92,14 @@ type Config struct {
 	// over-the-budget capacity check to a warning instead of failing
 	// the run.
 	AllowResourceOvercommit     bool
+	// BootstrapMode selects the Kubernetes flavor:
+	//   - "kubeadm" (default): standard upstream Kubernetes via kubeadm,
+	//     control-plane runs etcd + apiserver + controller-manager +
+	//     scheduler. Realistic minimum 2 vCPU + 4 GiB per node.
+	//   - "k3s": single-binary Kubernetes optimised for low-resource
+	//     environments (Raspberry Pi, edge, dev VMs). Fits in ~1 vCPU
+	//     + 1 GiB. Requires the CAPI K3s providers (KCP-K3s + CABK3s).
+	BootstrapMode               string
 
 	// ---- Kind / management cluster ----
 	ClusterID                    string
@@ -498,7 +506,8 @@ func Load() *Config {
 	c.BuildAll = envBool("BUILD_ALL", false)
 	c.DryRun = envBool("DRY_RUN", false)
 	c.AllowResourceOvercommit = envBool("ALLOW_RESOURCE_OVERCOMMIT", false)
-	c.ResourceBudgetFraction = envFloat("RESOURCE_BUDGET_FRACTION", 0.75)
+	c.ResourceBudgetFraction = envFloat("RESOURCE_BUDGET_FRACTION", 2.0/3.0)
+	c.BootstrapMode = getenv("BOOTSTRAP_MODE", "kubeadm")
 
 	// --- Kind / management ----
 	c.ClusterID = getenv("CLUSTER_ID", "1")
@@ -738,14 +747,21 @@ func Load() *Config {
 	// --- VM sizing ---
 	c.ControlPlaneBootVolumeDevice = getenv("CONTROL_PLANE_BOOT_VOLUME_DEVICE", "scsi0")
 	c.ControlPlaneBootVolumeSize = getenv("CONTROL_PLANE_BOOT_VOLUME_SIZE", "40")
-	c.ControlPlaneNumSockets = getenv("CONTROL_PLANE_NUM_SOCKETS", "2")
-	c.ControlPlaneNumCores = getenv("CONTROL_PLANE_NUM_CORES", "1")
-	c.ControlPlaneMemoryMiB = getenv("CONTROL_PLANE_MEMORY_MIB", "8192")
+	// Bare-minimum kubeadm CP sizing: etcd + apiserver + controller-mgr +
+	// scheduler + Cilium fit comfortably in 2 vCPU / 4 GiB. Larger
+	// workloads should bump these; --bootstrap-mode k3s targets even
+	// smaller envs (1 vCPU / 1 GiB).
+	c.ControlPlaneNumSockets = getenv("CONTROL_PLANE_NUM_SOCKETS", "1")
+	c.ControlPlaneNumCores = getenv("CONTROL_PLANE_NUM_CORES", "2")
+	c.ControlPlaneMemoryMiB = getenv("CONTROL_PLANE_MEMORY_MIB", "4096")
 	c.WorkerBootVolumeDevice = getenv("WORKER_BOOT_VOLUME_DEVICE", "scsi0")
 	c.WorkerBootVolumeSize = getenv("WORKER_BOOT_VOLUME_SIZE", "40")
-	c.WorkerNumSockets = getenv("WORKER_NUM_SOCKETS", "2")
-	c.WorkerNumCores = getenv("WORKER_NUM_CORES", "4")
-	c.WorkerMemoryMiB = getenv("WORKER_MEMORY_MIB", "16384")
+	// Bare-minimum kubeadm worker sizing: kubelet + kube-proxy +
+	// Cilium agent fit in 2 vCPU / 4 GiB; remaining pods compete for
+	// what's left. Bump for larger workloads.
+	c.WorkerNumSockets = getenv("WORKER_NUM_SOCKETS", "1")
+	c.WorkerNumCores = getenv("WORKER_NUM_CORES", "2")
+	c.WorkerMemoryMiB = getenv("WORKER_MEMORY_MIB", "4096")
 
 	// Per-machine-type template overrides; empty → fall back to ProxmoxTemplateID.
 	c.WorkloadControlPlaneTemplateID = getenv("WORKLOAD_CONTROL_PLANE_TEMPLATE_ID", "")
@@ -778,7 +794,7 @@ func Load() *Config {
 	// the mgmt cluster only carries CAPI controllers + bootstrap state.
 	c.MgmtControlPlaneNumSockets = getenv("MGMT_CONTROL_PLANE_NUM_SOCKETS", "1")
 	c.MgmtControlPlaneNumCores = getenv("MGMT_CONTROL_PLANE_NUM_CORES", "2")
-	c.MgmtControlPlaneMemoryMiB = getenv("MGMT_CONTROL_PLANE_MEMORY_MIB", "4096")
+	c.MgmtControlPlaneMemoryMiB = getenv("MGMT_CONTROL_PLANE_MEMORY_MIB", "2048")
 	c.MgmtControlPlaneBootVolumeDevice = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE", c.ControlPlaneBootVolumeDevice)
 	c.MgmtControlPlaneBootVolumeSize = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE", "30")
 	c.MgmtControlPlaneEndpointIP = getenv("MGMT_CONTROL_PLANE_ENDPOINT_IP", "")

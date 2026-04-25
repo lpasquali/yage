@@ -22,8 +22,19 @@ import (
 )
 
 // DefaultThreshold is the fraction of host resources that may be
-// claimed by all clusters combined. The remaining 25 % is reserved.
-const DefaultThreshold = 0.75
+// claimed by all clusters combined. The remaining ~33 % is reserved
+// for the host OS, hypervisor overhead, rollout slack, and the
+// unknown-future workload that lands on the cluster after bootstrap.
+const DefaultThreshold = 2.0 / 3.0
+
+// SmallEnvCPUCores / SmallEnvMemoryGiB define the threshold below which
+// the orchestrator suggests using K3s instead of full kubeadm. Anything
+// at or below this size will struggle to run the default kubeadm sizing
+// of two clusters; K3s typically fits in ~512 MiB per node.
+const (
+	SmallEnvCPUCores  = 8
+	SmallEnvMemoryGiB = 16
+)
 
 // HostCapacity is the aggregate of CPU + memory + storage across all
 // Proxmox nodes that are eligible for VM placement, after filtering by
@@ -199,6 +210,15 @@ func PlanFor(cfg *config.Config) Plan {
 			cfg.WorkerMemoryMiB, cfg.WorkerBootVolumeSize)
 	}
 	return p
+}
+
+// IsSmallEnv reports whether the host has fewer than SmallEnvCPUCores
+// or SmallEnvMemoryGiB. Callers use this to suggest --bootstrap-mode k3s.
+func (h *HostCapacity) IsSmallEnv() bool {
+	if h == nil {
+		return false
+	}
+	return h.CPUCores < SmallEnvCPUCores || h.MemoryMiB < int64(SmallEnvMemoryGiB)*1024
 }
 
 // Check returns nil when plan fits inside threshold * capacity, or an

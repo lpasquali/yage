@@ -653,17 +653,28 @@ func Run(cfg *config.Config) int {
 
 	logx.Log("Initializing Cluster API (infrastructure=%s, ipam=%s, addon=helm)...", cfg.InfraProvider, cfg.IPAMProvider)
 	clusterctlCfgPath = SyncClusterctlConfigFile(cfg)
+	initArgs := []string{
+		"clusterctl", "init",
+		"--config", clusterctlCfgPath,
+		"--infrastructure", cfg.InfraProvider,
+		"--ipam", cfg.IPAMProvider,
+		"--addon", "helm",
+	}
+	// --bootstrap-mode k3s swaps the kubeadm control-plane + bootstrap
+	// providers for the K3s ones. kubeadm is the default and clusterctl
+	// installs it implicitly when --control-plane / --bootstrap are
+	// omitted.
+	if cfg.BootstrapMode == "k3s" {
+		logx.Log("BOOTSTRAP_MODE=k3s — initializing CAPI with K3s control-plane + bootstrap providers (instead of kubeadm)")
+		initArgs = append(initArgs, "--control-plane", "k3s", "--bootstrap", "k3s")
+	}
 	if err := shell.RunWithEnv(
 		[]string{
 			"EXP_CLUSTER_RESOURCE_SET=false",
 			"CLUSTER_TOPOLOGY=" + cfg.ClusterTopology,
 			"EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION=" + cfg.ExpKubeadmBootstrapFormatIgnition,
 		},
-		"clusterctl", "init",
-		"--config", clusterctlCfgPath,
-		"--infrastructure", cfg.InfraProvider,
-		"--ipam", cfg.IPAMProvider,
-		"--addon", "helm",
+		initArgs...,
 	); err != nil {
 		logx.Die("clusterctl init failed: %v", err)
 	}
@@ -900,6 +911,10 @@ func preflightCapacity(cfg *config.Config) error {
 		threshold*100, hc.Nodes,
 		plan.CPUCores, plan.MemoryMiB, plan.StorageGB,
 		hc.CPUCores, hc.MemoryMiB, hc.StorageGB)
+	if hc.IsSmallEnv() && cfg.BootstrapMode != "k3s" {
+		logx.Warn("Proxmox host is small (%d cores, %d MiB) — full kubeadm CAPI may be tight. Consider --bootstrap-mode k3s for a 1 vCPU / 1 GiB-per-node footprint.",
+			hc.CPUCores, hc.MemoryMiB)
+	}
 	if err := capacity.Check(plan, hc, threshold); err != nil {
 		if cfg.AllowResourceOvercommit {
 			logx.Warn("ALLOW_RESOURCE_OVERCOMMIT=true — proceeding despite: %v", err)

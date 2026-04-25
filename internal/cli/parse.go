@@ -300,6 +300,8 @@ func Parse(c *config.Config, argv []string) {
 			c.DryRun = true
 		case "--allow-resource-overcommit":
 			c.AllowResourceOvercommit = true
+		case "--bootstrap-mode":
+			c.BootstrapMode = strings.ToLower(shiftVal(a))
 		case "--resource-budget-fraction":
 			v := shiftVal(a)
 			if f, err := strconv.ParseFloat(v, 64); err == nil {

@@ -277,6 +277,9 @@ func planCapacity(w *os.File, cfg *config.Config) {
 	}
 	bullet(w, "host (allowed nodes %v): %d cores, %d MiB (%d GiB), %d GB disk",
 		hc.Nodes, hc.CPUCores, hc.MemoryMiB, hc.MemoryMiB/1024, hc.StorageGB)
+	if hc.IsSmallEnv() && cfg.BootstrapMode != "k3s" {
+		bullet(w, "💡 host is small — consider --bootstrap-mode k3s for a 1 vCPU / 1 GiB-per-node footprint")
+	}
 	if err := capacity.Check(plan, hc, threshold); err != nil {
 		bullet(w, "❌ %v", err)
 		bullet(w, "(real run aborts; use --allow-resource-overcommit to override)")

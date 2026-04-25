@@ -30,8 +30,14 @@ OPTIONS
                                       provisions the mgmt cluster, stops at `clusterctl move`).
         --resource-budget-fraction F  Cap the share of available Proxmox host CPU/memory/storage that
                                       the workload + (optional) management clusters may consume
-                                      (default: 0.75). The remaining 25% is reserved for the host OS,
-                                      hypervisor overhead, and rollout slack.
+                                      (default: 0.6667 — 2/3). The remaining ~1/3 is reserved for the
+                                      host OS, hypervisor overhead, rollout slack, and the
+                                      unknown-future workload that lands on the cluster after bootstrap.
+        --bootstrap-mode MODE         Kubernetes flavor: kubeadm (default; full upstream Kubernetes,
+                                      ~2 vCPU / 4 GiB per node) or k3s (single-binary, ~1 vCPU / 1 GiB
+                                      per node — for resource-constrained envs). When k3s is selected
+                                      the orchestrator initializes CAPI with the K3s control-plane and
+                                      bootstrap providers instead of kubeadm.
         --allow-resource-overcommit   Downgrade the capacity check to a warning instead of failing
                                       the run when the plan exceeds --resource-budget-fraction.
 
@@ -90,14 +96,14 @@ OPTIONS
   Workload VM sizing
         --control-plane-boot-volume-device DEV (default: scsi0)
         --control-plane-boot-volume-size GB    (default: 40 — OS + container images + etcd; CSI handles persistent state)
-        --control-plane-num-sockets N          (default: 2)
-        --control-plane-num-cores N            (default: 1)
-        --control-plane-memory-mib N           (default: 8192)
+        --control-plane-num-sockets N          (default: 1 — bare-minimum kubeadm CP)
+        --control-plane-num-cores N            (default: 2)
+        --control-plane-memory-mib N           (default: 4096 — etcd + apiserver + Cilium)
         --worker-boot-volume-device DEV        (default: scsi0)
         --worker-boot-volume-size GB           (default: 40 — OS + container images; CSI carries logs / app data)
-        --worker-num-sockets N                 (default: 2)
-        --worker-num-cores N                   (default: 4)
-        --worker-memory-mib N                  (default: 16384)
+        --worker-num-sockets N                 (default: 1 — bare-minimum worker)
+        --worker-num-cores N                   (default: 2)
+        --worker-memory-mib N                  (default: 4096 — kubelet + Cilium + a small pod budget)
 
   Workload cluster
         --workload-cluster-name NAME          CAPI Cluster name (default: capi-quickstart)
@@ -127,7 +133,7 @@ OPTIONS
         --mgmt-node-ip-ranges RANGES           2-IP range to support rollout — user-provided
         --mgmt-control-plane-num-sockets N     (default: 1)
         --mgmt-control-plane-num-cores N       (default: 2)
-        --mgmt-control-plane-memory-mib N      (default: 4096)
+        --mgmt-control-plane-memory-mib N      (default: 2048 — CAPI controllers + bootstrap state only)
         --mgmt-control-plane-boot-volume-device DEV
         --mgmt-control-plane-boot-volume-size GB
         --mgmt-capi-manifest PATH     Path for the rendered management manifest (default: temp file)

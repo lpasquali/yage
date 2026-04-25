@@ -60,14 +60,14 @@
 #   --capi-token-prefix PREFIX       Proxmox CAPI token name prefix for Terraform bootstrap (default: capi)
 #   --control-plane-boot-volume-device DEVICE  Control plane boot volume device (default: scsi0)
 #   --control-plane-boot-volume-size SIZE      Control plane boot volume size in GB (default: 40; CSI handles persistent state — see proxmox-csi)
-#   --control-plane-num-sockets N              Control plane sockets (default: 2)
-#   --control-plane-num-cores N                Control plane cores (default: 1)
-#   --control-plane-memory-mib N               Control plane memory in MiB (default: 8192)
+#   --control-plane-num-sockets N              Control plane sockets (default: 1 — bare-minimum kubeadm)
+#   --control-plane-num-cores N                Control plane cores (default: 2)
+#   --control-plane-memory-mib N               Control plane memory in MiB (default: 4096)
 #   --worker-boot-volume-device DEVICE         Worker boot volume device (default: scsi0)
 #   --worker-boot-volume-size SIZE             Worker boot volume size in GB (default: 40; CSI carries logs / app data — see proxmox-csi)
-#   --worker-num-sockets N                     Worker sockets (default: 2)
-#   --worker-num-cores N                       Worker cores (default: 4)
-#   --worker-memory-mib N                      Worker memory in MiB (default: 16384)
+#   --worker-num-sockets N                     Worker sockets (default: 1)
+#   --worker-num-cores N                       Worker cores (default: 2)
+#   --worker-memory-mib N                      Worker memory in MiB (default: 4096)
 #   --workload-cluster-name NAME     CAPI cluster name on the management cluster (default: capi-quickstart; kubeconfig Secret is <name> in the Cluster’s namespace)
 #   --workload-cluster-namespace NS  That Cluster’s namespace (default: default; with --name, can be auto-resolved if exactly one match on kind)
 #   --workload-cilium-cluster-id ID  Cilium cluster.id for workload cluster (default: derived from CLUSTER_SET_ID)
@@ -621,6 +621,13 @@ PROXMOX_TOPOLOGY_REGION="${PROXMOX_TOPOLOGY_REGION:-}"
 PROXMOX_TOPOLOGY_ZONE="${PROXMOX_TOPOLOGY_ZONE:-}"
 PROXMOX_TEMPLATE_ID="${PROXMOX_TEMPLATE_ID:-${TEMPLATE_VMID:-104}}"
 unset TEMPLATE_VMID 2>/dev/null || true
+# Capacity preflight: clusters can claim at most this fraction of available
+# Proxmox host CPU/memory/storage. Default 2/3 leaves headroom for the host
+# OS, hypervisor overhead, rollouts, and unknown-future workload.
+RESOURCE_BUDGET_FRACTION="${RESOURCE_BUDGET_FRACTION:-0.6667}"
+ALLOW_RESOURCE_OVERCOMMIT="${ALLOW_RESOURCE_OVERCOMMIT:-false}"
+# Bootstrap flavor: kubeadm (default) or k3s (smaller — for resource-constrained envs).
+BOOTSTRAP_MODE="${BOOTSTRAP_MODE:-kubeadm}"
 # Per-machine-type Proxmox template overrides; empty → fall back to PROXMOX_TEMPLATE_ID.
 WORKLOAD_CONTROL_PLANE_TEMPLATE_ID="${WORKLOAD_CONTROL_PLANE_TEMPLATE_ID:-}"
 WORKLOAD_WORKER_TEMPLATE_ID="${WORKLOAD_WORKER_TEMPLATE_ID:-}"
@@ -658,14 +665,14 @@ PROXMOX_CAPI_USER_ID="${PROXMOX_CAPI_USER_ID:-}"
 PROXMOX_CAPI_TOKEN_PREFIX="${PROXMOX_CAPI_TOKEN_PREFIX:-capi}"
 CONTROL_PLANE_BOOT_VOLUME_DEVICE="${CONTROL_PLANE_BOOT_VOLUME_DEVICE:-scsi0}"
 CONTROL_PLANE_BOOT_VOLUME_SIZE="${CONTROL_PLANE_BOOT_VOLUME_SIZE:-40}"
-CONTROL_PLANE_NUM_SOCKETS="${CONTROL_PLANE_NUM_SOCKETS:-2}"
-CONTROL_PLANE_NUM_CORES="${CONTROL_PLANE_NUM_CORES:-1}"
-CONTROL_PLANE_MEMORY_MIB="${CONTROL_PLANE_MEMORY_MIB:-8192}"
+CONTROL_PLANE_NUM_SOCKETS="${CONTROL_PLANE_NUM_SOCKETS:-1}"
+CONTROL_PLANE_NUM_CORES="${CONTROL_PLANE_NUM_CORES:-2}"
+CONTROL_PLANE_MEMORY_MIB="${CONTROL_PLANE_MEMORY_MIB:-4096}"
 WORKER_BOOT_VOLUME_DEVICE="${WORKER_BOOT_VOLUME_DEVICE:-scsi0}"
 WORKER_BOOT_VOLUME_SIZE="${WORKER_BOOT_VOLUME_SIZE:-40}"
-WORKER_NUM_SOCKETS="${WORKER_NUM_SOCKETS:-2}"
-WORKER_NUM_CORES="${WORKER_NUM_CORES:-4}"
-WORKER_MEMORY_MIB="${WORKER_MEMORY_MIB:-16384}"
+WORKER_NUM_SOCKETS="${WORKER_NUM_SOCKETS:-1}"
+WORKER_NUM_CORES="${WORKER_NUM_CORES:-2}"
+WORKER_MEMORY_MIB="${WORKER_MEMORY_MIB:-4096}"
 WORKLOAD_CLUSTER_NAME="${WORKLOAD_CLUSTER_NAME:-capi-quickstart}"
 WORKLOAD_CILIUM_CLUSTER_ID="${WORKLOAD_CILIUM_CLUSTER_ID:-}"
 WORKLOAD_CLUSTER_NAMESPACE="${WORKLOAD_CLUSTER_NAMESPACE:-default}"
@@ -694,7 +701,7 @@ MGMT_WORKER_MACHINE_COUNT="${MGMT_WORKER_MACHINE_COUNT:-0}"
 # Management cluster sizing — leaner than workload (CAPI controllers + bootstrap state only).
 MGMT_CONTROL_PLANE_NUM_SOCKETS="${MGMT_CONTROL_PLANE_NUM_SOCKETS:-1}"
 MGMT_CONTROL_PLANE_NUM_CORES="${MGMT_CONTROL_PLANE_NUM_CORES:-2}"
-MGMT_CONTROL_PLANE_MEMORY_MIB="${MGMT_CONTROL_PLANE_MEMORY_MIB:-4096}"
+MGMT_CONTROL_PLANE_MEMORY_MIB="${MGMT_CONTROL_PLANE_MEMORY_MIB:-2048}"
 MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE="${MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE:-${CONTROL_PLANE_BOOT_VOLUME_DEVICE}}"
 MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE="${MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE:-30}"
 # 1 control-plane endpoint VIP and a 2-IP node range so a rollout can land

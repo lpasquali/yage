@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +48,14 @@ func Run(cfg *config.Config) int {
 	// ALLOWED_NODES falls back to PROXMOX_NODE once parsing is done (L8266).
 	if cfg.AllowedNodes == "" {
 		cfg.AllowedNodes = cfg.ProxmoxNode
+	}
+
+	// CAPI VMs need at least 2 vCPUs (sockets × cores) per role to
+	// schedule kubeadm or k3s reliably. Validate before any phase runs;
+	// fail fast so we don't burn cycles on kind + clusterctl init only
+	// to have CAPI reject an undersized PMT later.
+	if err := validateMinVCPU(cfg); err != nil {
+		logx.Die("%v", err)
 	}
 
 	// Top-level dry-run: print the plan and exit before any phase runs.
@@ -886,6 +895,51 @@ func Run(cfg *config.Config) int {
 
 	logx.Log("Done. CAPI: 'kubectl get clusters -A' and 'clusterctl describe cluster <name>'. For workload apps, rely on Argo CD sync (this script does not wait for all add-ons to be Healthy).")
 	return 0
+}
+
+// validateMinVCPU enforces the CAPI/kubeadm + k3s minimum of 2 vCPUs
+// per VM (sockets × cores) on every role that has at least one
+// replica. Mgmt-worker is skipped when MgmtWorkerMachineCount is 0
+// (the default — mgmt is single-node CP-only).
+func validateMinVCPU(cfg *config.Config) error {
+	const minVCPU = 2
+	atoi := func(s string) int {
+		n, _ := strconv.Atoi(strings.TrimSpace(s))
+		if n <= 0 {
+			n = 1
+		}
+		return n
+	}
+	type role struct {
+		name             string
+		sockets, cores   string
+		replicasNonZero  bool
+	}
+	roles := []role{
+		{"workload control-plane", cfg.ControlPlaneNumSockets, cfg.ControlPlaneNumCores, atoi(cfg.ControlPlaneMachineCount) > 0},
+		{"workload worker", cfg.WorkerNumSockets, cfg.WorkerNumCores, atoi(cfg.WorkerMachineCount) > 0},
+	}
+	if cfg.PivotEnabled {
+		roles = append(roles,
+			role{"mgmt control-plane", cfg.MgmtControlPlaneNumSockets, cfg.MgmtControlPlaneNumCores, atoi(cfg.MgmtControlPlaneMachineCount) > 0},
+			role{"mgmt worker", cfg.WorkerNumSockets, cfg.WorkerNumCores, atoi(cfg.MgmtWorkerMachineCount) > 0},
+		)
+	}
+	var bad []string
+	for _, r := range roles {
+		if !r.replicasNonZero {
+			continue
+		}
+		v := atoi(r.sockets) * atoi(r.cores)
+		if v < minVCPU {
+			bad = append(bad, fmt.Sprintf("%s: %s sockets × %s cores = %d vCPU (need ≥ %d — CAPI/kubeadm + k3s require at least 2 vCPUs per node)",
+				r.name, r.sockets, r.cores, v, minVCPU))
+		}
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("vCPU minimum not met:\n  %s", strings.Join(bad, "\n  "))
+	}
+	return nil
 }
 
 // preflightCapacity queries the Proxmox host capacity and compares it

@@ -324,13 +324,19 @@ func GenerateWorkloadManifestIfMissing(
 	tmpPath := tmp.Name()
 	tmp.Close()
 
-	cmd := exec.Command("clusterctl", "generate", "cluster", cfg.WorkloadClusterName,
+	args := []string{
+		"generate", "cluster", cfg.WorkloadClusterName,
 		"--config", ctlCfg,
 		"--kubernetes-version", cfg.WorkloadKubernetesVersion,
 		"--control-plane-machine-count", cfg.ControlPlaneMachineCount,
 		"--worker-machine-count", cfg.WorkerMachineCount,
 		"--infrastructure", cfg.InfraProvider,
-	)
+	}
+	if cfg.BootstrapMode == "k3s" {
+		args = append(args, "--flavor", "k3s")
+		logx.Log("BOOTSTRAP_MODE=k3s — requesting `clusterctl generate cluster --flavor k3s` (CAPMOX provider must ship a k3s flavor template).")
+	}
+	cmd := exec.Command("clusterctl", args...)
 	cmd.Env = append(os.Environ(),
 		"PROXMOX_URL="+cfg.ProxmoxURL,
 		"PROXMOX_REGION="+cfg.ProxmoxRegion,

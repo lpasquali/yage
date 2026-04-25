@@ -111,13 +111,18 @@ func renderManagementManifest(cfg *config.Config, clusterctlCfgPath string) (str
 	// NUM_*, MEMORY_MIB, NODE_IP_RANGES, CONTROL_PLANE_ENDPOINT_IP, etc.).
 	// We override those with MGMT_* values so the same Proxmox provider
 	// template renders the management cluster.
-	cmd := exec.Command("clusterctl", "generate", "cluster", cfg.MgmtClusterName,
+	args := []string{
+		"generate", "cluster", cfg.MgmtClusterName,
 		"--config", clusterctlCfgPath,
 		"--kubernetes-version", cfg.MgmtKubernetesVersion,
 		"--control-plane-machine-count", cfg.MgmtControlPlaneMachineCount,
 		"--worker-machine-count", cfg.MgmtWorkerMachineCount,
 		"--infrastructure", cfg.InfraProvider,
-	)
+	}
+	if cfg.BootstrapMode == "k3s" {
+		args = append(args, "--flavor", "k3s")
+	}
+	cmd := exec.Command("clusterctl", args...)
 	cmd.Env = append(os.Environ(),
 		"PROXMOX_URL="+cfg.ProxmoxURL,
 		"PROXMOX_REGION="+cfg.ProxmoxRegion,

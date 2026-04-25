@@ -94,7 +94,7 @@ func TryFillWorkloadInputsFromManagement(cfg *config.Config) {
 
 	clusterGVR := schema.GroupVersionResource{
 		Group:    "cluster.x-k8s.io",
-		Version:  "v1beta1",
+		Version:  "v1beta2",
 		Resource: "clusters",
 	}
 	clusterObj, err := cli.Dynamic.Resource(clusterGVR).

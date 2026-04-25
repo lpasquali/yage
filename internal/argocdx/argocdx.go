@@ -108,7 +108,7 @@ func StandaloneDiscoverWorkloadKubeconfigRef(cfg *config.Config) error {
 
 	clusterGVR := schema.GroupVersionResource{
 		Group:    "cluster.x-k8s.io",
-		Version:  "v1beta1",
+		Version:  "v1beta2",
 		Resource: "clusters",
 	}
 
@@ -208,7 +208,7 @@ func PrintAccessInfo(cfg *config.Config) {
 		Get(bg, cfg.WorkloadClusterName+"-kubeconfig", metav1.GetOptions{}); err != nil {
 		logx.Warn("Secret %s/%s-kubeconfig not found. Use --workload-cluster-name / --workload-cluster-namespace (or env), CAPI_MANIFEST, or wait until CAPI creates this Secret in the Cluster's namespace.",
 			cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName)
-		clusterGVR := schema.GroupVersionResource{Group: "cluster.x-k8s.io", Version: "v1beta1", Resource: "clusters"}
+		clusterGVR := schema.GroupVersionResource{Group: "cluster.x-k8s.io", Version: "v1beta2", Resource: "clusters"}
 		if list, lerr := mgmt.Dynamic.Resource(clusterGVR).Namespace("").List(bg, metav1.ListOptions{}); lerr == nil {
 			parts := make([]string, 0, len(list.Items))
 			for _, it := range list.Items {

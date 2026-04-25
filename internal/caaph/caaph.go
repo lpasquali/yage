@@ -189,7 +189,7 @@ func PatchClusterCAAPHHelmLabels(cfg *config.Config, manifestPath string) error 
 	})
 	gvk := schema.GroupVersionKind{
 		Group:   "cluster.x-k8s.io",
-		Version: "v1beta1",
+		Version: "v1beta2",
 		Kind:    "Cluster",
 	}
 	mapping, mErr := cli.Mapper.RESTMapping(gvk.GroupKind())

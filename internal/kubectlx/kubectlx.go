@@ -189,7 +189,7 @@ func WarnRegeneratedManifestImmutableRisk(cfg *config.Config) {
 	}
 	gvk := schema.GroupVersionKind{
 		Group:   "cluster.x-k8s.io",
-		Version: "v1beta1",
+		Version: "v1beta2",
 		Kind:    "Cluster",
 	}
 	// Try v1beta1 first, then v1beta2 — RESTMapping resolves whichever

@@ -365,7 +365,7 @@ func patchLiveMgmtClusterLabels(cfg *config.Config, kindCli *k8sclient.Client) e
 	patchLabels["caaph.cilium.k8s-service-port"] = port
 
 	body := []byte(`{"metadata":{"labels":` + jsonStringMap(patchLabels) + `}}`)
-	gvk := schema.GroupVersionKind{Group: "cluster.x-k8s.io", Version: "v1beta1", Kind: "Cluster"}
+	gvk := schema.GroupVersionKind{Group: "cluster.x-k8s.io", Version: "v1beta2", Kind: "Cluster"}
 	mapping, err := kindCli.Mapper.RESTMapping(gvk.GroupKind())
 	if err != nil {
 		return err

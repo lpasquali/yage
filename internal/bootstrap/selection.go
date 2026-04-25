@@ -142,7 +142,7 @@ func MaybeInteractiveSelectWorkloadCluster(cfg *config.Config) {
 	bg := context.Background()
 	clusterGVR := schema.GroupVersionResource{
 		Group:    "cluster.x-k8s.io",
-		Version:  "v1beta1",
+		Version:  "v1beta2",
 		Resource: "clusters",
 	}
 	list, err := cli.Dynamic.Resource(clusterGVR).Namespace("").List(bg, metav1.ListOptions{})

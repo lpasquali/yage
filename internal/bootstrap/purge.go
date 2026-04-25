@@ -28,7 +28,7 @@ import (
 
 var capiClusterGVR = schema.GroupVersionResource{
 	Group:    "cluster.x-k8s.io",
-	Version:  "v1beta1",
+	Version:  "v1beta2",
 	Resource: "clusters",
 }
 
@@ -343,8 +343,8 @@ func WorkloadRolloutCAPITouchRollout(cfg *config.Config) {
 	}
 	bg := context.Background()
 
-	kcpGVR := schema.GroupVersionResource{Group: "controlplane.cluster.x-k8s.io", Version: "v1beta1", Resource: "kubeadmcontrolplanes"}
-	mdGVR := schema.GroupVersionResource{Group: "cluster.x-k8s.io", Version: "v1beta1", Resource: "machinedeployments"}
+	kcpGVR := schema.GroupVersionResource{Group: "controlplane.cluster.x-k8s.io", Version: "v1beta2", Resource: "kubeadmcontrolplanes"}
+	mdGVR := schema.GroupVersionResource{Group: "cluster.x-k8s.io", Version: "v1beta2", Resource: "machinedeployments"}
 	pmGVR := schema.GroupVersionResource{Group: "infrastructure.cluster.x-k8s.io", Version: "v1alpha1", Resource: "proxmoxmachines"}
 
 	listNames := func(gvr schema.GroupVersionResource) []string {

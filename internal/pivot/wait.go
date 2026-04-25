@@ -31,7 +31,7 @@ import (
 // capiClusterGVR is the v1beta1 CAPI Cluster resource.
 var capiClusterGVR = schema.GroupVersionResource{
 	Group:    "cluster.x-k8s.io",
-	Version:  "v1beta1",
+	Version:  "v1beta2",
 	Resource: "clusters",
 }
 

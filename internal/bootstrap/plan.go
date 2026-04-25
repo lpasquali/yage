@@ -283,6 +283,14 @@ func planCapacity(w *os.File, cfg *config.Config) {
 	if err := capacity.Check(plan, hc, threshold); err != nil {
 		bullet(w, "❌ %v", err)
 		bullet(w, "(real run aborts; use --allow-resource-overcommit to override)")
+		// Suggest k3s when the same machine counts under k3s sizing
+		// would fit the budget.
+		if cfg.BootstrapMode != "k3s" {
+			if fits, k3sPlan := capacity.WouldFitAsK3s(cfg, hc, threshold); fits {
+				bullet(w, "💡 same machine counts would fit under --bootstrap-mode k3s: %d cores / %d MiB / %d GB",
+					k3sPlan.CPUCores, k3sPlan.MemoryMiB, k3sPlan.StorageGB)
+			}
+		}
 	} else {
 		bullet(w, "✅ plan fits within %.0f%% budget.", threshold*100)
 	}

@@ -974,9 +974,32 @@ func preflightCapacity(cfg *config.Config) error {
 			logx.Warn("ALLOW_RESOURCE_OVERCOMMIT=true — proceeding despite: %v", err)
 			return nil
 		}
-		return fmt.Errorf("%w\n  re-run with --allow-resource-overcommit to override, or shrink the cluster sizing / machine counts", err)
+		// Suggest --bootstrap-mode k3s when (a) the user is running
+		// kubeadm and (b) the same machine counts under k3s sizing
+		// would fit the budget. Without (b) the suggestion is noise.
+		hint := ""
+		if cfg.BootstrapMode != "k3s" {
+			if fits, k3sPlan := capacity.WouldFitAsK3s(cfg, hc, threshold); fits {
+				hint = fmt.Sprintf(
+					"\n\n  💡 The same %d machine(s) would fit under --bootstrap-mode k3s:\n"+
+						"     k3s plan: %d cores / %d MiB / %d GB (vs kubeadm: %d cores / %d MiB / %d GB).\n"+
+						"     k3s control plane / worker default to ~%d vCPU + %d MiB each.",
+					totalReplicas(plan), k3sPlan.CPUCores, k3sPlan.MemoryMiB, k3sPlan.StorageGB,
+					plan.CPUCores, plan.MemoryMiB, plan.StorageGB,
+					capacity.K3sCPCores, capacity.K3sCPMemMiB)
+			}
+		}
+		return fmt.Errorf("%w\n  re-run with --allow-resource-overcommit to override, or shrink the cluster sizing / machine counts.%s", err, hint)
 	}
 	return nil
+}
+
+func totalReplicas(p capacity.Plan) int {
+	n := 0
+	for _, it := range p.Items {
+		n += it.Replicas
+	}
+	return n
 }
 
 // rebindKindContextToMgmt writes a fresh KUBECONFIG file containing the

@@ -36,6 +36,21 @@ const (
 	SmallEnvMemoryGiB = 16
 )
 
+// K3s recommended sizing — what the orchestrator would propose to fit
+// the user's current machine counts inside a tight budget. CPU stays
+// at 2 vCPUs per VM (CAPI requires ≥2); memory and disk drop hard.
+//
+// These are values the orchestrator suggests, not enforces — the user
+// can override per-role with the existing CONTROL_PLANE_* / WORKER_*
+// env vars after switching to --bootstrap-mode k3s.
+const (
+	K3sCPCores    = 2
+	K3sCPMemMiB   = 1024
+	K3sCPDiskGB   = 20
+	K3sWorkerMem  = 1024
+	K3sWorkerDisk = 15
+)
+
 // HostCapacity is the aggregate of CPU + memory + storage across all
 // Proxmox nodes that are eligible for VM placement, after filtering by
 // the configured AllowedNodes (or just ProxmoxNode when AllowedNodes is
@@ -210,6 +225,53 @@ func PlanFor(cfg *config.Config) Plan {
 			cfg.WorkerMemoryMiB, cfg.WorkerBootVolumeSize)
 	}
 	return p
+}
+
+// PlanForK3s returns the resource plan if cfg's machine counts ran
+// under K3s sizing instead of cfg's per-role sockets/cores/memory.
+// Used to suggest --bootstrap-mode k3s when the kubeadm plan
+// overflows the host budget but a k3s footprint would fit.
+//
+// Replica counts are taken from cfg as-is; only sizing is overridden.
+func PlanForK3s(cfg *config.Config) Plan {
+	p := Plan{}
+	add := func(name string, replicas int, cpu int, memMiB, diskGB int64) {
+		if replicas <= 0 {
+			return
+		}
+		item := PlanItem{
+			Name: name, Replicas: replicas,
+			CPUCores: cpu, MemoryMiB: memMiB, DiskGB: diskGB,
+		}
+		p.Items = append(p.Items, item)
+		c, m, d := item.Total()
+		p.CPUCores += c
+		p.MemoryMiB += m
+		p.StorageGB += d
+	}
+	wcp := atoiOr(cfg.ControlPlaneMachineCount, 1)
+	wwk := atoiOr(cfg.WorkerMachineCount, 0)
+	add("workload control-plane (k3s)", wcp, K3sCPCores, K3sCPMemMiB, K3sCPDiskGB)
+	add("workload worker (k3s)", wwk, K3sCPCores, K3sWorkerMem, K3sWorkerDisk)
+	if cfg.PivotEnabled {
+		mcp := atoiOr(cfg.MgmtControlPlaneMachineCount, 1)
+		mwk := atoiOr(cfg.MgmtWorkerMachineCount, 0)
+		add("mgmt control-plane (k3s)", mcp, K3sCPCores, K3sCPMemMiB, K3sCPDiskGB)
+		add("mgmt worker (k3s)", mwk, K3sCPCores, K3sWorkerMem, K3sWorkerDisk)
+	}
+	return p
+}
+
+// WouldFitAsK3s returns true when PlanForK3s(cfg) fits inside
+// threshold × host. Caller already checked the kubeadm plan and got
+// an overflow; a true result means switching to k3s + smaller sizing
+// is a viable suggestion. Returns the k3s plan alongside for display.
+func WouldFitAsK3s(cfg *config.Config, host *HostCapacity, threshold float64) (bool, Plan) {
+	p := PlanForK3s(cfg)
+	if err := Check(p, host, threshold); err == nil {
+		return true, p
+	}
+	return false, p
 }
 
 // IsSmallEnv reports whether the host has fewer than SmallEnvCPUCores

@@ -1,0 +1,470 @@
+# bootstrap-capi — Go Architecture
+
+This document describes the Go implementation of `bootstrap-capi`. The bash
+script `bootstrap-capi.sh` remains the canonical reference (and is the source
+the Go port is reconciled against — phase comments throughout
+`internal/bootstrap/bootstrap.go` cite the originating bash line ranges as
+`L8133-L8211` etc.). The Go binary lives in `cmd/bootstrap-capi` and dispatches
+to `internal/bootstrap.Run`.
+
+## High-level overview
+
+`bootstrap-capi` provisions a Cluster API management plane (in a local kind
+cluster) and brings up a Proxmox-VE workload cluster on top of it, then layers
+in CNI (Cilium), CSI (Proxmox CSI), and a GitOps app-of-apps surface (Argo CD
+on the workload, fed by CAAPH HelmChartProxy from the management cluster).
+The Go code is organised as one orchestrator package and a dozen-plus
+focused leaf packages:
+
+- `internal/bootstrap` — the orchestrator. `Run()` is a straight port of the
+  bash script's phase 1 / phase 2 flow and the standalone modes
+  (`--workload-rollout`, `--argocd-print-access`, `--argocd-port-forward`,
+  kind backup/restore).
+- `internal/k8sclient` — the foundation. Wraps `client-go` and dynamic clients
+  keyed by kubecontext / kubeconfig file. Every package that talks to a
+  cluster goes through it.
+- `internal/config` — typed `Config` struct (one field per legacy bash var),
+  `Load()` from env+CLI, plus `Snapshot`/state for round-tripping into a kind
+  Secret.
+- `internal/kindsync` — owns the `proxmox-bootstrap-config/config.yaml` Secret
+  inside the kind cluster: write-out, read-back, and merge-in (skipping CLI-
+  locked `*_EXPLICIT` fields).
+- `internal/installer` — installs all client binaries (kubectl, kind,
+  clusterctl, cilium-cli, argocd-cli, cmctl, kyverno-cli, opentofu, docker
+  upgrade) and conditionally builds arm64 controller images.
+- `internal/kind` — kind cluster lifecycle: create, backup, restore, kubeconfig
+  export.
+- `internal/opentofux` — OpenTofu wrapper. Generates the BPG provider tree,
+  applies/recreates the Proxmox identity stack (CAPI + CSI users, tokens,
+  ACLs), pulls outputs back into clusterctl + CSI configs.
+- `internal/proxmox` — Proxmox API client (admin + clusterctl tokens),
+  identity-suffix derivation, region/node resolution, cluster-set ID
+  validation.
+- `internal/capimanifest` — generates the workload `clusterctl generate
+  cluster` manifest, then patches it (CSI topology labels, kube-proxy skip
+  for Cilium, ProxmoxMachineTemplate spec rev, CAAPH cluster labels).
+- `internal/caaph` — CAAPH HelmChartProxy authoring and waiters: Cilium HCP
+  for the workload, Cilium L2 announcements / LB IP pool, Argo CD Operator
+  install on the workload, ArgoCD CR + CAAPH `argocd-apps` HelmChartProxy
+  (root Application of the user's Git app-of-apps).
+- `internal/argocdx` — Argo CD UX: `--argocd-print-access`,
+  `--argocd-port-forward`, kubeconfig discovery for standalone modes,
+  pre-installed `argocd-redis` Secret on the workload.
+- `internal/csix` — Proxmox CSI helpers: load vars, push the
+  `*-proxmox-csi-config` Secret into the workload.
+- `internal/ciliumx` — Cilium values rendering / arch detection.
+- `internal/kubectlx` — typed-client wrappers for the few residual
+  `kubectl`-like operations (apply, wait-for-endpoints, context resolution,
+  workload-manifest apply with retries).
+- `internal/wlargocd` / `internal/postsync` — workload Argo CD post-sync
+  helpers (used by `--workload-rollout`).
+- `internal/helmvalues` — typed value-overlay generation.
+- `internal/cli` — flag parsing layer that hands a `*Config` back to
+  `Run()`.
+- `internal/shell` / `internal/logx` / `internal/promptx` / `internal/sysinfo`
+  / `internal/versionx` / `internal/yamlx` — small support utilities (process
+  exec, structured logging, prompts, OS/arch detection, semver parsing, YAML
+  field extraction).
+
+## Phase timeline (diagram 1)
+
+```mermaid
+flowchart TD
+    A[main entry: cmd/bootstrap-capi] --> B[bootstrap.Run]
+    B --> SM{standalone mode?}
+    SM -- backup/restore --> KSO[kind.Backup or kind.Restore<br/>L7746-L7760]
+    SM -- workload-rollout --> WR[workload-rollout flow<br/>L7860-L7941]
+    SM -- argocd-print/port-forward --> AC[argocdx.PrintAccessInfo<br/>or RunPortForwards<br/>L7943-L7968]
+    SM -- normal --> P0[Pre: EnsureCAPIManifestPath +<br/>Purge + ClusterSetID<br/>L7970-L8007]
+    P0 --> P1[Phase 1: install deps<br/>L8009-L8123]
+    P1 --> P20[Phase 2.0: OpenTofu identity bootstrap<br/>L8133-L8211]
+    P20 --> P21[Phase 2.1: clusterctl creds<br/>L8213-L8277]
+    P21 --> P24[Phase 2.4: detect/reuse kind cluster<br/>L8295-L8315]
+    P24 --> P25[Phase 2.5: resolve CAPMOX image tag<br/>L8317-L8335]
+    P25 --> P26[Phase 2.6: kind create cluster<br/>L8337-L8365]
+    P26 --> P27[Phase 2.7: management CNI = kindnet<br/>L8369-L8372]
+    P27 --> P28[Phase 2.8: clusterctl init core+CAAPH+CAPMOX<br/>L8374-L8423]
+    P28 --> P29[Phase 2.9: workload manifest apply<br/>+ Cilium HelmChartProxy<br/>L8425-L8494]
+    P29 --> P210[Phase 2.10: Argo CD Operator<br/>+ CAAPH argocd-apps<br/>L8496-L8508]
+    P210 --> Z[Done]
+```
+
+## Internal package dependency graph (diagram 2)
+
+```mermaid
+flowchart LR
+    subgraph orchestrator[Orchestrator]
+        bootstrap[internal/bootstrap]
+    end
+
+    subgraph midtier[Mid-tier]
+        caaph[internal/caaph]
+        capimanifest[internal/capimanifest]
+        kindsync[internal/kindsync]
+        argocdx[internal/argocdx]
+        csix[internal/csix]
+        kindp[internal/kind]
+        installer[internal/installer]
+        opentofux[internal/opentofux]
+    end
+
+    subgraph leaves[Leaves]
+        configp[internal/config]
+        logx[internal/logx]
+        shell[internal/shell]
+        sysinfo[internal/sysinfo]
+        versionx[internal/versionx]
+        yamlx[internal/yamlx]
+        proxmox[internal/proxmox]
+        promptx[internal/promptx]
+        helmvalues[internal/helmvalues]
+        wlargocd[internal/wlargocd]
+        postsync[internal/postsync]
+        ciliumx[internal/ciliumx]
+        kubectlx[internal/kubectlx]
+        clip[internal/cli]
+    end
+
+    foundation[internal/k8sclient]
+
+    bootstrap --> caaph
+    bootstrap --> capimanifest
+    bootstrap --> kindsync
+    bootstrap --> argocdx
+    bootstrap --> csix
+    bootstrap --> kindp
+    bootstrap --> installer
+    bootstrap --> opentofux
+    bootstrap --> kubectlx
+    bootstrap --> proxmox
+    bootstrap --> configp
+    bootstrap --> shell
+    bootstrap --> logx
+    bootstrap --> promptx
+    bootstrap --> yamlx
+    bootstrap --> helmvalues
+    bootstrap --> wlargocd
+    bootstrap --> postsync
+    bootstrap --> foundation
+
+    caaph --> ciliumx
+    caaph --> proxmox
+    caaph --> sysinfo
+    caaph --> shell
+    caaph --> configp
+    caaph --> logx
+    caaph --> foundation
+
+    capimanifest --> ciliumx
+    capimanifest --> proxmox
+    capimanifest --> sysinfo
+    capimanifest --> configp
+    capimanifest --> logx
+    capimanifest --> foundation
+
+    kindsync --> proxmox
+    kindsync --> kubectlx
+    kindsync --> shell
+    kindsync --> configp
+    kindsync --> logx
+    kindsync --> foundation
+
+    argocdx --> sysinfo
+    argocdx --> configp
+    argocdx --> logx
+    argocdx --> foundation
+
+    csix --> configp
+    csix --> logx
+    csix --> foundation
+
+    kindp --> shell
+    kindp --> configp
+    kindp --> logx
+
+    installer --> versionx
+    installer --> sysinfo
+    installer --> shell
+    installer --> configp
+    installer --> logx
+
+    opentofux --> capimanifest
+    opentofux --> csix
+    opentofux --> kindsync
+    opentofux --> proxmox
+    opentofux --> sysinfo
+    opentofux --> shell
+    opentofux --> configp
+    opentofux --> logx
+
+    kubectlx --> configp
+    kubectlx --> logx
+    kubectlx --> foundation
+
+    proxmox --> sysinfo
+    proxmox --> configp
+    proxmox --> logx
+
+    wlargocd --> postsync
+    wlargocd --> configp
+    wlargocd --> logx
+
+    postsync --> shell
+    postsync --> configp
+
+    ciliumx --> sysinfo
+    ciliumx --> configp
+    ciliumx --> logx
+
+    helmvalues --> configp
+    clip --> configp
+    clip --> logx
+```
+
+## Install topology (diagram 3)
+
+```mermaid
+flowchart TD
+    BC[bootstrap-capi binary] --> KCB[host binaries: kubectl, kind,<br/>clusterctl, cilium-cli, argocd-cli,<br/>cmctl, kyverno-cli, opentofu]
+    BC --> KIND[kind cluster: management plane]
+    BC --> TF[OpenTofu / BPG provider:<br/>Proxmox CAPI + CSI users,<br/>tokens, ACLs]
+    BC --> CCI[clusterctl init: CAPI core,<br/>kubeadm bootstrap, kubeadm<br/>control-plane, CAAPH addon,<br/>in-cluster IPAM, CAPMOX]
+    BC --> WCR[Workload Cluster CR<br/>+ ProxmoxCluster + KubeadmCP]
+    BC --> CHCP[Cilium HelmChartProxy<br/>on management]
+    BC --> CSEC[CSI config Secret<br/>on workload]
+    BC --> RSEC[argocd-redis Secret<br/>on workload]
+    BC --> AOP[ArgoCD CR + Argo CD Operator<br/>kustomize apply on workload]
+    BC --> AHCP[CAAPH argocd-apps HelmChartProxy<br/>root Application=WORKLOAD_CLUSTER_NAME]
+
+    CHCP -- CAAPH reconciles --> CILW[Cilium chart on workload]
+    AHCP -- CAAPH reconciles --> ARGOAPPS[argocd-apps Helm chart<br/>= root Application of-apps]
+
+    ARGOAPPS -- kustomize-build --> GIT[~/Devel/workload-app-of-apps Git repo]
+    GIT --> CHILD[Child Argo Applications]
+
+    CHILD --> MS[metrics-server wave -3]
+    CHILD --> SCRDS[spire-crds wave -3]
+    CHILD --> PCSI[proxmox-csi wave -2]
+    CHILD --> KYV[kyverno wave 0]
+    CHILD --> CM[cert-manager wave 0]
+    CHILD --> CP[crossplane wave 2]
+    CHILD --> CNPG[cnpg wave 2]
+    CHILD --> ES[external-secrets wave 3]
+    CHILD --> INF[infisical wave 4]
+    CHILD --> SP[spire wave 5]
+    CHILD --> VMG[victoriametrics + otel + grafana wave 6]
+    CHILD --> BS[backstage wave 7 opt-in]
+    CHILD --> KC[keycloak wave 8]
+    CHILD --> KCRO[keycloak-realm-operator wave 9 opt-in]
+    CHILD --> KCR[keycloak-realm wave 10]
+    CHILD --> SSO[argocd-sso wave 11]
+
+    MS --> MS_SRC[helm/oci source]
+    SCRDS --> SCRDS_SRC[helm/oci source]
+    PCSI --> PCSI_SRC[helm/oci source]
+    KYV --> KYV_SRC[helm/oci source]
+    CM --> CM_SRC[helm/oci source]
+    CP --> CP_SRC[helm/oci source]
+    CNPG --> CNPG_SRC[helm/oci source]
+    ES --> ES_SRC[helm/oci source]
+    INF --> INF_SRC[helm/oci source]
+    SP --> SP_SRC[helm/oci source]
+    VMG --> VMG_SRC[helm/oci sources]
+    BS --> BS_SRC[helm/oci source]
+    KC --> KC_SRC[helm/oci source]
+    KCRO --> KCRO_SRC[helm/oci source]
+    KCR --> KCR_SRC[kustomize manifest]
+    SSO --> SSO_SRC[kustomize manifest]
+```
+
+## Keycloak SSO topology (diagram 4)
+
+```mermaid
+sequenceDiagram
+    participant U as User browser
+    participant App as App (Argo CD or Grafana)
+    participant KC as Keycloak (workload realm)
+    participant Realm as KeycloakRealmImport CR<br/>(realm-import.yaml)
+
+    Realm->>KC: realm + clients + groups (declarative, by keycloak-realm-operator)
+    U->>App: GET /
+    App->>U: 302 to Keycloak OIDC authorize endpoint
+    U->>KC: login (username + password)
+    KC->>U: 302 with auth code to App callback
+    U->>App: callback with code
+    App->>KC: token exchange (code -> id_token + access_token)
+    KC->>App: id_token + access_token (with realm group claim)
+    App->>App: authorize via realm group claim<br/>(Argo CD RBAC ConfigMap / Grafana role-mapping)
+    App->>U: app session granted
+```
+
+The realm CR is at
+`~/Devel/workload-app-of-apps/base/addons/manifests/keycloak-realm/realm-import.yaml`,
+applied as wave 10 by the `keycloak-realm` Application; the
+`keycloak-realm-operator` (wave 9, opt-in) reconciles it into Keycloak.
+
+## Config flow / kind-Secret persistence (diagram 5)
+
+```mermaid
+flowchart TD
+    ENV[env vars + CLI flags] --> LOAD[config.Load]
+    LOAD --> CFG[*config.Config in-memory]
+    CFG --> SNAP[config.Snapshot<br/>builds map of fields with<br/>EXPLICIT guards]
+    SNAP --> SYNC[kindsync.SyncBootstrapConfigToKind]
+    SYNC --> KSEC[kind Secret<br/>proxmox-bootstrap-config/config.yaml]
+    KSEC --> NEXT[next bootstrap-capi run]
+    NEXT --> MERGE[kindsync.MergeProxmoxBootstrapSecretsFromKind]
+    MERGE --> READBACK[read Secret config.yaml]
+    READBACK --> OVR[overlay onto *config.Config<br/>SKIP fields where matching<br/>NAME_EXPLICIT is set]
+    OVR --> CFG
+```
+
+## In-depth Run() walk-through
+
+The numbered steps reference `internal/bootstrap/bootstrap.go`.
+
+1. **Defaults** (L34-L46) — fall back `KindClusterName` to `ClusterName` or
+   `capi-provisioner`; default `AllowedNodes` to `ProxmoxNode`.
+2. **Standalone kind backup/restore** (L48-L68) — invoke
+   `installer.Kubectl` then `kind.Backup` / `kind.Restore` and exit.
+3. **Standalone `--workload-rollout`** (L70-L163) — merge kind Secrets,
+   resolve management context, optionally regenerate the CAPI manifest and
+   re-apply with retries (3 attempts, 10s sleep). Argo branch logs guidance
+   (no automatic sync).
+4. **Standalone Argo print/port-forward** (L165-L197) — discover workload
+   kubeconfig and call `argocdx.PrintAccessInfo` /
+   `argocdx.RunPortForwards`.
+5. **Pre-phase** (L199-L236) — `EnsureCAPIManifestPath`, optional
+   `PurgeGeneratedArtifacts`, derive `ClusterSetID` and Proxmox identity
+   suffix.
+6. **Phase 1: dependencies** (L238-L344) — `installer.SystemDependencies`,
+   `installer.Docker`, two-pass `installer.Kubectl` (the second pass picks
+   up a pinned `ClusterctlVersion` that the first kind-Secret merge may
+   have introduced), `installer.Kind`, `installer.Clusterctl`,
+   `installer.CiliumCLI`, optional `ArgoCDCLI`/`KyvernoCLI`/`Cmctl`,
+   conditional Docker upgrade + BPG provider install (skipped on
+   `--no-delete-kind` or when reusing a kind cluster without `--force`),
+   `installer.OpenTofu`, `EnsureKindConfig`.
+7. **Phase 2.0: OpenTofu identity** (L351-L440) — if neither env nor an
+   explicit local clusterctl file satisfies CAPI/CSI creds, call
+   `opentofux.WriteClusterctlConfigIfMissing` /
+   `WriteCSIConfigIfMissing`, and as a last resort run
+   `opentofux.ApplyIdentity` (or `RecreateIdentities` under
+   `--recreate-proxmox-identities`). Outputs are written back to the
+   clusterctl + CSI config files.
+8. **Phase 2.1: clusterctl creds** (L442-L520) — interactive prompt fallback,
+   pull `PROXMOX_URL`/`TOKEN`/`SECRET` from local clusterctl file,
+   normalise + validate the token secret, refresh derived token IDs,
+   verify connectivity via
+   `proxmox.ResolveRegionAndNodeFromClusterctlAPI`. Then write the
+   ephemeral clusterctl config via `SyncClusterctlConfigFile`.
+9. **Phase 2.4: kind detection** (L526-L558) — list kind clusters; under
+   `--force` (and not `--no-delete-kind`) delete-then-recreate, else reuse
+   and set `kindClusterReused`.
+10. **Phase 2.5: CAPMOX image tag** (L560-L584) — use pinned
+    `cfg.CAPMOXVersion` or git-clone the CAPMOX repo and pick the latest
+    `vX.Y.Z` tag.
+11. **Phase 2.6: kind create + image load** (L586-L630) — `kind create
+    cluster --config <kind.yaml>` (skipped on reuse), merge kubeconfig,
+    `installer.BuildIfNoArm64` for CAPMOX + CAPI core/bootstrap/control-
+    plane + IPAM (skipped on reuse), then sync config + literal creds back
+    into the kind Secret.
+12. **Phase 2.7: management CNI** (L632-L633) — kindnet only; no Cilium on
+    the management plane.
+13. **Phase 2.8: clusterctl init** (L635-L695) —
+    `InstallMetricsServerOnKindManagement`, then `clusterctl init` with
+    `infrastructure=proxmox` + `ipam=in-cluster` + `addon=helm`. Wait for
+    CAAPH (`caaph-system`), `capi-controller-manager`, kubeadm bootstrap +
+    control-plane controllers, their webhook endpoints, and
+    `capmox-controller-manager` + its webhook. End with
+    `opentofux.RecreateResyncCapmox`.
+14. **Phase 2.9: workload manifest apply** (L697-L776) —
+    `MaybeInteractiveSelectWorkloadCluster`,
+    `capimanifest.TryFillWorkloadInputsFromManagement`, re-merge kind
+    Secrets, `TryLoadCAPIManifestFromSecret`,
+    `capimanifest.GenerateWorkloadManifestIfMissing`, patch chain
+    (`PatchProxmoxCSITopologyLabels`, `PatchKubeadmSkipKubeProxyForCilium`,
+    `PatchProxmoxMachineTemplateSpecRevisions`,
+    `DiscoverWorkloadClusterIdentity`, `EnsureWorkloadClusterLabel`,
+    `RefreshDerivedCiliumClusterID`, `caaph.PatchClusterCAAPHHelmLabels`),
+    `PushCAPIManifestToSecret`, then
+    `kubectlx.ApplyWorkloadManifestToManagementCluster` with up to 3
+    attempts. Then `opentofux.RecreateIdentitiesWorkloadCSISecrets`,
+    `caaph.ApplyWorkloadCiliumHelmChartProxy`,
+    `WaitForWorkloadClusterReady`,
+    `caaph.ApplyWorkloadCiliumLBBToWorkload` (L2 announcements + LB IP
+    pool), conditional `InstallMetricsServerOnWorkload`,
+    `csix.ApplyConfigSecretToWorkload`, and
+    `argocdx.ApplyRedisSecretToWorkload`.
+15. **Phase 2.10: Argo CD on workload** (L778-L796) — when
+    `WorkloadArgoCDEnabled`, `caaph.ApplyWorkloadArgoHelmProxies` (passing
+    `caaph.ApplyWorkloadArgoCDOperatorAndCR` as the post-prepare hook),
+    `caaph.WaitWorkloadArgoCDServer`, `caaph.LogWorkloadArgoAppsStatus`.
+16. **Done** (L798-L799) — log a hint about `kubectl get clusters -A` /
+    `clusterctl describe cluster`.
+
+## Library swap audit — remaining `kubectl` shell-outs
+
+Counts produced from
+`grep -rE 'shell\.(Run|Capture|Pipe).*"kubectl"|exec\.Command\("kubectl"' internal/ --include='*.go'`:
+
+- `internal/installer/installer.go:494` — `kubectl version -o json` for
+  client `gitVersion` parsing during version-pin reconciliation; reads the
+  on-disk `kubectl` binary the user already runs (cluster connection not
+  required), so swapping to client-go would not represent the on-disk
+  binary the user expects.
+- `internal/caaph/caaph.go:391` — `kubectl --kubeconfig <wk> apply -k <git
+  ref> --server-side` for the Argo CD Operator. Reads a kustomize tree
+  from a Git ref; replicating server-side `-k` would pull in
+  `sigs.k8s.io/kustomize/api/krusty` (~10MB of deps). Comment in source
+  notes the trade-off.
+- `internal/kind/restore.go:294` — `kubectl --context <ctx> apply -f -` to
+  pipe a re-hydrated namespace doc back during `--restore`. Streaming
+  multi-document YAML through dynamic apply with field-management parity
+  to `kubectl apply` is non-trivial; backup/restore is rarely run.
+- `internal/kind/backup.go:163,169,188,337` — backup-side `kubectl get`
+  and `kubectl api-resources` and `kubectl config get-contexts`, used to
+  enumerate every namespaced resource type per namespace and dump them as
+  JSON Lines. Equivalent to the bash backup; same trade-off as restore.
+- `internal/argocdx/argocdx.go:314` — long-lived `kubectl port-forward`
+  for `--argocd-port-forward`. The port-forwarding behaviour with proper
+  signal forwarding and re-connect is essentially what the kubectl
+  subprocess provides; replacing it with a `client-go` portforwarder
+  would re-implement the same UX. Function-level NOTE in the source
+  records this rationale.
+
+Everything else (deploy/Service/Secret/CRD apply, waits, Cluster CR
+patch, kubeconfig discovery, Helm chart proxy authoring) goes through
+`internal/k8sclient` typed + dynamic clients.
+
+## Vendor library inventory
+
+Pulled from `go.mod`. Direct + transitive libraries the binary now consumes
+in-process to replace shell-outs:
+
+- `k8s.io/client-go` v0.36.0 — typed Kubernetes clientset (Deployments,
+  Services, Secrets, Namespaces, etc.), informers, and discovery.
+- `k8s.io/api` v0.36.0 — typed API objects (CoreV1, AppsV1, NetworkingV1,
+  …) used by the typed clientset.
+- `k8s.io/apimachinery` v0.36.0 — `metav1`, schema/GVR/GVK, runtime
+  serialisers, label selectors.
+- `k8s.io/cli-runtime` v0.36.0 — `genericclioptions` and resource
+  builders used by the apply paths in `internal/kubectlx`.
+- `sigs.k8s.io/yaml` v1.6.0 — strict YAML round-trip used by `yamlx`,
+  Snapshot, and manifest patching.
+- `sigs.k8s.io/kind` v0.31.0 — pulled in for the kind config types used
+  by `internal/kind` / `EnsureKindConfig`.
+- `helm.sh/helm/v3` — _not yet a direct dep in go.mod_; CAAPH authoring
+  is currently rendered through `internal/helmvalues` + `sigs.k8s.io/yaml`
+  rather than embedding helm. Listed here as a future swap target the
+  prompt anticipated.
+- `sigs.k8s.io/cluster-api` — _not yet a direct dep in go.mod_; Cluster
+  / KubeadmControlPlane / MachineDeployment are still authored as YAML
+  through `clusterctl generate cluster` and patched in
+  `internal/capimanifest`. Direct vendor would let
+  `EnsureWorkloadClusterLabel` and friends use typed CAPI APIs instead
+  of YAML edits.
+- Support indirects worth flagging: `github.com/spf13/cobra` /
+  `pflag` (CLI), `github.com/blang/semver/v4` (used by `versionx`),
+  `sigs.k8s.io/kustomize/api` and `kyaml` (transitively, through
+  cli-runtime).

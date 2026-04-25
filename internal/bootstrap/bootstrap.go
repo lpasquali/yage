@@ -11,7 +11,6 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/kind/pkg/cluster"
 
 	"github.com/lpasquali/bootstrap-capi/internal/argocdx"
 	"github.com/lpasquali/bootstrap-capi/internal/caaph"
@@ -51,11 +50,17 @@ func Run(cfg *config.Config) int {
 	// -------------------------------------------------------------------------
 	switch cfg.BootstrapKindStateOp {
 	case "backup":
+		if err := installer.Kubectl(cfg); err != nil {
+			logx.Die("ensure_kubectl failed: %v", err)
+		}
 		if err := kind.Backup(cfg, cfg.BootstrapKindBackupOut); err != nil {
 			logx.Die("%v", err)
 		}
 		return 0
 	case "restore":
+		if err := installer.Kubectl(cfg); err != nil {
+			logx.Die("ensure_kubectl failed: %v", err)
+		}
 		if err := kind.Restore(cfg, cfg.BootstrapKindStatePath); err != nil {
 			logx.Die("%v", err)
 		}
@@ -66,6 +71,7 @@ func Run(cfg *config.Config) int {
 	// Standalone: --workload-rollout (bash L7860-L7941)
 	// -------------------------------------------------------------------------
 	if cfg.WorkloadRolloutStandalone {
+		shell.RequireCmd("kubectl")
 		kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
 		_ = kindsync.SyncBootstrapConfigToKind(cfg)
 		_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
@@ -160,6 +166,7 @@ func Run(cfg *config.Config) int {
 	// Standalone: --argocd-print-access / --argocd-port-forward (L7943-L7968)
 	// -------------------------------------------------------------------------
 	if cfg.ArgoCDPrintAccessStandalone || cfg.ArgoCDPortForwardStandalone {
+		shell.RequireCmd("kubectl")
 		kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
 		_ = kindsync.SyncBootstrapConfigToKind(cfg)
 		_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
@@ -243,18 +250,56 @@ func Run(cfg *config.Config) int {
 	// Docker (bash L8020-L8034)
 	installer.Docker()
 
-	// Merge persisted state from the kind management cluster (config.yaml
-	// Secret + capmox / csi credentials) before installing clusterctl, so
-	// the pinned version reflects what's already deployed.
+	// kubectl first pass, then merge secrets from kind (may update ClusterctlVersion
+	// and image pins), then re-run kubectl in case the pinned version changed.
+	if err := installer.Kubectl(cfg); err != nil {
+		logx.Die("ensure_kubectl failed: %v", err)
+	}
 	kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
+	if err := installer.Kubectl(cfg); err != nil {
+		logx.Die("ensure_kubectl (2nd pass) failed: %v", err)
+	}
+	if err := installer.Kind(cfg); err != nil {
+		logx.Die("ensure_kind failed: %v", err)
+	}
 	if err := installer.Clusterctl(cfg); err != nil {
 		logx.Die("ensure_clusterctl failed: %v", err)
 	}
+	if err := installer.CiliumCLI(cfg); err != nil {
+		logx.Die("ensure_cilium_cli failed: %v", err)
+	}
+	if err := installer.Helm(); err != nil {
+		logx.Die("ensure_helm_present failed: %v", err)
+	}
+	if cfg.ArgoCDEnabled {
+		if err := installer.ArgoCDCLI(cfg); err != nil {
+			logx.Die("ensure_argocd_cli failed: %v", err)
+		}
+		if cfg.KyvernoEnabled {
+			if err := installer.KyvernoCLI(cfg); err != nil {
+				logx.Die("ensure_kyverno_cli failed: %v", err)
+			}
+		}
+		if cfg.CertManagerEnabled {
+			if err := installer.Cmctl(cfg); err != nil {
+				logx.Die("ensure_cmctl failed: %v", err)
+			}
+		}
+	}
+	shell.RequireCmd("kind")
+	shell.RequireCmd("kubectl")
 	shell.RequireCmd("clusterctl")
-	// kubectl, kind, cilium-cli, argocd, kyverno, cmctl are no longer
-	// installed by this binary — every operation that used to shell out to
-	// them is now driven through k8s.io/client-go and sigs.k8s.io/kind in
-	// process. End users wanting interactive CLIs install them themselves.
+	shell.RequireCmd("cilium")
+	shell.RequireCmd("helm")
+	if cfg.ArgoCDEnabled {
+		shell.RequireCmd("argocd")
+		if cfg.KyvernoEnabled {
+			shell.RequireCmd("kyverno")
+		}
+		if cfg.CertManagerEnabled {
+			shell.RequireCmd("cmctl")
+		}
+	}
 
 	MaybeInteractiveSelectKindCluster(cfg)
 	if !cfg.BootstrapCAPIManifestUserSet {
@@ -270,8 +315,14 @@ func Run(cfg *config.Config) int {
 	skipHeavy := false
 	if cfg.NoDeleteKind {
 		skipHeavy = true
-	} else if kindClusterPresent(cfg.KindClusterName) {
-		skipHeavy = !cfg.Force
+	} else {
+		out, _, _ := shell.Capture("kind", "get", "clusters")
+		for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", ""), "\n") {
+			if strings.TrimSpace(ln) == cfg.KindClusterName {
+				skipHeavy = !cfg.Force
+				break
+			}
+		}
 	}
 
 	if skipHeavy {
@@ -479,25 +530,35 @@ func Run(cfg *config.Config) int {
 	// --- 4. Check for existing kind clusters (bash L8295-L8315) ---
 	kindClusterReused := false
 	logx.Log("Checking for existing kind clusters...")
-	if kindClusterPresent(cfg.KindClusterName) {
-		if cfg.Force && !cfg.NoDeleteKind {
-			logx.Log("Force mode: replacing kind cluster '%s'...", cfg.KindClusterName)
-			DeleteWorkloadClusterBeforeKindDeletion(cfg)
-			if err := cluster.NewProvider().Delete(cfg.KindClusterName, ""); err != nil {
-				logx.Die("Failed to delete kind cluster '%s': %v", cfg.KindClusterName, err)
+	{
+		out, _, _ := shell.Capture("kind", "get", "clusters")
+		kindExists := false
+		for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", ""), "\n") {
+			if strings.TrimSpace(ln) == cfg.KindClusterName {
+				kindExists = true
+				break
 			}
-			logx.Log("Cluster deleted.")
-			PurgeStaleHostNetworking()
-		} else {
-			if cfg.Force && cfg.NoDeleteKind {
-				logx.Warn("NO_DELETE_KIND is set — keeping existing kind cluster despite --force.")
-			}
-			logx.Log("Reusing existing kind cluster '%s' (use --force to destroy and recreate; --no-delete-kind prevents deletion).", cfg.KindClusterName)
-			kindClusterReused = true
 		}
-	} else {
-		logx.Log("No existing cluster found; purging any leftover networking state before fresh bootstrap.")
-		PurgeStaleHostNetworking()
+		if kindExists {
+			if cfg.Force && !cfg.NoDeleteKind {
+				logx.Log("Force mode: replacing kind cluster '%s'...", cfg.KindClusterName)
+				DeleteWorkloadClusterBeforeKindDeletion(cfg)
+				if err := shell.Run("kind", "delete", "cluster", "--name", cfg.KindClusterName); err != nil {
+					logx.Die("Failed to delete kind cluster '%s'.", cfg.KindClusterName)
+				}
+				logx.Log("Cluster deleted.")
+				PurgeStaleHostNetworking()
+			} else {
+				if cfg.Force && cfg.NoDeleteKind {
+					logx.Warn("NO_DELETE_KIND is set — keeping existing kind cluster despite --force.")
+				}
+				logx.Log("Reusing existing kind cluster '%s' (use --force to destroy and recreate; --no-delete-kind prevents deletion).", cfg.KindClusterName)
+				kindClusterReused = true
+			}
+		} else {
+			logx.Log("No existing cluster found; purging any leftover networking state before fresh bootstrap.")
+			PurgeStaleHostNetworking()
+		}
 	}
 
 	// --- 5. Resolve CAPMOX image tag (bash L8317-L8335) ---
@@ -527,25 +588,30 @@ func Run(cfg *config.Config) int {
 	capmoxImage := cfg.CAPMOXImageRepo + ":" + capmoxTag
 
 	// --- 6. Create kind cluster (bash L8337-L8365) ---
-	provider := cluster.NewProvider()
 	if kindClusterReused {
 		logx.Log("Skipping kind cluster creation; reusing existing cluster '%s'.", cfg.KindClusterName)
 	} else {
 		logx.Log("Creating kind cluster using %s...", cfg.KindConfig)
-		opts := []cluster.CreateOption{}
-		if cfg.KindConfig != "" {
-			opts = append(opts, cluster.CreateWithConfigFile(cfg.KindConfig))
-		}
-		if err := provider.Create(cfg.KindClusterName, opts...); err != nil {
-			logx.Die("Failed to create kind cluster '%s': %v", cfg.KindClusterName, err)
+		if err := shell.Run("kind", "create", "cluster", "--name", cfg.KindClusterName, "--config", cfg.KindConfig); err != nil {
+			logx.Die("Failed to create kind cluster '%s'.", cfg.KindClusterName)
 		}
 	}
-	// Merge kubeconfig so the kind-* kube context exists for downstream client-go calls.
-	if kindClusterPresent(cfg.KindClusterName) && (kindClusterReused || !k8sclient.ContextExists("kind-"+cfg.KindClusterName)) {
-		logx.Log("Merging kubeconfig for kind cluster '%s' (context kind-%s)...", cfg.KindClusterName, cfg.KindClusterName)
-		if err := provider.ExportKubeConfig(cfg.KindClusterName, "", false); err != nil {
-			logx.Die("The kind cluster '%s' exists, but kubeconfig export failed: %v",
-				cfg.KindClusterName, err)
+	// Merge kubeconfig so kubectl --context works even after a reuse.
+	{
+		out, _, _ := shell.Capture("kind", "get", "clusters")
+		kindExists := false
+		for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", ""), "\n") {
+			if strings.TrimSpace(ln) == cfg.KindClusterName {
+				kindExists = true
+				break
+			}
+		}
+		if kindExists && (kindClusterReused || !contextExists(cfg.KindClusterName)) {
+			logx.Log("Merging kubeconfig for kind cluster '%s' (context kind-%s)...", cfg.KindClusterName, cfg.KindClusterName)
+			if err := shell.Run("kind", "export", "kubeconfig", "--name", cfg.KindClusterName); err != nil {
+				logx.Die("The kind cluster '%s' exists, but 'kind export kubeconfig' failed. Fix container runtime / kind, set KUBECONFIG, or run: kind export kubeconfig --name %s",
+					cfg.KindClusterName, cfg.KindClusterName)
+			}
 		}
 	}
 
@@ -735,22 +801,6 @@ func Run(cfg *config.Config) int {
 
 	logx.Log("Done. CAPI: 'kubectl get clusters -A' and 'clusterctl describe cluster <name>'. For workload apps, rely on Argo CD sync (this script does not wait for all add-ons to be Healthy).")
 	return 0
-}
-
-// kindClusterPresent returns true when the named cluster is reported by
-// the embedded kind library (sigs.k8s.io/kind/pkg/cluster). Replaces the
-// `kind get clusters` shell-out parsing.
-func kindClusterPresent(name string) bool {
-	names, err := cluster.NewProvider().List()
-	if err != nil {
-		return false
-	}
-	for _, n := range names {
-		if n == name {
-			return true
-		}
-	}
-	return false
 }
 
 // workloadKubeconfigSecretExists is a typed-client probe replacing the old

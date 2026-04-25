@@ -19,19 +19,18 @@ import (
 // call Load().
 type Config struct {
 	// ---- Tool versions ----
-	// Only versions for tools we actually invoke at runtime live here:
-	// clusterctl (the binary is shelled for `clusterctl init` /
-	// `clusterctl alpha rollout restart` / `clusterctl generate cluster`),
-	// OpenTofu (Proxmox identity Terraform), Cilium chart (CAAPH
-	// HelmChartProxy), ArgoCD CR / Operator (`spec.version` in the
-	// ArgoCD CR). kubectl / kind / cilium-cli / argocd-cli / kyverno /
-	// cmctl are no longer installed by this binary — we drive them
-	// in-process via client-go and sigs.k8s.io/kind.
-	ClusterctlVersion     string
-	CiliumVersion         string
+	KindVersion       string
+	KubectlVersion    string
+	ClusterctlVersion string
+	CiliumCLIVersion  string
+	CiliumVersion     string
+	// ArgoCDVersion drives both the argocd CLI release tag and the
+	// ArgoCD CR spec.version; the two are kept in lockstep upstream.
 	ArgoCDVersion         string
 	ArgoCDOperatorVersion string
-	OpenTofuVersion       string
+	KyvernoCLIVersion string
+	CmctlVersion      string
+	OpenTofuVersion   string
 
 	// ---- Cilium ----
 	CiliumWaitDuration                string
@@ -348,10 +347,15 @@ func Load() *Config {
 	c := &Config{}
 
 	// --- versions (lines 337-341, 416, 446-451, 501, 508) ---
+	c.KindVersion = getenv("KIND_VERSION", "v0.31.0")
+	c.KubectlVersion = getenv("KUBECTL_VERSION", "v1.35.4")
 	c.ClusterctlVersion = getenv("CLUSTERCTL_VERSION", "v1.11.8")
+	c.CiliumCLIVersion = getenv("CILIUM_CLI_VERSION", "v0.19.2")
 	c.CiliumVersion = getenv("CILIUM_VERSION", "1.19.3")
 	c.ArgoCDVersion = getenv("ARGOCD_VERSION", "v3.3.8")
 	c.ArgoCDOperatorVersion = getenv("ARGOCD_OPERATOR_VERSION", "v0.16.0")
+	c.KyvernoCLIVersion = getenv("KYVERNO_CLI_VERSION", "v1.17.1")
+	c.CmctlVersion = getenv("CMCTL_VERSION", "v2.4.1")
 	c.OpenTofuVersion = getenv("OPENTOFU_VERSION", "1.8.5")
 
 	// --- Cilium (lines 342-356) ---

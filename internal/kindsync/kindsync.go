@@ -15,6 +15,7 @@ import (
 	"github.com/lpasquali/bootstrap-capi/internal/kubectlx"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
 	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
+	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
 // SyncBootstrapConfigToKind ports sync_bootstrap_config_to_kind.
@@ -24,6 +25,9 @@ import (
 // apply_bootstrap_config_to_management_cluster pair — emits a warn for
 // now so callers see the gap.
 func SyncBootstrapConfigToKind(cfg *config.Config) error {
+	if !shell.CommandExists("kind") {
+		return nil
+	}
 	ctx, ok := kubectlx.ResolveBootstrapContext(cfg)
 	if !ok {
 		return nil
@@ -50,6 +54,9 @@ func SyncBootstrapConfigToKind(cfg *config.Config) error {
 // Also calls update_capmox_manager_secret_on_kind so capmox-system's live
 // copy is restored on the next sync.
 func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
+	if !shell.CommandExists("kind") {
+		return nil
+	}
 	ctx, ok := kubectlx.ResolveBootstrapContext(cfg)
 	if !ok {
 		return nil

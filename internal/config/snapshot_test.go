@@ -10,7 +10,7 @@ import (
 func TestSnapshotRoundtrip(t *testing.T) {
 	src := Load()
 	// Mutate a mix of string + bool fields the snapshot covers.
-	src.ClusterctlVersion = "v1.42.0"
+	src.KindVersion = "v0.42.0"
 	src.WorkloadClusterName = "edge-1"
 	src.NodeIPRanges = "10.0.0.10-10.0.0.20"
 	src.Gateway = "10.0.0.1"
@@ -19,8 +19,8 @@ func TestSnapshotRoundtrip(t *testing.T) {
 	src.VMSSHKeys = "ssh-ed25519 AAAA…"
 
 	yaml := src.SnapshotYAML()
-	if !strings.Contains(yaml, `CLUSTERCTL_VERSION: "v1.42.0"`) {
-		t.Fatalf("missing CLUSTERCTL_VERSION line in YAML:\n%s", yaml)
+	if !strings.Contains(yaml, `KIND_VERSION: "v0.42.0"`) {
+		t.Fatalf("missing KIND_VERSION line in YAML:\n%s", yaml)
 	}
 	if !strings.Contains(yaml, `ARGOCD_ENABLED: "false"`) {
 		t.Fatalf("expected ARGOCD_ENABLED=false line:\n%s", yaml)
@@ -44,8 +44,8 @@ func TestSnapshotRoundtrip(t *testing.T) {
 
 	dst := Load()
 	dst.ApplySnapshotKV(kv)
-	if dst.ClusterctlVersion != "v1.42.0" {
-		t.Errorf("ClusterctlVersion not restored: got %q", dst.ClusterctlVersion)
+	if dst.KindVersion != "v0.42.0" {
+		t.Errorf("KindVersion not restored: got %q", dst.KindVersion)
 	}
 	if dst.WorkloadClusterName != "edge-1" {
 		t.Errorf("WorkloadClusterName not restored: got %q", dst.WorkloadClusterName)
@@ -74,13 +74,13 @@ func TestExplicitGuardPreservesCurrent(t *testing.T) {
 
 	c.ApplySnapshotKV(map[string]string{
 		"WORKLOAD_CLUSTER_NAME": "secret-name", // would overwrite without guard
-		"CLUSTERCTL_VERSION":          "v9.9.9-test",      // unguarded — should apply
+		"KIND_VERSION":          "v9.9.9",      // unguarded — should apply
 	})
 	if c.WorkloadClusterName != "cli-name" {
 		t.Errorf("explicit guard failed: got %q", c.WorkloadClusterName)
 	}
-	if c.ClusterctlVersion != "v9.9.9-test" {
-		t.Errorf("unguarded key should overlay: got %q", c.ClusterctlVersion)
+	if c.KindVersion != "v9.9.9" {
+		t.Errorf("unguarded key should overlay: got %q", c.KindVersion)
 	}
 }
 
@@ -88,9 +88,9 @@ func TestExplicitGuardPreservesCurrent(t *testing.T) {
 // state (matches bash `if v is None or str(v) == "": continue`).
 func TestEmptyValueSkipped(t *testing.T) {
 	c := Load()
-	c.ClusterctlVersion = "v1.2.3"
-	c.ApplySnapshotKV(map[string]string{"CLUSTERCTL_VERSION": ""})
-	if c.ClusterctlVersion != "v1.2.3" {
-		t.Errorf("empty value should be ignored: got %q", c.ClusterctlVersion)
+	c.KindVersion = "v1.2.3"
+	c.ApplySnapshotKV(map[string]string{"KIND_VERSION": ""})
+	if c.KindVersion != "v1.2.3" {
+		t.Errorf("empty value should be ignored: got %q", c.KindVersion)
 	}
 }

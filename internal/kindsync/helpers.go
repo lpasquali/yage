@@ -3,23 +3,24 @@ package kindsync
 import (
 	"context"
 	"os"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/kind/pkg/cluster"
 
 	"github.com/lpasquali/bootstrap-capi/internal/config"
 	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
+	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
 
-// kindClusterExists uses the embedded sigs.k8s.io/kind library to list
-// clusters; replaces `kind get clusters | grep -x "$name"`.
+// kindClusterExists is the Go equivalent of
+// `kind get clusters | contains_line "$cname"`.
 func kindClusterExists(name string) bool {
-	names, err := cluster.NewProvider().List()
-	if err != nil {
+	if !shell.CommandExists("kind") {
 		return false
 	}
-	for _, n := range names {
-		if n == name {
+	out, _, _ := shell.Capture("kind", "get", "clusters")
+	for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", ""), "\n") {
+		if strings.TrimSpace(ln) == name {
 			return true
 		}
 	}

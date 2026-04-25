@@ -261,6 +261,33 @@ type Config struct {
 	//   - "prod"       — 1 LB21, 1 floating IP, no backups            (default)
 	//   - "enterprise" — 2 LB21, 2 floating IPs, 5 TB volume budget, +20% backups
 	HetznerOverheadTier string
+	// DigitalOcean (CAPDO) — minimal config: region + droplet sizes.
+	// API token comes from env DIGITALOCEAN_TOKEN (used by both
+	// pricing fetcher and CAPDO).
+	DigitalOceanRegion              string
+	DigitalOceanControlPlaneSize    string // s-2vcpu-4gb, s-4vcpu-8gb, ...
+	DigitalOceanNodeSize            string
+	// Linode/Akamai (CAPL) — minimal config: region + instance type.
+	// Catalog is auth-free; provisioning needs LINODE_TOKEN.
+	LinodeRegion                    string
+	LinodeControlPlaneType          string // g6-standard-2, g6-standard-4, ...
+	LinodeNodeType                  string
+	// Oracle Cloud Infrastructure (CAPOCI) — minimal config: region
+	// + shape. Cost Estimator JSON is auth-free; provisioning needs
+	// OCI API key.
+	OCIRegion                       string
+	OCIControlPlaneShape            string // VM.Standard.E4.Flex, ...
+	OCINodeShape                    string
+	// IBM Cloud (CAPIBM) — minimal config: region + profile. Both
+	// Global Catalog (pricing) and provisioning need IBMCLOUD_API_KEY.
+	IBMCloudRegion                  string
+	IBMCloudControlPlaneProfile     string // bx2-2x8, cx2-4x8, ...
+	IBMCloudNodeProfile             string
+	// Equinix Metal (CAPP) — minimal config: metro/facility + plan.
+	// Catalog + provisioning use METAL_AUTH_TOKEN.
+	EquinixMetro                    string
+	EquinixControlPlaneClass        string // c3.small.x86, m3.small.x86, ...
+	EquinixNodeClass                string
 	// BootstrapMode selects the Kubernetes flavor:
 	//   - "kubeadm" (default): standard upstream Kubernetes via kubeadm,
 	//     control-plane runs etcd + apiserver + controller-manager +
@@ -727,6 +754,21 @@ func Load() *Config {
 	c.HetznerNodeMachineType = getenv("HCLOUD_NODE_MACHINE_TYPE", "cx22")
 	c.HetznerLocation = getenv("HCLOUD_REGION", "fsn1")
 	c.HetznerOverheadTier = getenv("HETZNER_OVERHEAD_TIER", "prod")
+	c.DigitalOceanRegion = getenv("DIGITALOCEAN_REGION", "nyc3")
+	c.DigitalOceanControlPlaneSize = getenv("DIGITALOCEAN_CONTROL_PLANE_SIZE", "s-2vcpu-4gb")
+	c.DigitalOceanNodeSize = getenv("DIGITALOCEAN_NODE_SIZE", "s-2vcpu-4gb")
+	c.LinodeRegion = getenv("LINODE_REGION", "us-east")
+	c.LinodeControlPlaneType = getenv("LINODE_CONTROL_PLANE_TYPE", "g6-standard-2")
+	c.LinodeNodeType = getenv("LINODE_NODE_TYPE", "g6-standard-2")
+	c.OCIRegion = getenv("OCI_REGION", "us-ashburn-1")
+	c.OCIControlPlaneShape = getenv("OCI_CONTROL_PLANE_SHAPE", "VM.Standard.E4.Flex")
+	c.OCINodeShape = getenv("OCI_NODE_SHAPE", "VM.Standard.E4.Flex")
+	c.IBMCloudRegion = getenv("IBMCLOUD_REGION", "us-south")
+	c.IBMCloudControlPlaneProfile = getenv("IBMCLOUD_CONTROL_PLANE_PROFILE", "bx2-2x8")
+	c.IBMCloudNodeProfile = getenv("IBMCLOUD_NODE_PROFILE", "bx2-2x8")
+	c.EquinixMetro = getenv("METAL_METRO", "ny")
+	c.EquinixControlPlaneClass = getenv("METAL_CONTROL_PLANE_CLASS", "c3.small.x86")
+	c.EquinixNodeClass = getenv("METAL_NODE_CLASS", "c3.small.x86")
 	c.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
 	c.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
 

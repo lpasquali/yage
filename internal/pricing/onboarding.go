@@ -27,12 +27,17 @@ import (
 // PricingCredsConfigured returns true when the program has what it
 // needs to call the *authenticated* pricing path for vendor.
 //
-//   aws     → ~/.aws/credentials, AWS_ACCESS_KEY_ID, or AWS_PROFILE
-//             (Bulk JSON works without creds; this checks the SDK
-//              path that GetProducts will switch to.)
-//   azure   → always true (Retail Prices API is anonymous)
-//   gcp     → BOOTSTRAP_CAPI_GCP_API_KEY or GOOGLE_BILLING_API_KEY
-//   hetzner → HCLOUD_TOKEN or BOOTSTRAP_CAPI_HCLOUD_TOKEN
+//   aws          → ~/.aws/credentials, AWS_ACCESS_KEY_ID, AWS_PROFILE
+//                  (Bulk JSON works without creds; this checks the
+//                   SDK path that GetProducts will switch to.)
+//   azure        → always true (Retail Prices API is anonymous)
+//   gcp          → BOOTSTRAP_CAPI_GCP_API_KEY / GOOGLE_BILLING_API_KEY
+//   hetzner      → HCLOUD_TOKEN / BOOTSTRAP_CAPI_HCLOUD_TOKEN
+//   digitalocean → DIGITALOCEAN_TOKEN / BOOTSTRAP_CAPI_DO_TOKEN
+//   linode       → always true (catalog is anonymous)
+//   oci          → always true (Cost Estimator JSON is anonymous)
+//   ibmcloud     → IBMCLOUD_API_KEY / BOOTSTRAP_CAPI_IBMCLOUD_API_KEY
+//   equinix      → METAL_AUTH_TOKEN / BOOTSTRAP_CAPI_METAL_TOKEN
 func PricingCredsConfigured(vendor string) bool {
 	switch vendor {
 	case "aws":
@@ -51,12 +56,18 @@ func PricingCredsConfigured(vendor string) bool {
 			}
 		}
 		return false
-	case "azure":
+	case "azure", "linode", "oci":
 		return true
 	case "gcp":
 		return gcpAPIKey() != ""
 	case "hetzner":
 		return hetznerToken() != ""
+	case "digitalocean":
+		return doToken() != ""
+	case "ibmcloud":
+		return ibmAPIKey() != ""
+	case "equinix":
+		return equinixToken() != ""
 	}
 	return true
 }
@@ -72,7 +83,13 @@ func OnboardingHint(vendor string) string {
 		return gcpOnboardingHint
 	case "hetzner":
 		return hetznerOnboardingHint
-	case "azure":
+	case "digitalocean":
+		return doOnboardingHint
+	case "ibmcloud":
+		return ibmOnboardingHint
+	case "equinix":
+		return equinixOnboardingHint
+	case "azure", "linode", "oci":
 		return ""
 	}
 	return ""
@@ -144,6 +161,73 @@ project keeps the key isolated from your real workloads.
   export BOOTSTRAP_CAPI_GCP_API_KEY="<keyString>"
 
 Catalog API calls are covered by the default free quota.`
+
+const doOnboardingHint = `DigitalOcean catalog needs a personal API token. The "Read"
+scope is enough — tokens are project-scoped to the team that
+created them.
+
+  # 1. Open the DigitalOcean control panel:
+  #    https://cloud.digitalocean.com/account/api/tokens
+
+  # 2. Click "Generate New Token"
+  #    Name: bootstrap-capi pricing
+  #    Expiration: pick a duration (90d is reasonable)
+  #    Scopes: "Read" (full read is enough; no write scopes needed)
+
+  # 3. Copy the token (shown ONCE), then export it
+  export DIGITALOCEAN_TOKEN="<token>"
+
+  # OR with doctl (token is interactive):
+  doctl auth init --context bootstrap-capi-pricing
+
+The /v2/sizes catalog is metered against the standard rate limit
+(5000 req/h) but doesn't appear on your bill — DigitalOcean doesn't
+charge for catalog reads.`
+
+const ibmOnboardingHint = `IBM Cloud Global Catalog needs an IAM API key. Service IDs
+(machine-account credentials) are the right shape for a CI/scripted
+caller — they don't need a human user behind them.
+
+  # 1. Create a Service ID
+  ibmcloud iam service-id-create bootstrap-capi-pricing \
+    --description "bootstrap-capi pricing reader"
+
+  # 2. Attach a read-only policy on the Global Catalog
+  ibmcloud iam service-policy-create bootstrap-capi-pricing \
+    --roles Viewer \
+    --service-name globalcatalog
+
+  # 3. Generate an API key for the Service ID
+  ibmcloud iam service-api-key-create bootstrap-capi-pricing-key \
+    bootstrap-capi-pricing
+
+  # 4. Copy the API Key value from the output, then export
+  export IBMCLOUD_API_KEY="<api-key>"
+
+The Global Catalog API is free; pricing is exchanged for a Bearer
+token via the IAM /identity/token endpoint, also free.`
+
+const equinixOnboardingHint = `Equinix Metal catalog needs a project (or user) API token. A
+read-scoped project token keeps the blast radius minimal.
+
+  # CLI is web-only for token creation; from a browser:
+
+  # 1. Open the Equinix Metal Console
+  #    https://console.equinix.com/
+
+  # 2. Pick (or create) a Project for cataloguing
+  # 3. Project Settings → API Keys → "Generate API Key"
+  #    Description: bootstrap-capi pricing
+  #    Permissions: Read-only
+
+  # 4. Copy the token, then export it
+  export METAL_AUTH_TOKEN="<token>"
+
+  # OR via the metal CLI:
+  metal init   # walks you through token creation interactively
+
+The /metal/v1/plans catalog is free to read — Equinix doesn't meter
+catalog reads.`
 
 const hetznerOnboardingHint = `Hetzner Cloud API needs a project token. Tokens are project-scoped,
 so create a dedicated empty project to keep the token blast radius

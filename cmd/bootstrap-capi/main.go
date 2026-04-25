@@ -26,8 +26,13 @@ import (
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/aws"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/azure"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/capd"
+	_ "github.com/lpasquali/bootstrap-capi/internal/provider/digitalocean"
+	_ "github.com/lpasquali/bootstrap-capi/internal/provider/equinix"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/gcp"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/hetzner"
+	_ "github.com/lpasquali/bootstrap-capi/internal/provider/ibmcloud"
+	_ "github.com/lpasquali/bootstrap-capi/internal/provider/linode"
+	_ "github.com/lpasquali/bootstrap-capi/internal/provider/oci"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/openstack"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/proxmox"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/vsphere"
@@ -39,7 +44,8 @@ func main() {
 	if cfg.PrintPricingSetup != "" {
 		switch cfg.PrintPricingSetup {
 		case "all":
-			for _, v := range []string{"aws", "azure", "gcp", "hetzner"} {
+			for _, v := range []string{"aws", "azure", "gcp", "hetzner",
+				"digitalocean", "linode", "oci", "ibmcloud", "equinix"} {
 				pricing.PrintOnboardingForce(os.Stdout, v)
 			}
 		default:

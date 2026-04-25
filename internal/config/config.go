@@ -664,10 +664,10 @@ func Load() *Config {
 	c.ProxmoxBridge = getenv("PROXMOX_BRIDGE", "vmbr0")
 
 	// --- Network ---
-	c.ControlPlaneEndpointIP = getenv("CONTROL_PLANE_ENDPOINT_IP", "10.27.192.20")
+	c.ControlPlaneEndpointIP = getenv("CONTROL_PLANE_ENDPOINT_IP", "192.168.0.20")
 	c.ControlPlaneEndpointPort = getenv("CONTROL_PLANE_ENDPOINT_PORT", "6443")
-	c.NodeIPRanges = getenv("NODE_IP_RANGES", "10.27.192.21-10.27.192.30")
-	c.Gateway = getenv("GATEWAY", "10.27.192.78")
+	c.NodeIPRanges = getenv("NODE_IP_RANGES", "192.168.0.21-192.168.0.30")
+	c.Gateway = getenv("GATEWAY", "192.168.0.1")
 	c.IPPrefix = getenv("IP_PREFIX", "24")
 	c.DNSServers = getenv("DNS_SERVERS", "8.8.8.8,8.8.4.4")
 	c.DNSServersExplicit = envBool("DNS_SERVERS_EXPLICIT", false)

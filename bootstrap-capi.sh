@@ -33,10 +33,10 @@
 #   --template-id ID                 PROXMOX template VM ID (default: 104; clusterctl still consumes env TEMPLATE_VMID derived from it)
 #   --template-vmid ID               Same as --template-id (deprecated alias; sets PROXMOX_TEMPLATE_ID)
 #   --bridge BRIDGE                  Bridge interface name (default: vmbr0)
-#   --control-plane-endpoint-ip IP   Control plane endpoint VIP (default: 10.27.192.20)
+#   --control-plane-endpoint-ip IP   Control plane endpoint VIP (default: 192.168.0.20)
 #   --control-plane-endpoint-port P  Apiserver port on that endpoint (default: 6443; used for Cilium k8sServicePort when kube-proxy is replaced)
-#   --node-ip-ranges RANGES          Node IP ranges (default: 10.27.192.21-10.27.192.30)
-#   --gateway IP                     Gateway IP (default: 10.27.192.78)
+#   --node-ip-ranges RANGES          Node IP ranges (default: 192.168.0.21-192.168.0.30)
+#   --gateway IP                     Gateway IP (default: 192.168.0.1)
 #   --ip-prefix N                    IP prefix (default: 24)
 #   --dns-servers LIST               DNS servers list (default: 8.8.8.8,8.8.4.4)
 #   --allowed-nodes LIST             Allowed Proxmox nodes (default: same as PROXMOX_NODE)
@@ -618,10 +618,10 @@ PROXMOX_TOPOLOGY_ZONE="${PROXMOX_TOPOLOGY_ZONE:-}"
 PROXMOX_TEMPLATE_ID="${PROXMOX_TEMPLATE_ID:-${TEMPLATE_VMID:-104}}"
 unset TEMPLATE_VMID 2>/dev/null || true
 PROXMOX_BRIDGE="${PROXMOX_BRIDGE:-vmbr0}"
-CONTROL_PLANE_ENDPOINT_IP="${CONTROL_PLANE_ENDPOINT_IP:-10.27.192.20}"
+CONTROL_PLANE_ENDPOINT_IP="${CONTROL_PLANE_ENDPOINT_IP:-192.168.0.20}"
 CONTROL_PLANE_ENDPOINT_PORT="${CONTROL_PLANE_ENDPOINT_PORT:-6443}"
-NODE_IP_RANGES="${NODE_IP_RANGES:-10.27.192.21-10.27.192.30}"
-GATEWAY="${GATEWAY:-10.27.192.78}"
+NODE_IP_RANGES="${NODE_IP_RANGES:-192.168.0.21-192.168.0.30}"
+GATEWAY="${GATEWAY:-192.168.0.1}"
 IP_PREFIX="${IP_PREFIX:-24}"
 DNS_SERVERS="${DNS_SERVERS:-8.8.8.8,8.8.4.4}"
 # Set true when the user passes the matching CLI option so we do not override from a running ProxmoxCluster.

@@ -160,6 +160,17 @@ func (c *Config) Snapshot() []SnapshotField {
 		spEx("WORKLOAD_CLUSTER_NAMESPACE", "WORKLOAD_CLUSTER_NAMESPACE_EXPLICIT", &c.WorkloadClusterNamespace),
 		sp("WORKLOAD_CILIUM_CLUSTER_ID", &c.WorkloadCiliumClusterID),
 		sp("WORKLOAD_KUBERNETES_VERSION", &c.WorkloadKubernetesVersion),
+		// --- Pivot (management cluster on Proxmox) ---
+		bp("PIVOT_ENABLED", &c.PivotEnabled),
+		sp("MGMT_CLUSTER_NAME", &c.MgmtClusterName),
+		sp("MGMT_CLUSTER_NAMESPACE", &c.MgmtClusterNamespace),
+		sp("MGMT_KUBERNETES_VERSION", &c.MgmtKubernetesVersion),
+		sp("MGMT_CILIUM_CLUSTER_ID", &c.MgmtCiliumClusterID),
+		sp("MGMT_CONTROL_PLANE_MACHINE_COUNT", &c.MgmtControlPlaneMachineCount),
+		sp("MGMT_WORKER_MACHINE_COUNT", &c.MgmtWorkerMachineCount),
+		sp("MGMT_CONTROL_PLANE_ENDPOINT_IP", &c.MgmtControlPlaneEndpointIP),
+		sp("MGMT_CONTROL_PLANE_ENDPOINT_PORT", &c.MgmtControlPlaneEndpointPort),
+		sp("MGMT_NODE_IP_RANGES", &c.MgmtNodeIPRanges),
 		sp("CONTROL_PLANE_MACHINE_COUNT", &c.ControlPlaneMachineCount),
 		sp("WORKER_MACHINE_COUNT", &c.WorkerMachineCount),
 		// --- ArgoCD toggles ---

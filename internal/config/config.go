@@ -335,6 +335,41 @@ type Config struct {
 	WorkloadKubernetesVersion       string
 	ControlPlaneMachineCount        string
 	WorkerMachineCount              string
+
+	// ---- Pivot: management cluster on Proxmox ----
+	//
+	// When PivotEnabled is true, the bootstrap follows the standard CAPI
+	// "bootstrap-and-pivot" pattern: kind provisions a management cluster
+	// on Proxmox, clusterctl-moves CAPI state into it, the
+	// proxmox-bootstrap-system Secrets are mirrored, the workload cluster
+	// is created from the management cluster, and the kind cluster is
+	// torn down once the management cluster is verified to carry the
+	// same state.
+	PivotEnabled                  bool
+	MgmtClusterName               string
+	MgmtClusterNamespace          string
+	MgmtKubernetesVersion         string
+	MgmtCiliumClusterID           string
+	MgmtControlPlaneMachineCount  string // typically "1" (single-node mgmt)
+	MgmtWorkerMachineCount        string // typically "0"
+	MgmtControlPlaneNumSockets    string
+	MgmtControlPlaneNumCores      string
+	MgmtControlPlaneMemoryMiB     string
+	MgmtControlPlaneBootVolumeDevice string
+	MgmtControlPlaneBootVolumeSize   string
+	MgmtControlPlaneEndpointIP    string
+	MgmtControlPlaneEndpointPort  string
+	MgmtNodeIPRanges              string
+	// MgmtCAPIManifest is the rendered management-cluster CAPI manifest.
+	// Lives next to cfg.CAPIManifest as a Secret on the kind cluster
+	// during bootstrap; cleaned up after pivot.
+	MgmtCAPIManifest              string
+	// PivotKeepKind, when true, skips the final `kind delete cluster`
+	// after a successful pivot — useful for debugging.
+	PivotKeepKind                 bool
+	// PivotVerifyTimeout caps how long we wait for the management
+	// cluster to look "identical" to kind before declaring success.
+	PivotVerifyTimeout            string
 }
 
 // Load reads environment variables and applies the same defaults the bash
@@ -659,6 +694,26 @@ func Load() *Config {
 	c.WorkloadKubernetesVersion = getenv("WORKLOAD_KUBERNETES_VERSION", "v1.35.0")
 	c.ControlPlaneMachineCount = getenv("CONTROL_PLANE_MACHINE_COUNT", "1")
 	c.WorkerMachineCount = getenv("WORKER_MACHINE_COUNT", "2")
+
+	// --- Pivot: management cluster on Proxmox ---
+	c.PivotEnabled = envBool("PIVOT_ENABLED", false)
+	c.PivotKeepKind = envBool("PIVOT_KEEP_KIND", false)
+	c.PivotVerifyTimeout = getenv("PIVOT_VERIFY_TIMEOUT", "10m")
+	c.MgmtClusterName = getenv("MGMT_CLUSTER_NAME", "capi-management")
+	c.MgmtClusterNamespace = getenv("MGMT_CLUSTER_NAMESPACE", "default")
+	c.MgmtKubernetesVersion = getenv("MGMT_KUBERNETES_VERSION", c.WorkloadKubernetesVersion)
+	c.MgmtCiliumClusterID = getenv("MGMT_CILIUM_CLUSTER_ID", "")
+	c.MgmtControlPlaneMachineCount = getenv("MGMT_CONTROL_PLANE_MACHINE_COUNT", "1")
+	c.MgmtWorkerMachineCount = getenv("MGMT_WORKER_MACHINE_COUNT", "0")
+	c.MgmtControlPlaneNumSockets = getenv("MGMT_CONTROL_PLANE_NUM_SOCKETS", c.ControlPlaneNumSockets)
+	c.MgmtControlPlaneNumCores = getenv("MGMT_CONTROL_PLANE_NUM_CORES", c.ControlPlaneNumCores)
+	c.MgmtControlPlaneMemoryMiB = getenv("MGMT_CONTROL_PLANE_MEMORY_MIB", c.ControlPlaneMemoryMiB)
+	c.MgmtControlPlaneBootVolumeDevice = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE", c.ControlPlaneBootVolumeDevice)
+	c.MgmtControlPlaneBootVolumeSize = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE", c.ControlPlaneBootVolumeSize)
+	c.MgmtControlPlaneEndpointIP = getenv("MGMT_CONTROL_PLANE_ENDPOINT_IP", "")
+	c.MgmtControlPlaneEndpointPort = getenv("MGMT_CONTROL_PLANE_ENDPOINT_PORT", c.ControlPlaneEndpointPort)
+	c.MgmtNodeIPRanges = getenv("MGMT_NODE_IP_RANGES", "")
+	c.MgmtCAPIManifest = getenv("MGMT_CAPI_MANIFEST", "")
 
 	return c
 }

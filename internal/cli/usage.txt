@@ -69,6 +69,26 @@
 #   --workload-k8s-version VERSION   Workload Kubernetes version (default: v1.35.0)
 #   --control-plane-count N          Control plane replica count (default: 1)
 #   --worker-count N                 Worker replica count (default: 2)
+# --- Pivot (CAPI bootstrap-and-pivot pattern) ---
+#   --pivot                          Enable the CAPI bootstrap-and-pivot flow (PIVOT_ENABLED=true). kind provisions a single-node management cluster on Proxmox, clusterctl-moves CAPI state into it, and is torn down (unless --pivot-keep-kind).
+#   --no-pivot                       Disable pivot; keep CAPI state on kind only (PIVOT_ENABLED=false; default)
+#   --pivot-keep-kind                Skip the final `kind delete cluster` after a successful pivot — useful for debugging
+#   --pivot-verify-timeout DUR       Cap how long to wait for the management cluster to look identical to kind before declaring success (default: 10m)
+#   --mgmt-cluster-name NAME         CAPI Cluster name for the management cluster on Proxmox (default: capi-management)
+#   --mgmt-cluster-namespace NS      Namespace for the management Cluster on kind / management cluster (default: default)
+#   --mgmt-k8s-version V             Kubernetes version for the management cluster (default: same as WORKLOAD_KUBERNETES_VERSION)
+#   --mgmt-cilium-cluster-id N       Cilium cluster.id for the management cluster (default: derived from CLUSTER_SET_ID)
+#   --mgmt-control-plane-machine-count N  Control plane replica count for the management cluster (default: 1; single-node mgmt)
+#   --mgmt-worker-machine-count N    Worker replica count for the management cluster (default: 0)
+#   --mgmt-control-plane-endpoint-ip IP    Control plane endpoint VIP for the management cluster (must differ from workload endpoint)
+#   --mgmt-control-plane-endpoint-port PORT  Apiserver port on the management endpoint (default: same as workload CONTROL_PLANE_ENDPOINT_PORT)
+#   --mgmt-node-ip-ranges RANGES     Node IP ranges allocated to management-cluster VMs (must not overlap workload NODE_IP_RANGES)
+#   --mgmt-capi-manifest PATH        Rendered management-cluster CAPI manifest path; default = ephemeral kind Secret only
+#   --mgmt-control-plane-num-sockets N    Management control plane sockets (default: same as CONTROL_PLANE_NUM_SOCKETS)
+#   --mgmt-control-plane-num-cores N      Management control plane cores (default: same as CONTROL_PLANE_NUM_CORES)
+#   --mgmt-control-plane-memory-mib N     Management control plane memory in MiB (default: same as CONTROL_PLANE_MEMORY_MIB)
+#   --mgmt-control-plane-boot-volume-device DEV   Management boot volume device (default: same as CONTROL_PLANE_BOOT_VOLUME_DEVICE)
+#   --mgmt-control-plane-boot-volume-size SIZE    Management boot volume size in GB (default: same as CONTROL_PLANE_BOOT_VOLUME_SIZE)
 #   --capi-proxmox-machine-template-spec-rev-skip  Do not suffix ProxmoxMachineTemplate names with -t<specHash> (env: CAPI_PROXMOX_MACHINE_TEMPLATE_SPEC_REV=false)
 #   --cilium-wait-duration DURATION  Cilium wait duration for installs (default: 10m0s)
 #   --cilium-ingress V               Cilium Ingress controller + default IngressClass (default: true; requires kube-proxy replacement)
@@ -259,6 +279,27 @@
 #   WORKLOAD_KUBERNETES_VERSION      Workload Kubernetes version
 #   CONTROL_PLANE_MACHINE_COUNT      Control plane replica count
 #   WORKER_MACHINE_COUNT             Worker replica count
+# --- Pivot (CAPI bootstrap-and-pivot pattern) ---
+#   PIVOT_ENABLED                    Enable the CAPI bootstrap-and-pivot flow (default: false). When true,
+#                                    kind provisions a single-node management cluster on Proxmox, hands off
+#                                    CAPI state via `clusterctl move`, and is torn down (unless --pivot-keep-kind).
+#   PIVOT_KEEP_KIND                  true|false; skip `kind delete cluster` after pivot for debugging (default: false)
+#   PIVOT_VERIFY_TIMEOUT             How long to wait for the management cluster to mirror kind state before failing the pivot (default: 10m)
+#   MGMT_CLUSTER_NAME                CAPI Cluster name for the management cluster (default: capi-management)
+#   MGMT_CLUSTER_NAMESPACE           Namespace of that Cluster (default: default)
+#   MGMT_KUBERNETES_VERSION          Kubernetes version for the management cluster (default: WORKLOAD_KUBERNETES_VERSION)
+#   MGMT_CILIUM_CLUSTER_ID           Cilium cluster.id for the management cluster (default: derived from CLUSTER_SET_ID)
+#   MGMT_CONTROL_PLANE_MACHINE_COUNT Management control plane replica count (default: 1)
+#   MGMT_WORKER_MACHINE_COUNT        Management worker replica count (default: 0)
+#   MGMT_CONTROL_PLANE_ENDPOINT_IP   Control plane endpoint VIP for the management cluster (must differ from workload VIP)
+#   MGMT_CONTROL_PLANE_ENDPOINT_PORT Apiserver port on that endpoint (default: CONTROL_PLANE_ENDPOINT_PORT)
+#   MGMT_NODE_IP_RANGES              Node IP ranges for management-cluster VMs (must not overlap NODE_IP_RANGES)
+#   MGMT_CAPI_MANIFEST               Rendered management-cluster CAPI manifest; unset = ephemeral kind Secret + temp file
+#   MGMT_CONTROL_PLANE_NUM_SOCKETS   Management control plane sockets (default: CONTROL_PLANE_NUM_SOCKETS)
+#   MGMT_CONTROL_PLANE_NUM_CORES     Management control plane cores (default: CONTROL_PLANE_NUM_CORES)
+#   MGMT_CONTROL_PLANE_MEMORY_MIB    Management control plane memory in MiB (default: CONTROL_PLANE_MEMORY_MIB)
+#   MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE  Management boot volume device (default: CONTROL_PLANE_BOOT_VOLUME_DEVICE)
+#   MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE    Management boot volume size in GB (default: CONTROL_PLANE_BOOT_VOLUME_SIZE)
 #   CILIUM_WAIT_DURATION             Cilium wait duration for installs
 #   CILIUM_INGRESS                   true|false; Cilium Ingress + default IngressClass (default: true; requires kube-proxy replacement)
 #   CILIUM_KUBE_PROXY_REPLACEMENT    true|false|auto — auto = on only if CILIUM_INGRESS; default: true

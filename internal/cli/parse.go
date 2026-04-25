@@ -279,6 +279,44 @@ func Parse(c *config.Config, argv []string) {
 			c.ControlPlaneMachineCount = shiftVal(a)
 		case "--worker-count":
 			c.WorkerMachineCount = shiftVal(a)
+		case "--pivot":
+			c.PivotEnabled = true
+		case "--no-pivot":
+			c.PivotEnabled = false
+		case "--pivot-keep-kind":
+			c.PivotKeepKind = true
+		case "--pivot-verify-timeout":
+			c.PivotVerifyTimeout = shiftVal(a)
+		case "--mgmt-cluster-name":
+			c.MgmtClusterName = shiftVal(a)
+		case "--mgmt-cluster-namespace":
+			c.MgmtClusterNamespace = shiftVal(a)
+		case "--mgmt-k8s-version":
+			c.MgmtKubernetesVersion = shiftVal(a)
+		case "--mgmt-cilium-cluster-id":
+			c.MgmtCiliumClusterID = shiftVal(a)
+		case "--mgmt-control-plane-machine-count":
+			c.MgmtControlPlaneMachineCount = shiftVal(a)
+		case "--mgmt-worker-machine-count":
+			c.MgmtWorkerMachineCount = shiftVal(a)
+		case "--mgmt-control-plane-endpoint-ip":
+			c.MgmtControlPlaneEndpointIP = shiftVal(a)
+		case "--mgmt-control-plane-endpoint-port":
+			c.MgmtControlPlaneEndpointPort = shiftVal(a)
+		case "--mgmt-node-ip-ranges":
+			c.MgmtNodeIPRanges = shiftVal(a)
+		case "--mgmt-capi-manifest":
+			c.MgmtCAPIManifest = shiftVal(a)
+		case "--mgmt-control-plane-num-sockets":
+			c.MgmtControlPlaneNumSockets = shiftVal(a)
+		case "--mgmt-control-plane-num-cores":
+			c.MgmtControlPlaneNumCores = shiftVal(a)
+		case "--mgmt-control-plane-memory-mib":
+			c.MgmtControlPlaneMemoryMiB = shiftVal(a)
+		case "--mgmt-control-plane-boot-volume-device":
+			c.MgmtControlPlaneBootVolumeDevice = shiftVal(a)
+		case "--mgmt-control-plane-boot-volume-size":
+			c.MgmtControlPlaneBootVolumeSize = shiftVal(a)
 		case "--capi-proxmox-machine-template-spec-rev-skip":
 			c.CAPIProxmoxMachineTemplateSpecRev = false
 		case "--cilium-wait-duration":

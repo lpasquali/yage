@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	kindversion "sigs.k8s.io/kind/pkg/cmd/kind/version"
+
 	"github.com/lpasquali/bootstrap-capi/internal/config"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
 	"github.com/lpasquali/bootstrap-capi/internal/shell"
@@ -111,16 +113,8 @@ func writeKindDir(cfg *config.Config, tmp string) error {
 		}
 	}
 
-	// Best-effort: record the kind CLI version if a binary happens to be on
-	// PATH. With the kind library embedded in this binary the CLI is no
-	// longer required, so a missing `kind` is expected and not an error.
-	// TODO: when the cluster lifecycle wrappers in kind.go land, replace
-	// this with `sigs.k8s.io/kind/pkg/cmd/kind/version.DisplayVersion()`
-	// so the meta is populated even when the CLI is absent.
-	if kv, _, err := shell.Capture("kind", "version"); err == nil {
-		if kv = strings.TrimSpace(kv); kv != "" {
-			meta["kind_cli"] = truncate(kv, 2000)
-		}
+	if kv := strings.TrimSpace(kindversion.DisplayVersion()); kv != "" {
+		meta["kind_cli"] = truncate(kv, 2000)
 	}
 
 	metaBytes, err := json.MarshalIndent(meta, "", "  ")

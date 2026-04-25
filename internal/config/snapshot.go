@@ -65,12 +65,9 @@ func (c *Config) Snapshot() []SnapshotField {
 		return f
 	}
 	return []SnapshotField{
-		// --- versions ---
-		sp("KIND_VERSION", &c.KindVersion),
-		sp("KUBECTL_VERSION", &c.KubectlVersion),
+		// --- versions (only the ones we still consume in-process) ---
 		sp("CLUSTERCTL_VERSION", &c.ClusterctlVersion),
 		sp("OPENTOFU_VERSION", &c.OpenTofuVersion),
-		sp("CILIUM_CLI_VERSION", &c.CiliumCLIVersion),
 		sp("CILIUM_VERSION", &c.CiliumVersion),
 		sp("CILIUM_WAIT_DURATION", &c.CiliumWaitDuration),
 		// --- Cilium ---
@@ -100,9 +97,7 @@ func (c *Config) Snapshot() []SnapshotField {
 		// --- Add-on chart versions ---
 		sp("PROXMOX_CSI_CHART_VERSION", &c.ProxmoxCSIChartVersion),
 		sp("KYVERNO_CHART_VERSION", &c.KyvernoChartVersion),
-		sp("KYVERNO_CLI_VERSION", &c.KyvernoCLIVersion),
 		sp("CERT_MANAGER_CHART_VERSION", &c.CertManagerChartVersion),
-		sp("CMCTL_VERSION", &c.CmctlVersion),
 		sp("CROSSPLANE_CHART_VERSION", &c.CrossplaneChartVersion),
 		sp("CNPG_CHART_VERSION", &c.CNPGChartVersion),
 		sp("EXTERNAL_SECRETS_CHART_VERSION", &c.ExternalSecretsChartVersion),

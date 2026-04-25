@@ -119,6 +119,27 @@ type Config struct {
 	// continue"; above 1+tolerance is "abort unless --allow-resource-
 	// overcommit". Default 15. See capacity.CheckCombined.
 	OvercommitTolerancePct      float64
+	// HardwareCostUSD is the capex of the entire on-prem cluster
+	// (sum of every node's purchase price). > 0 enables the TCO
+	// path for self-hosted providers (Proxmox, vSphere) — they
+	// otherwise return ErrNotApplicable. Amortized monthly capex
+	// is HardwareCostUSD / (HardwareUsefulLifeYears × 12).
+	HardwareCostUSD             float64
+	// HardwareUsefulLifeYears is the depreciation horizon over
+	// which to amortize the capex. Default 5 — the typical server
+	// refresh cadence and the IRS MACRS 5-year property class.
+	HardwareUsefulLifeYears     float64
+	// HardwareWatts is the cluster's continuous draw at typical
+	// load (NOT max nameplate). Used to compute electricity opex.
+	HardwareWatts               float64
+	// HardwareKWHRateUSD is the user's electricity rate in USD per
+	// kWh (delivered, including transmission/taxes — not just
+	// generation). Default 0.15 (rough US average).
+	HardwareKWHRateUSD          float64
+	// HardwareSupportUSDMonth is any flat monthly cost the operator
+	// wants to fold into the estimate — vSphere licensing, ESXi
+	// support contract, IPMI subscription, colo/rack rental, etc.
+	HardwareSupportUSDMonth     float64
 	// SystemAppsCPUMillicores / SystemAppsMemoryMiB define the cluster-
 	// wide reserve for the system add-ons bootstrap-capi installs:
 	// kyverno, cert-manager, proxmox-csi (controller), argocd (operator
@@ -666,6 +687,11 @@ func Load() *Config {
 	c.AllowResourceOvercommit = envBool("ALLOW_RESOURCE_OVERCOMMIT", false)
 	c.ResourceBudgetFraction = envFloat("RESOURCE_BUDGET_FRACTION", 2.0/3.0)
 	c.OvercommitTolerancePct = envFloat("OVERCOMMIT_TOLERANCE_PCT", 15.0)
+	c.HardwareCostUSD = envFloat("HARDWARE_COST_USD", 0)
+	c.HardwareUsefulLifeYears = envFloat("HARDWARE_USEFUL_LIFE_YEARS", 5)
+	c.HardwareWatts = envFloat("HARDWARE_WATTS", 0)
+	c.HardwareKWHRateUSD = envFloat("HARDWARE_KWH_RATE_USD", 0.15)
+	c.HardwareSupportUSDMonth = envFloat("HARDWARE_SUPPORT_USD_MONTH", 0)
 	c.BootstrapMode = getenv("BOOTSTRAP_MODE", "kubeadm")
 	c.AWSControlPlaneMachineType = getenv("AWS_CONTROL_PLANE_MACHINE_TYPE", "t3.large")
 	c.AWSNodeMachineType = getenv("AWS_NODE_MACHINE_TYPE", "t3.medium")

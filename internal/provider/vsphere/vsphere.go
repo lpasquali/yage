@@ -261,11 +261,12 @@ func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath st
 	return provider.ErrNotApplicable
 }
 
-// EstimateMonthlyCostUSD — provider doesn't track variable usage
-// pricing in the same shape as AWS on-demand instances. Self-hosted
-// (Proxmox), private (vSphere), or pricing-too-variable (OpenStack)
-// providers return ErrNotApplicable; the orchestrator displays the
-// estimate only when it's available.
+// EstimateMonthlyCostUSD — vSphere is self-hosted; vendor licensing
+// is enterprise-quote-only, so there's no public pricing API. The
+// operator opts into a TCO estimate by passing --hardware-cost-usd
+// (and optionally --hardware-watts / --hardware-kwh-rate-usd /
+// --hardware-support-usd-month for vSphere licensing/support).
+// Without those, returns ErrNotApplicable.
 func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
-	return provider.CostEstimate{}, provider.ErrNotApplicable
+	return provider.TCOEstimate(cfg, "vsphere")
 }

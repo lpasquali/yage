@@ -319,6 +319,26 @@ func Parse(c *config.Config, argv []string) {
 			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil && f >= 0 {
 				c.OvercommitTolerancePct = f
 			}
+		case "--hardware-cost-usd":
+			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil && f >= 0 {
+				c.HardwareCostUSD = f
+			}
+		case "--hardware-useful-life-years":
+			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil && f > 0 {
+				c.HardwareUsefulLifeYears = f
+			}
+		case "--hardware-watts":
+			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil && f >= 0 {
+				c.HardwareWatts = f
+			}
+		case "--hardware-kwh-rate-usd":
+			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil && f >= 0 {
+				c.HardwareKWHRateUSD = f
+			}
+		case "--hardware-support-usd-month":
+			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil && f >= 0 {
+				c.HardwareSupportUSDMonth = f
+			}
 		case "--system-apps-cpu-millicores":
 			if n, err := strconv.Atoi(shiftVal(a)); err == nil {
 				c.SystemAppsCPUMillicores = n

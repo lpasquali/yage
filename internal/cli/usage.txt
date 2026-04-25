@@ -37,6 +37,15 @@ OPTIONS
         --print-pricing-setup VENDOR  Print the IAM/token setup CLI snippet for VENDOR's pricing API
                                       (aws, azure, gcp, hetzner, or "all") and exit. Same hint shown
                                       on first cost-related run when credentials are missing.
+        --hardware-cost-usd N         Self-hosted TCO (Proxmox / vSphere): full cluster capex in USD.
+                                      Required to enable the cost estimate for self-hosted providers
+                                      — without it they return ErrNotApplicable. Amortized straight-
+                                      line over --hardware-useful-life-years.
+        --hardware-useful-life-years N  Depreciation horizon for amortization (default 5).
+        --hardware-watts N            Continuous power draw at typical load (NOT max nameplate).
+                                      Drives the electricity opex line.
+        --hardware-kwh-rate-usd N     Delivered electricity rate USD/kWh (default 0.15).
+        --hardware-support-usd-month N  Flat monthly support / colo / vSphere licensing — added as-is.
         --resource-budget-fraction F  Cap the share of available Proxmox host CPU/memory/storage that
                                       the workload + (optional) management clusters may consume
                                       (default: 0.6667 — 2/3). The remaining ~1/3 is reserved for the

@@ -65,18 +65,38 @@ var awsPriceTable = map[string]float64{
 // base price.
 const ebsGp3PerGBMonth = 0.08
 
+// EKS managed control plane: $0.10/hour × 730 hours/month, flat
+// per cluster regardless of node count or workload.
+const eksControlPlaneMonthly = 0.10 * 730 // = $73/month
+
+// Fargate per-vCPU-hour and per-GB-hour (us-east-1). Per-month
+// derived = price × 730 hours.
+const (
+	fargateVCPUHour = 0.04048
+	fargateGBHour   = 0.004445
+)
+
 // EstimateMonthlyCostUSD computes a napkin AWS bill for the planned
 // cluster. EC2 + EBS only — does not count NAT Gateway, ELB,
 // CloudWatch, Route53, data egress (those are workload-shape
 // dependent and out of scope for a planning estimate).
+//
+// Switches on cfg.AWSMode:
+//
+//   - "unmanaged" (default): self-managed Kubernetes on EC2. Pay for
+//     CP + worker EC2 nodes + EBS boot volumes.
+//   - "eks": EKS-managed control plane (flat $73/month per cluster)
+//     plus EC2 worker nodes (Managed Node Group, same price as
+//     unmanaged worker EC2).
+//   - "eks-fargate": EKS-managed CP + Fargate workers. No worker
+//     EC2 fleet; pay $73 + Fargate pod-CPU-hour + pod-GB-hour. Pod
+//     count + size come from AWSFargatePod* cfg fields.
 func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+	mode := orDefault(cfg.AWSMode, "unmanaged")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
 	cpType := orDefault(cfg.AWSControlPlaneMachineType, "t3.large")
 	wkType := orDefault(cfg.AWSNodeMachineType, "t3.medium")
-
-	cpPrice := lookupOrEstimate(cpType)
-	wkPrice := lookupOrEstimate(wkType)
 
 	cpDiskGB := atoiOr(cfg.ControlPlaneBootVolumeSize, 30)
 	wkDiskGB := atoiOr(cfg.WorkerBootVolumeSize, 40)
@@ -84,23 +104,55 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	wkDiskCost := float64(wkDiskGB) * ebsGp3PerGBMonth
 
 	items := []provider.CostItem{}
-	if cp > 0 {
+
+	// Control plane: EKS-managed flat fee, or self-managed EC2 + EBS.
+	switch mode {
+	case "eks", "eks-fargate":
 		items = append(items, provider.CostItem{
-			Name:           fmt.Sprintf("workload control-plane (%s)", cpType),
-			UnitUSDMonthly: cpPrice,
-			Qty:            cp,
-			SubtotalUSD:    cpPrice * float64(cp),
+			Name:           "EKS managed control plane (flat per cluster)",
+			UnitUSDMonthly: eksControlPlaneMonthly,
+			Qty:            1,
+			SubtotalUSD:    eksControlPlaneMonthly,
 		})
-		items = append(items, provider.CostItem{
-			Name:           fmt.Sprintf("CP boot volumes (%d GB gp3 each)", cpDiskGB),
-			UnitUSDMonthly: cpDiskCost,
-			Qty:            cp,
-			SubtotalUSD:    cpDiskCost * float64(cp),
-		})
+	default: // unmanaged
+		cpPrice := lookupOrEstimate(cpType)
+		if cp > 0 {
+			items = append(items, provider.CostItem{
+				Name:           fmt.Sprintf("workload control-plane (%s)", cpType),
+				UnitUSDMonthly: cpPrice,
+				Qty:            cp,
+				SubtotalUSD:    cpPrice * float64(cp),
+			})
+			items = append(items, provider.CostItem{
+				Name:           fmt.Sprintf("CP boot volumes (%d GB gp3 each)", cpDiskGB),
+				UnitUSDMonthly: cpDiskCost,
+				Qty:            cp,
+				SubtotalUSD:    cpDiskCost * float64(cp),
+			})
+		}
 	}
-	if wk > 0 {
+
+	// Workers: Fargate per-pod, or EC2 (managed node group / unmanaged).
+	if mode == "eks-fargate" {
+		pods := atoiOr(cfg.AWSFargatePodCount, 10)
+		vcpuPer, gbPer := parseFargateSize(cfg)
+		fgVCPU := vcpuPer * 730 * fargateVCPUHour
+		fgMem := gbPer * 730 * fargateGBHour
+		perPod := fgVCPU + fgMem
 		items = append(items, provider.CostItem{
-			Name:           fmt.Sprintf("workload workers (%s)", wkType),
+			Name:           fmt.Sprintf("Fargate pods (%.2g vCPU / %.2g GiB each)", vcpuPer, gbPer),
+			UnitUSDMonthly: perPod,
+			Qty:            pods,
+			SubtotalUSD:    perPod * float64(pods),
+		})
+	} else if wk > 0 {
+		wkPrice := lookupOrEstimate(wkType)
+		label := "workload workers"
+		if mode == "eks" {
+			label = "workload workers (EKS Managed Node Group)"
+		}
+		items = append(items, provider.CostItem{
+			Name:           fmt.Sprintf("%s (%s)", label, wkType),
 			UnitUSDMonthly: wkPrice,
 			Qty:            wk,
 			SubtotalUSD:    wkPrice * float64(wk),
@@ -139,11 +191,38 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		total += it.SubtotalUSD
 	}
 
+	note := "us-east-1 on-demand prices (730 h/month), gp3 EBS only. Excludes NAT Gateway, ELB, data transfer, CloudWatch, Route53. Spot pricing typically saves 60-70 %."
+	switch mode {
+	case "eks":
+		note = "us-east-1 prices: EKS CP flat $73/mo + Managed Node Group EC2 + EBS. Same exclusions as unmanaged."
+	case "eks-fargate":
+		note = "us-east-1 prices: EKS CP flat $73/mo + Fargate per pod-vCPU-hour + GB-hour. AWS_FARGATE_POD_COUNT/CPU/MEMORY_GIB drive the pod estimate; real bills depend on actual pod count + uptime."
+	}
 	return provider.CostEstimate{
 		TotalUSDMonthly: total,
 		Items:           items,
-		Note:            "us-east-1 on-demand prices (730 h/month), gp3 EBS only. Excludes NAT Gateway, ELB, data transfer, CloudWatch, Route53. Spot pricing typically saves 60-70 %.",
+		Note:            note,
 	}, nil
+}
+
+// parseFargateSize maps cfg.AWSFargatePodCPU / MemoryGiB to floats,
+// applying defaults that match AWS's allowed Fargate task sizes.
+func parseFargateSize(cfg *config.Config) (vcpu, gib float64) {
+	vcpu = parseFloatOr(cfg.AWSFargatePodCPU, 0.5)
+	gib = parseFloatOr(cfg.AWSFargatePodMemoryGiB, 1.0)
+	return
+}
+
+// parseFloatOr is a tiny float parser; returns def on empty/parse-error.
+func parseFloatOr(s string, def float64) float64 {
+	if strings.TrimSpace(s) == "" {
+		return def
+	}
+	var f float64
+	if _, err := fmt.Sscanf(s, "%f", &f); err != nil || f <= 0 {
+		return def
+	}
+	return f
 }
 
 // lookupOrEstimate returns the price-table value for itype, or a

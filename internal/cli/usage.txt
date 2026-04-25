@@ -41,6 +41,16 @@ OPTIONS
                                       manifest in-process (no clusterctl generate cluster — upstream
                                       CAPMOX ships no k3s flavor; the template lives in
                                       internal/capimanifest/k3s_template.yaml).
+        --aws-mode MODE               (--infrastructure-provider aws only) CAPA flavor:
+                                        unmanaged   — self-managed K8s on EC2 (default).
+                                        eks         — EKS-managed control plane (flat ~$73/mo) +
+                                                      EC2 Managed Node Group for workers.
+                                        eks-fargate — EKS CP + Fargate workers (no EC2 fleet);
+                                                      sized via --aws-fargate-pod-count /
+                                                      --aws-fargate-pod-cpu / --aws-fargate-pod-memory-gib.
+                                      EKS modes require --bootstrap-mode kubeadm (EKS is upstream
+                                      Kubernetes managed by AWS; K3s isn't compatible).
+                                      See docs/aws-cost-tiers.md for tier examples.
         --allow-resource-overcommit   Downgrade the capacity check to a warning instead of failing
                                       the run when the plan exceeds --resource-budget-fraction.
         --system-apps-cpu-millicores N    Cluster-wide CPU reserve for system add-ons bootstrap-capi

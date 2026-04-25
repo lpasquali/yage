@@ -110,6 +110,23 @@ type Config struct {
 	AWSRegion                   string
 	AWSSSHKeyName               string
 	AWSAMIID                    string
+	// AWSMode picks the CAPA flavor:
+	//   - "unmanaged" (default): self-managed Kubernetes on EC2.
+	//     CAPA emits AWSCluster + AWSMachineTemplate; you pay for
+	//     CP + worker EC2 nodes + EBS.
+	//   - "eks": EKS-managed control plane (AWSManagedControlPlane)
+	//     + EC2 worker nodes (AWSManagedMachinePool). CP costs flip
+	//     from 3× EC2 to a flat $73/month per cluster.
+	//   - "eks-fargate": EKS CP + Fargate workers (AWSFargateProfile).
+	//     No worker EC2 fleet; pay per pod-vCPU-hour + GB-hour.
+	AWSMode                     string
+	// AWSFargatePodCount and AWSFargatePodCPU / Memory parameterise
+	// the cost estimate when AWSMode=eks-fargate. Pod count is the
+	// application-pod count you expect (rough planning input — Argo
+	// later actually deploys), not a VM count. Default 10 pods.
+	AWSFargatePodCount          string
+	AWSFargatePodCPU            string // vCPU per Fargate task; "0.25" "0.5" "1" "2" "4"
+	AWSFargatePodMemoryGiB      string // GiB per Fargate task; pairs with CPU per AWS rules
 	// BootstrapMode selects the Kubernetes flavor:
 	//   - "kubeadm" (default): standard upstream Kubernetes via kubeadm,
 	//     control-plane runs etcd + apiserver + controller-manager +
@@ -541,6 +558,10 @@ func Load() *Config {
 	c.AWSRegion = getenv("AWS_REGION", "us-east-1")
 	c.AWSSSHKeyName = getenv("AWS_SSH_KEY_NAME", "")
 	c.AWSAMIID = getenv("AWS_AMI_ID", "")
+	c.AWSMode = getenv("AWS_MODE", "unmanaged")
+	c.AWSFargatePodCount = getenv("AWS_FARGATE_POD_COUNT", "10")
+	c.AWSFargatePodCPU = getenv("AWS_FARGATE_POD_CPU", "0.5")
+	c.AWSFargatePodMemoryGiB = getenv("AWS_FARGATE_POD_MEMORY_GIB", "1")
 	c.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
 	c.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
 

@@ -314,6 +314,14 @@ func Parse(c *config.Config, argv []string) {
 			}
 		case "--bootstrap-mode":
 			c.BootstrapMode = strings.ToLower(shiftVal(a))
+		case "--aws-mode":
+			c.AWSMode = strings.ToLower(shiftVal(a))
+		case "--aws-fargate-pod-count":
+			c.AWSFargatePodCount = shiftVal(a)
+		case "--aws-fargate-pod-cpu":
+			c.AWSFargatePodCPU = shiftVal(a)
+		case "--aws-fargate-pod-memory-gib":
+			c.AWSFargatePodMemoryGiB = shiftVal(a)
 		case "--resource-budget-fraction":
 			v := shiftVal(a)
 			if f, err := strconv.ParseFloat(v, 64); err == nil {

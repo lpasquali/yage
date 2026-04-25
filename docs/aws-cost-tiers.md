@@ -77,6 +77,39 @@ documented in the AWS provider package doc.
 For now: the cost estimator is the practical "what does this run
 cost?" check. Pair it with `--dry-run` before any real run.
 
+## EKS + Fargate (managed flavors)
+
+`--aws-mode` switches the CAPA flavor and the cost shape:
+
+| Mode | What it provisions | CP cost | Worker cost |
+|---|---|---|---|
+| `unmanaged` (default) | Self-managed Kubernetes on EC2 | `cp_count × instance_price` + EBS | `worker_count × instance_price` + EBS |
+| `eks` | EKS managed CP + EC2 Managed Node Group | **flat $73/month** per cluster | same as unmanaged worker EC2 (you still pay for the nodes) |
+| `eks-fargate` | EKS managed CP + serverless Fargate workers | **flat $73/month** per cluster | per-pod-hour: `pods × (vCPU × $29.55 + GiB × $3.24)` |
+
+The same logical workload (3-CP HA + 3 m5.xlarge workers) at each tier:
+
+| Mode | Monthly | Notes |
+|---:|---:|---|
+| unmanaged HA | **~$622** | 3 self-managed CP nodes (t3.large) + 3 m5.xlarge workers |
+| EKS + Managed Node Group | **~$503** | $73 CP saves you the 3-CP EC2 cost (~$182) but you pay for it as the EKS flat fee + lose CP customization |
+| EKS + Fargate, 10 pods × 0.5 vCPU / 1 GiB | **~$253** | Pay-for-what-runs: cheaper if you really only run 10 small pods |
+| EKS + Fargate, 50 pods × 1 vCPU / 2 GiB | **~$1,875** | Crosses over EC2 break-even fast as pod count + size grow |
+| EKS + Fargate, 200 pods × 0.5 vCPU / 1 GiB | **~$3,677** | At 200 pods Fargate is ~6× more expensive than equivalent EC2 |
+
+**Break-even rule of thumb**: Fargate is cheaper than EC2 for **low pod count + small pods**; EC2 (with proper bin-packing) wins for **dense, sustained workloads**. The crossover depends on pod size; for 1 vCPU / 2 GiB pods the crossover is ~10–12 pods (above which the equivalent m5.xlarge fleet is cheaper).
+
+**Tiny dev clusters** that fit best on EKS + Fargate:
+- `--aws-mode eks-fargate --aws-fargate-pod-count 5 --aws-fargate-pod-cpu 0.25 --aws-fargate-pod-memory-gib 0.5` → **~$118/month** ($73 CP + ~$45 for 5 small pods). Cheaper than running 1 t3.medium worker.
+
+**Why pick EKS at all?** No CP maintenance — AWS patches etcd / apiserver / scheduler, runs HA across 3 AZs by default, gives you a 99.95 % SLA. Worth the $73 for any workload where CP downtime = cost. Combine with `--bootstrap-mode kubeadm` (K3s isn't compatible with EKS — EKS *is* upstream Kubernetes managed by AWS).
+
+**Caveats** the estimator doesn't model:
+- Fargate has a 50%-up CPU/memory charge for arm64 vs x86 — we estimate x86.
+- Fargate Spot exists for non-critical workloads (~70 % discount).
+- EKS auto-mode (newer feature) bundles compute into the managed CP fee — not modeled today.
+- ELB Ingress on EKS = $16-25/month per LoadBalancer; not in the estimate.
+
 ## Other providers
 
 - **Proxmox**: self-hosted, no monthly cost from the cloud — your

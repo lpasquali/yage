@@ -37,6 +37,12 @@ import (
 //go:embed k3s_template.yaml
 var k3sTemplate string
 
+// K3sTemplateText returns the raw embedded K3s flavor template
+// (with ${VAR} placeholders unfilled). Provider implementations that
+// share this template (currently: Proxmox) call it to surface the
+// body via their provider.Provider.K3sTemplate hook.
+func K3sTemplateText() string { return k3sTemplate }
+
 // RenderK3sManifest fills the embedded K3s template with values from
 // cfg. When mgmt is true the management-cluster fields are used (mgmt
 // name, sizing, IPs, machine counts); otherwise the workload fields.

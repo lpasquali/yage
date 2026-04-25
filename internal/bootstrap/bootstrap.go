@@ -11,6 +11,8 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/lpasquali/bootstrap-capi/internal/argocdx"
 	"github.com/lpasquali/bootstrap-capi/internal/caaph"
@@ -24,6 +26,7 @@ import (
 	"github.com/lpasquali/bootstrap-capi/internal/kubectlx"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
 	"github.com/lpasquali/bootstrap-capi/internal/opentofux"
+	"github.com/lpasquali/bootstrap-capi/internal/pivot"
 	"github.com/lpasquali/bootstrap-capi/internal/promptx"
 	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
 	"github.com/lpasquali/bootstrap-capi/internal/shell"
@@ -698,6 +701,41 @@ func Run(cfg *config.Config) int {
 
 	opentofux.RecreateResyncCapmox(cfg)
 
+	// --- 9.5 Pivot to a Proxmox-hosted management cluster (bash L8848-L8884) ---
+	// CAPI bootstrap-and-pivot pattern. When PivotEnabled is true: kind
+	// provisions a single-node management cluster on Proxmox, clusterctl
+	// init runs against it, clusterctl move migrates CAPI inventory from
+	// kind to mgmt, the proxmox-bootstrap-system Secrets are mirrored, the
+	// kind context is rebound to point at the mgmt cluster, and downstream
+	// phases run against mgmt. The kind cluster is torn down at the end
+	// (unless --pivot-keep-kind / --no-delete-kind).
+	if cfg.PivotEnabled {
+		logx.Log("Phase 2.95: pivoting CAPI from kind → Proxmox-hosted management cluster...")
+		mgmtKubeconfig, err := pivot.EnsureManagementCluster(cfg)
+		if err != nil {
+			logx.Die("pivot: EnsureManagementCluster: %v", err)
+		}
+		if err := pivot.InstallCAPIOnManagement(cfg, mgmtKubeconfig); err != nil {
+			logx.Die("pivot: InstallCAPIOnManagement: %v", err)
+		}
+		if err := pivot.MoveCAPIState(cfg, mgmtKubeconfig); err != nil {
+			logx.Die("pivot: MoveCAPIState: %v", err)
+		}
+		copied, err := kindsync.HandOffBootstrapSecretsToManagement(cfg, "kind-"+cfg.KindClusterName, mgmtKubeconfig)
+		if err != nil {
+			logx.Warn("pivot: handoff Secrets returned error after %d copies: %v", copied, err)
+		} else {
+			logx.Log("pivot: handoff complete (%d Secrets copied to mgmt cluster).", copied)
+		}
+		if err := pivot.VerifyParity(cfg, mgmtKubeconfig); err != nil {
+			logx.Die("pivot: VerifyParity: %v", err)
+		}
+		if err := rebindKindContextToMgmt(cfg, mgmtKubeconfig); err != nil {
+			logx.Die("pivot: rebind kind-%s context to mgmt kubeconfig: %v", cfg.KindClusterName, err)
+		}
+		logx.Log("pivot: complete; subsequent phases will target the management cluster.")
+	}
+
 	// --- 9. Apply workload cluster manifest (bash L8425-L8494) ---
 	MaybeInteractiveSelectWorkloadCluster(cfg)
 	capimanifest.TryFillWorkloadInputsFromManagement(cfg)
@@ -799,8 +837,70 @@ func Run(cfg *config.Config) int {
 		logx.Warn("Argo CD disabled (--disable-argocd) — skipping CAAPH workload Argo and app-of-apps.")
 	}
 
+	// --- Pivot teardown: delete the kind cluster after a successful pivot
+	// (skipped when --pivot-keep-kind / --no-delete-kind / pivot disabled).
+	if cfg.PivotEnabled {
+		if err := pivot.TeardownKind(cfg); err != nil {
+			logx.Warn("pivot: TeardownKind: %v", err)
+		}
+	}
+
 	logx.Log("Done. CAPI: 'kubectl get clusters -A' and 'clusterctl describe cluster <name>'. For workload apps, rely on Argo CD sync (this script does not wait for all add-ons to be Healthy).")
 	return 0
+}
+
+// rebindKindContextToMgmt writes a fresh KUBECONFIG file containing the
+// management cluster's connection details aliased under the existing
+// "kind-<name>" context, then sets the KUBECONFIG env var so subsequent
+// k8sclient.ForContext("kind-"+cfg.KindClusterName) and ForCurrent calls
+// hit the new management cluster instead of kind. The original kind
+// cluster's kubeconfig is unaffected (it's still written by `kind` into
+// the user's ~/.kube/config); pivot cuts over by overriding KUBECONFIG.
+func rebindKindContextToMgmt(cfg *config.Config, mgmtKubeconfigPath string) error {
+	raw, err := os.ReadFile(mgmtKubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("read mgmt kubeconfig %s: %w", mgmtKubeconfigPath, err)
+	}
+	cc, err := clientcmd.Load(raw)
+	if err != nil {
+		return fmt.Errorf("parse mgmt kubeconfig: %w", err)
+	}
+	if len(cc.Contexts) == 0 {
+		return fmt.Errorf("mgmt kubeconfig has no contexts")
+	}
+	// Pick the first (and usually only) context as the source.
+	var srcName string
+	var srcCtx *clientcmdapi.Context
+	for k, v := range cc.Contexts {
+		srcName, srcCtx = k, v
+		break
+	}
+	newName := "kind-" + cfg.KindClusterName
+	if srcName != newName {
+		delete(cc.Contexts, srcName)
+		cc.Contexts[newName] = srcCtx
+	}
+	cc.CurrentContext = newName
+
+	out, err := clientcmd.Write(*cc)
+	if err != nil {
+		return fmt.Errorf("serialize rebinded kubeconfig: %w", err)
+	}
+	f, err := os.CreateTemp("", "post-pivot-kubeconfig-*.yaml")
+	if err != nil {
+		return fmt.Errorf("mktemp post-pivot kubeconfig: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.Write(out); err != nil {
+		os.Remove(f.Name())
+		return fmt.Errorf("write post-pivot kubeconfig: %w", err)
+	}
+	if err := os.Setenv("KUBECONFIG", f.Name()); err != nil {
+		return fmt.Errorf("set KUBECONFIG env: %w", err)
+	}
+	logx.Log("post-pivot KUBECONFIG=%s (context kind-%s aliased to mgmt cluster)",
+		f.Name(), cfg.KindClusterName)
+	return nil
 }
 
 // workloadKubeconfigSecretExists is a typed-client probe replacing the old

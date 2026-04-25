@@ -28,6 +28,12 @@ OPTIONS
                                       the current config + env + kind state) and exit. No state is
                                       changed. Distinct from --pivot-dry-run (which actually
                                       provisions the mgmt cluster, stops at `clusterctl move`).
+        --resource-budget-fraction F  Cap the share of available Proxmox host CPU/memory/storage that
+                                      the workload + (optional) management clusters may consume
+                                      (default: 0.75). The remaining 25% is reserved for the host OS,
+                                      hypervisor overhead, and rollout slack.
+        --allow-resource-overcommit   Downgrade the capacity check to a warning instead of failing
+                                      the run when the plan exceeds --resource-budget-fraction.
 
   kind cluster
         --kind-cluster-name NAME      Management kind cluster name (default: capi-provisioner)

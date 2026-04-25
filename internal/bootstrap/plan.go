@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/lpasquali/bootstrap-capi/internal/capacity"
 	"github.com/lpasquali/bootstrap-capi/internal/config"
 	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
 	"github.com/lpasquali/bootstrap-capi/internal/shell"
@@ -43,6 +44,7 @@ func PrintPlan(cfg *config.Config) {
 	planPhase295Pivot(w, cfg)
 	planPhase210ArgoCD(w, cfg)
 	planFinal(w, cfg)
+	planCapacity(w, cfg)
 
 	fmt.Fprintln(w, hr)
 	fmt.Fprintln(w, "✅ Dry run complete — NO state was changed.")
@@ -245,6 +247,41 @@ func planFinal(w *os.File, cfg *config.Config) {
 		skip(w, "--no-delete-kind set")
 	default:
 		bullet(w, "delete kind cluster '%s'", cfg.KindClusterName)
+	}
+}
+
+// planCapacity prints the resource budget summary: requested vs
+// available host capacity. When Proxmox creds are present we query the
+// live host; otherwise we print only the requested side.
+func planCapacity(w *os.File, cfg *config.Config) {
+	section(w, "Capacity budget")
+	plan := capacity.PlanFor(cfg)
+	threshold := cfg.ResourceBudgetFraction
+	if threshold <= 0 || threshold > 1 {
+		threshold = capacity.DefaultThreshold
+	}
+	bullet(w, "budget: %.0f%% of available Proxmox host CPU/memory/storage",
+		threshold*100)
+	for _, it := range plan.Items {
+		bullet(w, "  %-26s %d × (%d cores, %d MiB, %d GB) = %d cores, %d MiB, %d GB",
+			it.Name, it.Replicas, it.CPUCores, it.MemoryMiB, it.DiskGB,
+			it.CPUCores*it.Replicas, it.MemoryMiB*int64(it.Replicas), it.DiskGB*int64(it.Replicas))
+	}
+	bullet(w, "TOTAL requested:  %d cores, %d MiB (%d GiB), %d GB disk",
+		plan.CPUCores, plan.MemoryMiB, plan.MemoryMiB/1024, plan.StorageGB)
+
+	hc, err := capacity.FetchHostCapacity(cfg)
+	if err != nil {
+		skip(w, "host-capacity query: %v (run with valid Proxmox creds for live numbers)", err)
+		return
+	}
+	bullet(w, "host (allowed nodes %v): %d cores, %d MiB (%d GiB), %d GB disk",
+		hc.Nodes, hc.CPUCores, hc.MemoryMiB, hc.MemoryMiB/1024, hc.StorageGB)
+	if err := capacity.Check(plan, hc, threshold); err != nil {
+		bullet(w, "❌ %v", err)
+		bullet(w, "(real run aborts; use --allow-resource-overcommit to override)")
+	} else {
+		bullet(w, "✅ plan fits within %.0f%% budget.", threshold*100)
 	}
 }
 

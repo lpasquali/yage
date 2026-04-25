@@ -13,6 +13,7 @@ package cli
 
 import (
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/lpasquali/bootstrap-capi/internal/config"
@@ -297,6 +298,13 @@ func Parse(c *config.Config, argv []string) {
 			c.PivotDryRun = true
 		case "--dry-run":
 			c.DryRun = true
+		case "--allow-resource-overcommit":
+			c.AllowResourceOvercommit = true
+		case "--resource-budget-fraction":
+			v := shiftVal(a)
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				c.ResourceBudgetFraction = f
+			}
 		case "--pivot-verify-timeout":
 			c.PivotVerifyTimeout = shiftVal(a)
 		case "--mgmt-cluster-name":

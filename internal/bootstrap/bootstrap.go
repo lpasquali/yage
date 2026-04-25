@@ -16,6 +16,7 @@ import (
 
 	"github.com/lpasquali/bootstrap-capi/internal/argocdx"
 	"github.com/lpasquali/bootstrap-capi/internal/caaph"
+	"github.com/lpasquali/bootstrap-capi/internal/capacity"
 	"github.com/lpasquali/bootstrap-capi/internal/capimanifest"
 	"github.com/lpasquali/bootstrap-capi/internal/config"
 	"github.com/lpasquali/bootstrap-capi/internal/csix"
@@ -709,6 +710,13 @@ func Run(cfg *config.Config) int {
 
 	opentofux.RecreateResyncCapmox(cfg)
 
+	// --- Capacity check: confirm the planned clusters fit inside
+	// cfg.ResourceBudgetFraction (default 0.75) of the available
+	// Proxmox host CPU/memory/storage. Aborts before any VM is created.
+	if err := preflightCapacity(cfg); err != nil {
+		logx.Die("%v", err)
+	}
+
 	// --- 9.5 Pivot to a Proxmox-hosted management cluster (bash L8848-L8884) ---
 	// CAPI bootstrap-and-pivot pattern. When PivotEnabled is true: kind
 	// provisions a single-node management cluster on Proxmox, clusterctl
@@ -867,6 +875,39 @@ func Run(cfg *config.Config) int {
 
 	logx.Log("Done. CAPI: 'kubectl get clusters -A' and 'clusterctl describe cluster <name>'. For workload apps, rely on Argo CD sync (this script does not wait for all add-ons to be Healthy).")
 	return 0
+}
+
+// preflightCapacity queries the Proxmox host capacity and compares it
+// against the configured cluster sizing × replicas. Returns nil when
+// the plan fits inside cfg.ResourceBudgetFraction × capacity. Returns a
+// non-nil error otherwise — unless cfg.AllowResourceOvercommit is set,
+// in which case the error is downgraded to a warning and nil is
+// returned.
+func preflightCapacity(cfg *config.Config) error {
+	hc, err := capacity.FetchHostCapacity(cfg)
+	if err != nil {
+		// Don't block the run on a capacity-query failure — log and
+		// proceed. The user can still hit a real cap on the API server.
+		logx.Warn("capacity check skipped: %v", err)
+		return nil
+	}
+	plan := capacity.PlanFor(cfg)
+	threshold := cfg.ResourceBudgetFraction
+	if threshold <= 0 || threshold > 1 {
+		threshold = capacity.DefaultThreshold
+	}
+	logx.Log("Capacity preflight (%.0f%% budget): nodes=%v, plan %d cores / %d MiB / %d GB vs host %d cores / %d MiB / %d GB",
+		threshold*100, hc.Nodes,
+		plan.CPUCores, plan.MemoryMiB, plan.StorageGB,
+		hc.CPUCores, hc.MemoryMiB, hc.StorageGB)
+	if err := capacity.Check(plan, hc, threshold); err != nil {
+		if cfg.AllowResourceOvercommit {
+			logx.Warn("ALLOW_RESOURCE_OVERCOMMIT=true — proceeding despite: %v", err)
+			return nil
+		}
+		return fmt.Errorf("%w\n  re-run with --allow-resource-overcommit to override, or shrink the cluster sizing / machine counts", err)
+	}
+	return nil
 }
 
 // rebindKindContextToMgmt writes a fresh KUBECONFIG file containing the

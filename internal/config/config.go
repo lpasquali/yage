@@ -13,6 +13,8 @@ package config
 
 import (
 	"os"
+	"strconv"
+	"strings"
 )
 
 // Config holds every runtime tunable. Zero value is not meaningful — always
@@ -81,6 +83,15 @@ type Config struct {
 	// executing any phase. Distinct from PivotDryRun (which actually
 	// provisions the mgmt cluster and stops at `clusterctl move`).
 	DryRun                      bool
+	// ResourceBudgetFraction caps the share of available Proxmox host
+	// CPU/memory/storage that the configured clusters may consume.
+	// 0.75 by default — the remaining 25 % is reserved for the host
+	// OS, hypervisor overhead, and slack for VM rollouts.
+	ResourceBudgetFraction      float64
+	// AllowResourceOvercommit, when true, downgrades the
+	// over-the-budget capacity check to a warning instead of failing
+	// the run.
+	AllowResourceOvercommit     bool
 
 	// ---- Kind / management cluster ----
 	ClusterID                    string
@@ -486,6 +497,8 @@ func Load() *Config {
 	c.Purge = envBool("PURGE", false)
 	c.BuildAll = envBool("BUILD_ALL", false)
 	c.DryRun = envBool("DRY_RUN", false)
+	c.AllowResourceOvercommit = envBool("ALLOW_RESOURCE_OVERCOMMIT", false)
+	c.ResourceBudgetFraction = envFloat("RESOURCE_BUDGET_FRACTION", 0.75)
 
 	// --- Kind / management ----
 	c.ClusterID = getenv("CLUSTER_ID", "1")
@@ -798,6 +811,20 @@ func getenvKeep(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envFloat parses a float from $key (e.g. "0.75"); returns def on
+// missing/empty/parse-error.
+func envFloat(key string, def float64) float64 {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil {
+		return def
+	}
+	return f
 }
 
 func envBool(key string, def bool) bool {

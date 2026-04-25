@@ -106,6 +106,16 @@ func renderManagementManifest(cfg *config.Config, clusterctlCfgPath string) (str
 	tmpPath := tmp.Name()
 	tmp.Close()
 
+	// K3s mode short-circuits clusterctl: render the embedded K3s
+	// template directly to the staging path.
+	if cfg.BootstrapMode == "k3s" {
+		logx.Log("BOOTSTRAP_MODE=k3s — rendering embedded K3s manifest for management cluster (no clusterctl generate).")
+		if err := capimanifest.MaterializeK3sManifest(cfg, true, tmpPath); err != nil {
+			return "", fmt.Errorf("render K3s mgmt manifest: %w", err)
+		}
+		return tmpPath, nil
+	}
+
 	// `clusterctl generate cluster` reads template variables from env;
 	// the workload phase exports WORKLOAD_*-equivalent vars (BOOT_VOLUME_*,
 	// NUM_*, MEMORY_MIB, NODE_IP_RANGES, CONTROL_PLANE_ENDPOINT_IP, etc.).
@@ -118,9 +128,6 @@ func renderManagementManifest(cfg *config.Config, clusterctlCfgPath string) (str
 		"--control-plane-machine-count", cfg.MgmtControlPlaneMachineCount,
 		"--worker-machine-count", cfg.MgmtWorkerMachineCount,
 		"--infrastructure", cfg.InfraProvider,
-	}
-	if cfg.BootstrapMode == "k3s" {
-		args = append(args, "--flavor", "k3s")
 	}
 	cmd := exec.Command("clusterctl", args...)
 	cmd.Env = append(os.Environ(),

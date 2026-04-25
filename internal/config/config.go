@@ -100,12 +100,6 @@ type Config struct {
 	//     environments (Raspberry Pi, edge, dev VMs). Fits in ~1 vCPU
 	//     + 1 GiB. Requires the CAPI K3s providers (KCP-K3s + CABK3s).
 	BootstrapMode               string
-	// CAPMOXK3sProviderURL points clusterctl at a CAPMOX fork that
-	// ships a K3s flavor (cluster-template-k3s.yaml) when
-	// BootstrapMode=k3s. Empty by default: upstream CAPMOX has no K3s
-	// flavor today, so the user must run their own fork until that
-	// changes — see docs/capmox-k3s-fork/.
-	CAPMOXK3sProviderURL        string
 
 	// ---- Kind / management cluster ----
 	ClusterID                    string
@@ -514,7 +508,6 @@ func Load() *Config {
 	c.AllowResourceOvercommit = envBool("ALLOW_RESOURCE_OVERCOMMIT", false)
 	c.ResourceBudgetFraction = envFloat("RESOURCE_BUDGET_FRACTION", 2.0/3.0)
 	c.BootstrapMode = getenv("BOOTSTRAP_MODE", "kubeadm")
-	c.CAPMOXK3sProviderURL = getenv("CAPMOX_K3S_PROVIDER_URL", "")
 
 	// --- Kind / management ----
 	c.ClusterID = getenv("CLUSTER_ID", "1")

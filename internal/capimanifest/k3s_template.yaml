@@ -1,28 +1,24 @@
-# cluster-template-k3s.yaml — drop-in K3s flavor for cluster-api-provider-proxmox
+# K3s flavor manifest, embedded into the bootstrap-capi binary.
 #
-# Copy this file into your CAPMOX fork at:
-#   templates/cluster-template-k3s.yaml
+# Replaces a `clusterctl generate cluster --flavor k3s` call against
+# CAPMOX (which doesn't ship a K3s flavor upstream). The renderer in
+# internal/capimanifest/k3s.go fills the template with `os.Expand`
+# against cfg; the four post-generate patches in patches.go then run
+# unchanged (PatchKubeadmSkipKubeProxyForCilium is a safe no-op against
+# this template — K3s disables kube-proxy via serverConfig.disableComponents).
 #
-# Then cut a release of the fork (the clusterctl release pipeline pulls
-# every templates/cluster-template-*.yaml as a flavor); bootstrap-capi
-# will request it via `clusterctl generate cluster --flavor k3s`.
+# `clusterctl init --control-plane k3s --bootstrap k3s` installs the
+# matching K3s providers (KCP-K3s + CABK3s); see internal/bootstrap.
 #
-# The template assumes the K3s providers (KCP-K3s + CABK3s) are
-# already installed via `clusterctl init --control-plane k3s
-# --bootstrap k3s` — bootstrap-capi does that for you when
-# BOOTSTRAP_MODE=k3s.
-#
-# Variables (clusterctl substitutes from env at generate time):
-#   CLUSTER_NAME
-#   KUBERNETES_VERSION              (e.g. v1.31.4 — K3s appends "+k3s1")
-#   CONTROL_PLANE_MACHINE_COUNT
-#   WORKER_MACHINE_COUNT
+# Variables (filled by k3s.go from cfg):
+#   CLUSTER_NAME / NAMESPACE
+#   KUBERNETES_VERSION              (K3s manifests append "+k3s1")
+#   CONTROL_PLANE_MACHINE_COUNT     WORKER_MACHINE_COUNT
 #   PROXMOX_URL / PROXMOX_REGION / PROXMOX_NODE / PROXMOX_TEMPLATE_ID
 #   PROXMOX_SOURCENODE / BRIDGE / PROXMOX_CLOUDINIT_STORAGE
 #   CONTROL_PLANE_ENDPOINT_IP / CONTROL_PLANE_ENDPOINT_PORT
-#   NODE_IP_RANGES / GATEWAY / IP_PREFIX / DNS_SERVERS
-#   ALLOWED_NODES
-#   VM_SSH_KEYS
+#   NODE_IP_RANGES / GATEWAY / IP_PREFIX / DNS_SERVERS / ALLOWED_NODES
+#   VM_SSH_KEYS / PROXMOX_MEMORY_ADJUSTMENT
 #   CONTROL_PLANE_BOOT_VOLUME_DEVICE / SIZE / NUM_SOCKETS / NUM_CORES / MEMORY_MIB
 #   WORKER_BOOT_VOLUME_DEVICE / SIZE / NUM_SOCKETS / NUM_CORES / MEMORY_MIB
 
@@ -39,7 +35,7 @@ spec:
       cidrBlocks: ["10.96.0.0/12"]
   controlPlaneEndpoint:
     host: ${CONTROL_PLANE_ENDPOINT_IP}
-    port: ${CONTROL_PLANE_ENDPOINT_PORT=6443}
+    port: ${CONTROL_PLANE_ENDPOINT_PORT}
   controlPlaneRef:
     apiVersion: controlplane.cluster.x-k8s.io/v1beta2
     kind: KThreesControlPlane
@@ -57,15 +53,15 @@ metadata:
 spec:
   controlPlaneEndpoint:
     host: ${CONTROL_PLANE_ENDPOINT_IP}
-    port: ${CONTROL_PLANE_ENDPOINT_PORT=6443}
+    port: ${CONTROL_PLANE_ENDPOINT_PORT}
   ipv4Config:
     addresses: ${NODE_IP_RANGES}
     gateway: ${GATEWAY}
-    prefix: ${IP_PREFIX=24}
+    prefix: ${IP_PREFIX}
   dnsServers: ${DNS_SERVERS}
   allowedNodes: ${ALLOWED_NODES}
   schedulerHints:
-    memoryAdjustment: ${PROXMOX_MEMORY_ADJUSTMENT=100}
+    memoryAdjustment: ${PROXMOX_MEMORY_ADJUSTMENT}
 ---
 apiVersion: controlplane.cluster.x-k8s.io/v1beta2
 kind: KThreesControlPlane
@@ -112,15 +108,15 @@ spec:
       full: true
       disks:
         bootVolume:
-          disk: ${CONTROL_PLANE_BOOT_VOLUME_DEVICE=scsi0}
-          sizeGb: ${CONTROL_PLANE_BOOT_VOLUME_SIZE=30}
+          disk: ${CONTROL_PLANE_BOOT_VOLUME_DEVICE}
+          sizeGb: ${CONTROL_PLANE_BOOT_VOLUME_SIZE}
       network:
         default:
-          bridge: ${BRIDGE=vmbr0}
+          bridge: ${BRIDGE}
           model: virtio
-      numSockets: ${CONTROL_PLANE_NUM_SOCKETS=1}
-      numCores: ${CONTROL_PLANE_NUM_CORES=2}
-      memoryMiB: ${CONTROL_PLANE_MEMORY_MIB=2048}
+      numSockets: ${CONTROL_PLANE_NUM_SOCKETS}
+      numCores: ${CONTROL_PLANE_NUM_CORES}
+      memoryMiB: ${CONTROL_PLANE_MEMORY_MIB}
       sshAuthorizedKeys: ${VM_SSH_KEYS}
 ---
 apiVersion: cluster.x-k8s.io/v1beta2
@@ -177,13 +173,13 @@ spec:
       full: true
       disks:
         bootVolume:
-          disk: ${WORKER_BOOT_VOLUME_DEVICE=scsi0}
-          sizeGb: ${WORKER_BOOT_VOLUME_SIZE=40}
+          disk: ${WORKER_BOOT_VOLUME_DEVICE}
+          sizeGb: ${WORKER_BOOT_VOLUME_SIZE}
       network:
         default:
-          bridge: ${BRIDGE=vmbr0}
+          bridge: ${BRIDGE}
           model: virtio
-      numSockets: ${WORKER_NUM_SOCKETS=1}
-      numCores: ${WORKER_NUM_CORES=2}
-      memoryMiB: ${WORKER_MEMORY_MIB=4096}
+      numSockets: ${WORKER_NUM_SOCKETS}
+      numCores: ${WORKER_NUM_CORES}
+      memoryMiB: ${WORKER_MEMORY_MIB}
       sshAuthorizedKeys: ${VM_SSH_KEYS}

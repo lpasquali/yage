@@ -296,6 +296,25 @@ func GenerateWorkloadManifestIfMissing(
 		cfg.ProxmoxCSIURL = proxmox.APIJSONURL(cfg)
 	}
 
+	// K3s mode renders an embedded template (k3s_template.yaml). Upstream
+	// CAPMOX has no K3s flavor; rather than fork a whole repo for one
+	// file, we ship the K3s flavor here and skip clusterctl generate.
+	// The four post-generate patches (in patches.go) still apply — they
+	// match shared CAPI shapes (PMT, ProxmoxCluster) and tolerate the
+	// K3s-only KThreesControlPlane / KThreesConfigTemplate documents
+	// (PatchKubeadmSkipKubeProxyForCilium is a no-op against them).
+	if cfg.BootstrapMode == "k3s" {
+		logx.Log("BOOTSTRAP_MODE=k3s — rendering embedded K3s manifest (no clusterctl generate; upstream CAPMOX ships no k3s flavor).")
+		if err := MaterializeK3sManifest(cfg, false, cfg.CAPIManifest); err != nil {
+			logx.Die("render K3s manifest: %v", err)
+		}
+		cfg.BootstrapClusterctlRegeneratedManifest = true
+		if syncBootstrapConfigToKind != nil {
+			syncBootstrapConfigToKind()
+		}
+		return
+	}
+
 	ctlCfg := ""
 	if ensureClusterctlConfig != nil {
 		ctlCfg = ensureClusterctlConfig()
@@ -332,10 +351,7 @@ func GenerateWorkloadManifestIfMissing(
 		"--worker-machine-count", cfg.WorkerMachineCount,
 		"--infrastructure", cfg.InfraProvider,
 	}
-	if cfg.BootstrapMode == "k3s" {
-		args = append(args, "--flavor", "k3s")
-		logx.Log("BOOTSTRAP_MODE=k3s — requesting `clusterctl generate cluster --flavor k3s` (CAPMOX provider must ship a k3s flavor template).")
-	}
+	// (K3s mode short-circuits above; reaching here means kubeadm.)
 	cmd := exec.Command("clusterctl", args...)
 	cmd.Env = append(os.Environ(),
 		"PROXMOX_URL="+cfg.ProxmoxURL,

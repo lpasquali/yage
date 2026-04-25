@@ -35,14 +35,12 @@ OPTIONS
                                       unknown-future workload that lands on the cluster after bootstrap.
         --bootstrap-mode MODE         Kubernetes flavor: kubeadm (default; full upstream Kubernetes,
                                       ~2 vCPU / 4 GiB per node) or k3s (single-binary, ~1 vCPU / 1 GiB
-                                      per node — for resource-constrained envs). When k3s is selected
-                                      the orchestrator initializes CAPI with the K3s control-plane and
-                                      bootstrap providers instead of kubeadm.
-        --capmox-k3s-provider-url URL Required for --bootstrap-mode k3s. Upstream CAPMOX ships no K3s
-                                      flavor template; this URL points at a fork's release artifact
-                                      (infrastructure-components.yaml) that bundles a
-                                      cluster-template-k3s.yaml. See docs/capmox-k3s-fork/README.md
-                                      for the fork-and-release workflow.
+                                      per node — for resource-constrained envs). With k3s the
+                                      orchestrator initializes CAPI with the K3s control-plane +
+                                      bootstrap providers, and renders an embedded K3s flavor
+                                      manifest in-process (no clusterctl generate cluster — upstream
+                                      CAPMOX ships no k3s flavor; the template lives in
+                                      internal/capimanifest/k3s_template.yaml).
         --allow-resource-overcommit   Downgrade the capacity check to a warning instead of failing
                                       the run when the plan exceeds --resource-budget-fraction.
 

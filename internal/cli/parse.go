@@ -302,8 +302,6 @@ func Parse(c *config.Config, argv []string) {
 			c.AllowResourceOvercommit = true
 		case "--bootstrap-mode":
 			c.BootstrapMode = strings.ToLower(shiftVal(a))
-		case "--capmox-k3s-provider-url":
-			c.CAPMOXK3sProviderURL = shiftVal(a)
 		case "--resource-budget-fraction":
 			v := shiftVal(a)
 			if f, err := strconv.ParseFloat(v, 64); err == nil {

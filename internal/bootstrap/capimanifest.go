@@ -319,19 +319,6 @@ func SyncClusterctlConfigFile(cfg *config.Config) string {
 	defer f.Close()
 	body := fmt.Sprintf("PROXMOX_URL: %q\nPROXMOX_TOKEN: %q\nPROXMOX_SECRET: %q\n",
 		cfg.ProxmoxURL, cfg.ProxmoxToken, cfg.ProxmoxSecret)
-	// K3s mode: route the proxmox infrastructure provider through a
-	// CAPMOX fork that ships cluster-template-k3s.yaml. Upstream CAPMOX
-	// has no K3s flavor; CAPMOX_K3S_PROVIDER_URL points at the fork's
-	// release infrastructure-components.yaml — see
-	// docs/capmox-k3s-fork/README.md.
-	if cfg.BootstrapMode == "k3s" && cfg.CAPMOXK3sProviderURL != "" {
-		body += fmt.Sprintf("\nproviders:\n  - name: proxmox\n    url: %q\n    type: InfrastructureProvider\n",
-			cfg.CAPMOXK3sProviderURL)
-		logx.Log("BOOTSTRAP_MODE=k3s — clusterctl provider 'proxmox' overridden to %s (CAPMOX fork with K3s flavor).",
-			cfg.CAPMOXK3sProviderURL)
-	} else if cfg.BootstrapMode == "k3s" {
-		logx.Warn("BOOTSTRAP_MODE=k3s but CAPMOX_K3S_PROVIDER_URL is unset — `clusterctl generate cluster --flavor k3s` will fail unless upstream CAPMOX ships a K3s flavor (see docs/capmox-k3s-fork/README.md).")
-	}
 	if _, err := f.WriteString(body); err != nil {
 		logx.Die("Cannot write ephemeral clusterctl config: %v", err)
 	}

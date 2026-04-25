@@ -627,12 +627,10 @@ unset TEMPLATE_VMID 2>/dev/null || true
 RESOURCE_BUDGET_FRACTION="${RESOURCE_BUDGET_FRACTION:-0.6667}"
 ALLOW_RESOURCE_OVERCOMMIT="${ALLOW_RESOURCE_OVERCOMMIT:-false}"
 # Bootstrap flavor: kubeadm (default) or k3s (smaller — for resource-constrained envs).
+# K3s mode: the Go binary renders an embedded K3s flavor manifest
+# (internal/capimanifest/k3s_template.yaml) directly; no clusterctl
+# generate cluster --flavor k3s and no CAPMOX fork required.
 BOOTSTRAP_MODE="${BOOTSTRAP_MODE:-kubeadm}"
-# When BOOTSTRAP_MODE=k3s, point clusterctl at a CAPMOX fork that
-# ships cluster-template-k3s.yaml (upstream CAPMOX has no K3s flavor
-# today — see docs/capmox-k3s-fork/README.md). Empty default; required
-# for k3s mode to work end-to-end.
-CAPMOX_K3S_PROVIDER_URL="${CAPMOX_K3S_PROVIDER_URL:-}"
 # Per-machine-type Proxmox template overrides; empty → fall back to PROXMOX_TEMPLATE_ID.
 WORKLOAD_CONTROL_PLANE_TEMPLATE_ID="${WORKLOAD_CONTROL_PLANE_TEMPLATE_ID:-}"
 WORKLOAD_WORKER_TEMPLATE_ID="${WORKLOAD_WORKER_TEMPLATE_ID:-}"

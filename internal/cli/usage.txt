@@ -38,6 +38,11 @@ OPTIONS
                                       per node — for resource-constrained envs). When k3s is selected
                                       the orchestrator initializes CAPI with the K3s control-plane and
                                       bootstrap providers instead of kubeadm.
+        --capmox-k3s-provider-url URL Required for --bootstrap-mode k3s. Upstream CAPMOX ships no K3s
+                                      flavor template; this URL points at a fork's release artifact
+                                      (infrastructure-components.yaml) that bundles a
+                                      cluster-template-k3s.yaml. See docs/capmox-k3s-fork/README.md
+                                      for the fork-and-release workflow.
         --allow-resource-overcommit   Downgrade the capacity check to a warning instead of failing
                                       the run when the plan exceeds --resource-budget-fraction.
 

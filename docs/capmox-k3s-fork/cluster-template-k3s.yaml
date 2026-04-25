@@ -1,0 +1,189 @@
+# cluster-template-k3s.yaml — drop-in K3s flavor for cluster-api-provider-proxmox
+#
+# Copy this file into your CAPMOX fork at:
+#   templates/cluster-template-k3s.yaml
+#
+# Then cut a release of the fork (the clusterctl release pipeline pulls
+# every templates/cluster-template-*.yaml as a flavor); bootstrap-capi
+# will request it via `clusterctl generate cluster --flavor k3s`.
+#
+# The template assumes the K3s providers (KCP-K3s + CABK3s) are
+# already installed via `clusterctl init --control-plane k3s
+# --bootstrap k3s` — bootstrap-capi does that for you when
+# BOOTSTRAP_MODE=k3s.
+#
+# Variables (clusterctl substitutes from env at generate time):
+#   CLUSTER_NAME
+#   KUBERNETES_VERSION              (e.g. v1.31.4 — K3s appends "+k3s1")
+#   CONTROL_PLANE_MACHINE_COUNT
+#   WORKER_MACHINE_COUNT
+#   PROXMOX_URL / PROXMOX_REGION / PROXMOX_NODE / PROXMOX_TEMPLATE_ID
+#   PROXMOX_SOURCENODE / BRIDGE / PROXMOX_CLOUDINIT_STORAGE
+#   CONTROL_PLANE_ENDPOINT_IP / CONTROL_PLANE_ENDPOINT_PORT
+#   NODE_IP_RANGES / GATEWAY / IP_PREFIX / DNS_SERVERS
+#   ALLOWED_NODES
+#   VM_SSH_KEYS
+#   CONTROL_PLANE_BOOT_VOLUME_DEVICE / SIZE / NUM_SOCKETS / NUM_CORES / MEMORY_MIB
+#   WORKER_BOOT_VOLUME_DEVICE / SIZE / NUM_SOCKETS / NUM_CORES / MEMORY_MIB
+
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks: ["192.168.0.0/16"]
+    services:
+      cidrBlocks: ["10.96.0.0/12"]
+  controlPlaneEndpoint:
+    host: ${CONTROL_PLANE_ENDPOINT_IP}
+    port: ${CONTROL_PLANE_ENDPOINT_PORT=6443}
+  controlPlaneRef:
+    apiVersion: controlplane.cluster.x-k8s.io/v1beta2
+    kind: KThreesControlPlane
+    name: ${CLUSTER_NAME}-control-plane
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+    kind: ProxmoxCluster
+    name: ${CLUSTER_NAME}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: ProxmoxCluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  controlPlaneEndpoint:
+    host: ${CONTROL_PLANE_ENDPOINT_IP}
+    port: ${CONTROL_PLANE_ENDPOINT_PORT=6443}
+  ipv4Config:
+    addresses: ${NODE_IP_RANGES}
+    gateway: ${GATEWAY}
+    prefix: ${IP_PREFIX=24}
+  dnsServers: ${DNS_SERVERS}
+  allowedNodes: ${ALLOWED_NODES}
+  schedulerHints:
+    memoryAdjustment: ${PROXMOX_MEMORY_ADJUSTMENT=100}
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1beta2
+kind: KThreesControlPlane
+metadata:
+  name: ${CLUSTER_NAME}-control-plane
+  namespace: ${NAMESPACE}
+spec:
+  replicas: ${CONTROL_PLANE_MACHINE_COUNT}
+  version: ${KUBERNETES_VERSION}+k3s1
+  machineTemplate:
+    infrastructureRef:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+      kind: ProxmoxMachineTemplate
+      name: ${CLUSTER_NAME}-control-plane
+  kthreesConfigSpec:
+    serverConfig:
+      # K3s replaces kube-proxy with its own implementation by default.
+      # bootstrap-capi installs Cilium with kubeProxyReplacement=true on
+      # top, so disable the K3s built-ins that Cilium subsumes.
+      disableComponents:
+        - servicelb       # we use Cilium LB-IPAM instead
+        - traefik         # workload uses an Argo CD-installed ingress
+      tlsSan:
+        - ${CONTROL_PLANE_ENDPOINT_IP}
+    agentConfig:
+      airGapped: false
+      kubeletArgs:
+        - "--cloud-provider=external"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: ProxmoxMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-control-plane
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      sourceNode: ${PROXMOX_SOURCENODE}
+      templateID: ${PROXMOX_TEMPLATE_ID}
+      vmIDRange:
+        start: 1000
+        end: 1099
+      format: qcow2
+      full: true
+      disks:
+        bootVolume:
+          disk: ${CONTROL_PLANE_BOOT_VOLUME_DEVICE=scsi0}
+          sizeGb: ${CONTROL_PLANE_BOOT_VOLUME_SIZE=30}
+      network:
+        default:
+          bridge: ${BRIDGE=vmbr0}
+          model: virtio
+      numSockets: ${CONTROL_PLANE_NUM_SOCKETS=1}
+      numCores: ${CONTROL_PLANE_NUM_CORES=2}
+      memoryMiB: ${CONTROL_PLANE_MEMORY_MIB=2048}
+      sshAuthorizedKeys: ${VM_SSH_KEYS}
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: ${CLUSTER_NAME}-md-0
+  namespace: ${NAMESPACE}
+spec:
+  clusterName: ${CLUSTER_NAME}
+  replicas: ${WORKER_MACHINE_COUNT}
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: ${CLUSTER_NAME}
+      version: ${KUBERNETES_VERSION}+k3s1
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+          kind: KThreesConfigTemplate
+          name: ${CLUSTER_NAME}-md-0
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+        kind: ProxmoxMachineTemplate
+        name: ${CLUSTER_NAME}-md-0
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+kind: KThreesConfigTemplate
+metadata:
+  name: ${CLUSTER_NAME}-md-0
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      agentConfig:
+        airGapped: false
+        kubeletArgs:
+          - "--cloud-provider=external"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: ProxmoxMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-md-0
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      sourceNode: ${PROXMOX_SOURCENODE}
+      templateID: ${PROXMOX_TEMPLATE_ID}
+      vmIDRange:
+        start: 2000
+        end: 2099
+      format: qcow2
+      full: true
+      disks:
+        bootVolume:
+          disk: ${WORKER_BOOT_VOLUME_DEVICE=scsi0}
+          sizeGb: ${WORKER_BOOT_VOLUME_SIZE=40}
+      network:
+        default:
+          bridge: ${BRIDGE=vmbr0}
+          model: virtio
+      numSockets: ${WORKER_NUM_SOCKETS=1}
+      numCores: ${WORKER_NUM_CORES=2}
+      memoryMiB: ${WORKER_MEMORY_MIB=4096}
+      sshAuthorizedKeys: ${VM_SSH_KEYS}

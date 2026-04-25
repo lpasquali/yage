@@ -43,8 +43,9 @@ OPTIONS
                                       internal/capimanifest/k3s_template.yaml).
         --aws-mode MODE               (--infrastructure-provider aws only) CAPA flavor:
                                         unmanaged   — self-managed K8s on EC2 (default).
-                                        eks         — EKS-managed control plane (flat ~$73/mo) +
-                                                      EC2 Managed Node Group for workers.
+                                        eks         — EKS-managed control plane (flat hourly fee +
+                                                      EC2 Managed Node Group for workers; live-priced
+                                                      via the AWS Bulk Pricing JSON).
                                         eks-fargate — EKS CP + Fargate workers (no EC2 fleet);
                                                       sized via --aws-fargate-pod-count /
                                                       --aws-fargate-pod-cpu / --aws-fargate-pod-memory-gib.
@@ -56,11 +57,11 @@ OPTIONS
                                         prod       — 1 NAT GW, 1 ALB, 100 GB egress, 10 GB CloudWatch (default)
                                         enterprise — 3 NAT GWs (multi-AZ HA), 2 ALBs, 1 NLB, 500 GB egress,
                                                      50 GB CloudWatch
-        --aws-nat-gateway-count N     Override NAT GW count (~$32/mo each + processing).
-        --aws-alb-count N             Override ALB count (~$46/mo each at typical LCU).
-        --aws-nlb-count N             Override NLB count (~$30/mo each at typical LCU).
-        --aws-data-transfer-gb N      Internet egress estimate ($0.09/GB above free tier).
-        --aws-cloudwatch-logs-gb N    CloudWatch Logs ingested per month ($0.50/GB).
+        --aws-nat-gateway-count N     Override NAT GW count (priced live: hourly + per-GB processed).
+        --aws-alb-count N             Override ALB count (priced live: hourly + LCU-hour).
+        --aws-nlb-count N             Override NLB count (priced live: hourly + NLCU-hour).
+        --aws-data-transfer-gb N      Internet egress estimate (live $/GB from AWS pricing).
+        --aws-cloudwatch-logs-gb N    CloudWatch Logs ingested per month (live $/GB from AWS pricing).
         --allow-resource-overcommit   Downgrade the capacity check to a warning instead of failing
                                       the run when the plan exceeds --resource-budget-fraction.
         --system-apps-cpu-millicores N    Cluster-wide CPU reserve for system add-ons bootstrap-capi

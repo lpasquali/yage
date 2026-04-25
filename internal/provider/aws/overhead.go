@@ -4,47 +4,17 @@ import (
 	"fmt"
 
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/pricing"
 	"github.com/lpasquali/bootstrap-capi/internal/provider"
 )
 
-// AWS service overhead pricing — the dependencies CAPA + workloads
-// pull in beyond raw EC2/EBS/Fargate/EKS-CP. us-east-1 prices,
-// 730-hour month.
-//
-// Costs that scale per-instance / per-event are reported as a flat
-// monthly approximation suitable for a dry-run. Actual billing
-// depends on traffic shape; spot-check against AWS Cost Explorer
-// once the cluster runs real load.
-const (
-	// NAT Gateway: $0.045/hour fixed + $0.045/GB processed.
-	natGatewayHourly      = 0.045
-	natGatewayProcGBCost  = 0.045
-	// ALB: $0.0225/hour fixed + $0.008/LCU-hour. We estimate
-	// ~5 LCU/hour avg for a typical Argo CD ingress workload.
-	albHourly             = 0.0225
-	albLCUHour            = 0.008
-	albLCUEstimatePerHour = 5.0
-	// NLB: $0.0225/hour fixed + $0.006/NLCU-hour. Same LCU
-	// estimate; NLBs are usually quieter than ALBs.
-	nlbHourly             = 0.0225
-	nlbLCUHour            = 0.006
-	nlbLCUEstimatePerHour = 3.0
-	// CloudWatch Logs ingestion: $0.50/GB ingested. Storage is
-	// $0.03/GB-month — small relative to ingestion for typical
-	// retention.
-	cwLogsIngestionPerGB = 0.50
-	cwLogsStoragePerGB   = 0.03
-	// Route53 hosted zone: $0.50/zone/month. Queries are
-	// $0.40/M and almost always negligible — we ignore them.
-	route53PerZoneMonthly = 0.50
-	// Data egress to internet: $0.09/GB above 100 GB free tier;
-	// model as $0.09/GB across the user-supplied estimate.
-	egressPerGB = 0.09
-)
+// AWS overhead **shape** — counts, not money. Per-tier defaults
+// describe an architecture (how many NAT GWs, ALBs, NLBs the
+// workload assumes), and per-component cfg overrides (AWSALBCount,
+// AWSNATGatewayCount, ...) override individual counts. The actual
+// $/unit comes from internal/pricing live AWS API at the moment of
+// estimation.
 
-// overheadDefaults returns the bundled "everything else" component
-// counts for a given tier. Per-component overrides on cfg take
-// precedence over these.
 type overheadCounts struct {
 	natGateways    int
 	albs           int
@@ -67,17 +37,17 @@ func overheadDefaults(tier string) overheadCounts {
 		}
 	case "enterprise":
 		return overheadCounts{
-			natGateways:    3, // multi-AZ HA
-			albs:           2, // Argo + 1 platform ingress
-			nlbs:           1, // separate NLB for cluster-internal egress
+			natGateways:    3,
+			albs:           2,
+			nlbs:           1,
 			dataTransferGB: 500,
 			cloudwatchGB:   50,
 			route53Zones:   2,
 		}
 	default: // prod
 		return overheadCounts{
-			natGateways:    1, // single AZ NAT keeps cost down
-			albs:           1, // Argo CD ingress
+			natGateways:    1,
+			albs:           1,
 			nlbs:           0,
 			dataTransferGB: 100,
 			cloudwatchGB:   10,
@@ -86,10 +56,10 @@ func overheadDefaults(tier string) overheadCounts {
 	}
 }
 
-// addServiceOverhead appends service-overhead CostItems to items
-// based on tier + per-component overrides. Returns the new slice +
-// the total overhead $/month.
-func addServiceOverhead(items []provider.CostItem, cfg *config.Config) ([]provider.CostItem, float64) {
+// addServiceOverhead appends overhead CostItems with live $/unit.
+// Returns the new slice. Component counts come from tier defaults
+// + per-component cfg overrides.
+func addServiceOverhead(items []provider.CostItem, cfg *config.Config, region string) ([]provider.CostItem, error) {
 	tier := orDefault(cfg.AWSOverheadTier, "prod")
 	d := overheadDefaults(tier)
 
@@ -125,29 +95,42 @@ func addServiceOverhead(items []provider.CostItem, cfg *config.Config) ([]provid
 		})
 	}
 
-	// NAT Gateway: hourly + ~30% of egress GB processed (rough split
-	// — most egress also touches the NAT path).
 	if d.natGateways > 0 {
-		natHourly := natGatewayHourly * 730
-		natProc := natGatewayProcGBCost * float64(d.dataTransferGB) * 0.3 / float64(d.natGateways)
-		add(fmt.Sprintf("NAT Gateway (~%d GB processed/mo each)", int(float64(d.dataTransferGB)*0.3/float64(d.natGateways))),
-			d.natGateways, natHourly+natProc)
+		hr, gb, err := pricing.AWSNATGatewayPricing(region)
+		if err != nil {
+			return items, fmt.Errorf("nat gw: %w", err)
+		}
+		natMonthly := hr*pricing.MonthlyHours + gb*float64(d.dataTransferGB)*0.3/float64(d.natGateways)
+		add(fmt.Sprintf("NAT Gateway (~%d GB processed/mo each)",
+			int(float64(d.dataTransferGB)*0.3/float64(d.natGateways))),
+			d.natGateways, natMonthly)
 	}
 
-	// ALB: hourly + LCU.
 	if d.albs > 0 {
-		alb := (albHourly + albLCUHour*albLCUEstimatePerHour) * 730
+		hr, lcuHr, err := pricing.AWSApplicationLBPricing(region)
+		if err != nil {
+			return items, fmt.Errorf("alb: %w", err)
+		}
+		// LCU estimate: ~5 LCU/hour for typical Argo CD ingress.
+		alb := (hr + lcuHr*5.0) * pricing.MonthlyHours
 		add("Application Load Balancer (Argo CD ingress / app)", d.albs, alb)
 	}
-	// NLB.
+
 	if d.nlbs > 0 {
-		nlb := (nlbHourly + nlbLCUHour*nlbLCUEstimatePerHour) * 730
+		hr, lcuHr, err := pricing.AWSNetworkLBPricing(region)
+		if err != nil {
+			return items, fmt.Errorf("nlb: %w", err)
+		}
+		nlb := (hr + lcuHr*3.0) * pricing.MonthlyHours
 		add("Network Load Balancer", d.nlbs, nlb)
 	}
 
-	// Data egress to internet (above NAT processing).
 	if d.dataTransferGB > 0 {
-		egress := egressPerGB * float64(d.dataTransferGB)
+		egressGB, err := pricing.AWSEgressUSDPerGB(region)
+		if err != nil {
+			return items, fmt.Errorf("egress: %w", err)
+		}
+		egress := egressGB * float64(d.dataTransferGB)
 		items = append(items, provider.CostItem{
 			Name:           fmt.Sprintf("Internet egress (~%d GB/mo)", d.dataTransferGB),
 			UnitUSDMonthly: egress,
@@ -156,31 +139,27 @@ func addServiceOverhead(items []provider.CostItem, cfg *config.Config) ([]provid
 		})
 	}
 
-	// CloudWatch Logs ingestion + storage (assume 30-day retention,
-	// so storage GB ≈ ingestion GB at steady state).
 	if d.cloudwatchGB > 0 {
-		ingest := cwLogsIngestionPerGB * float64(d.cloudwatchGB)
-		storage := cwLogsStoragePerGB * float64(d.cloudwatchGB)
+		ingest, storage, err := pricing.AWSCloudWatchLogsPricing(region)
+		if err != nil {
+			return items, fmt.Errorf("cwl: %w", err)
+		}
+		cw := ingest*float64(d.cloudwatchGB) + storage*float64(d.cloudwatchGB)
 		items = append(items, provider.CostItem{
 			Name:           fmt.Sprintf("CloudWatch Logs (%d GB ingested/mo)", d.cloudwatchGB),
-			UnitUSDMonthly: ingest + storage,
+			UnitUSDMonthly: cw,
 			Qty:            1,
-			SubtotalUSD:    ingest + storage,
+			SubtotalUSD:    cw,
 		})
 	}
 
-	// Route53 hosted zones.
 	if d.route53Zones > 0 {
-		add("Route53 hosted zones", d.route53Zones, route53PerZoneMonthly)
+		zoneM, err := pricing.AWSRoute53ZoneUSDPerMonth(region)
+		if err != nil {
+			return items, fmt.Errorf("route53: %w", err)
+		}
+		add("Route53 hosted zones", d.route53Zones, zoneM)
 	}
 
-	// Sum the overhead lines we just added (last len-original items).
-	total := 0.0
-	for _, it := range items {
-		// We can't easily distinguish "overhead" from "compute" by
-		// position alone here; caller computes the grand total
-		// instead. Returning total=0 to keep the interface honest.
-		_ = it
-	}
-	return items, total
+	return items, nil
 }

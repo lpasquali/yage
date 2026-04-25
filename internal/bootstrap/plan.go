@@ -20,7 +20,9 @@ import (
 
 	"github.com/lpasquali/bootstrap-capi/internal/capacity"
 	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/bootstrap-capi/internal/cost"
 	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
+	"github.com/lpasquali/bootstrap-capi/internal/pricing"
 	"github.com/lpasquali/bootstrap-capi/internal/provider"
 	"github.com/lpasquali/bootstrap-capi/internal/shell"
 )
@@ -50,6 +52,8 @@ func PrintPlan(cfg *config.Config) {
 	planCapacity(w, cfg)
 	planAllocations(w, cfg)
 	planMonthlyCost(w, cfg)
+	planCostCompare(w, cfg)
+	planRetention(w, cfg)
 
 	fmt.Fprintln(w, hr)
 	fmt.Fprintln(w, "✅ Dry run complete — NO state was changed.")
@@ -357,13 +361,66 @@ func planMonthlyCost(w *os.File, cfg *config.Config) {
 		return
 	}
 	section(w, "Estimated monthly cost (provider: "+p.Name()+")")
+	bullet(w, "%s", pricing.TallerNote())
 	for _, it := range est.Items {
-		bullet(w, "%-40s %d × $%7.2f = $%9.2f", it.Name, it.Qty, it.UnitUSDMonthly, it.SubtotalUSD)
+		unit := pricing.FormatTaller(it.UnitUSDMonthly, "USD")
+		sub := pricing.FormatTaller(it.SubtotalUSD, "USD")
+		bullet(w, "%-40s %d × %s = %s", it.Name, it.Qty, unit, sub)
 	}
-	bullet(w, "TOTAL: ~$%.2f / month", est.TotalUSDMonthly)
+	totalStr := pricing.FormatTaller(est.TotalUSDMonthly, "USD")
+	bullet(w, "TOTAL: ~%s / month (%s)", totalStr, pricing.TallerCurrency())
 	if est.Note != "" {
 		bullet(w, "note: %s", est.Note)
 	}
+}
+
+// planCostCompare emits a side-by-side cost table when --cost-compare
+// is set. Runs every registered provider's EstimateMonthlyCostUSD
+// against the same cfg; sorts ascending by total monthly. The
+// rightmost column shows what the same total budget would buy as
+// persistent block storage on each cloud — handy for picking where
+// observability + DB go when storage is the dominant cost driver.
+func planCostCompare(w *os.File, cfg *config.Config) {
+	if !cfg.CostCompare {
+		return
+	}
+	cost.PrintComparison(w, cfg)
+}
+
+// planRetention prints how many GB of cheap-tier block storage the
+// user's budget buys AFTER paying for compute on the active provider.
+// No-op when --budget-usd-month is unset.
+func planRetention(w *os.File, cfg *config.Config) {
+	if cfg.BudgetUSDMonth <= 0 {
+		return
+	}
+	p, err := provider.For(cfg)
+	if err != nil {
+		return
+	}
+	est, err := p.EstimateMonthlyCostUSD(cfg)
+	if err != nil {
+		return
+	}
+	budgetStr := pricing.FormatTaller(cfg.BudgetUSDMonth, "USD")
+	section(w, fmt.Sprintf("Storage retention at %s / month budget (%s)", budgetStr, p.Name()))
+	gb, note := cost.RetentionAtBudget(p.Name(), cfg, cfg.BudgetUSDMonth, est.TotalUSDMonthly)
+	if note != "" {
+		bullet(w, "❌ %s", note)
+		bullet(w, "   compute estimate (%s): %s / month", p.Name(), pricing.FormatTaller(est.TotalUSDMonthly, "USD"))
+		bullet(w, "   shrink the cluster, raise the budget, or pick a cheaper cloud (--cost-compare)")
+		return
+	}
+	leftover := cfg.BudgetUSDMonth - est.TotalUSDMonthly
+	label := cost.LiveBlockStorageLabel(p.Name(), cfg)
+	bullet(w, "compute estimate:        %s / month", pricing.FormatTaller(est.TotalUSDMonthly, "USD"))
+	bullet(w, "leftover for storage:    %s / month", pricing.FormatTaller(leftover, "USD"))
+	if gb >= 1024 {
+		bullet(w, "max persistent storage:  %.1f TiB at the cloud's cheap-tier price (%s)", gb/1024, label)
+	} else {
+		bullet(w, "max persistent storage:  %.0f GB at the cloud's cheap-tier price (%s)", gb, label)
+	}
+	bullet(w, "split this across observability + DB + product buckets via cluster-side ResourceQuota")
 }
 
 func firstNonEmptyStr(vals ...string) string {

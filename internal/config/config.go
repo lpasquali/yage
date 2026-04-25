@@ -83,6 +83,17 @@ type Config struct {
 	// executing any phase. Distinct from PivotDryRun (which actually
 	// provisions the mgmt cluster and stops at `clusterctl move`).
 	DryRun                      bool
+	// CostCompare, when true, makes the dry-run plan include a
+	// cross-cloud comparison: same logical cluster shape evaluated
+	// against every registered provider's EstimateMonthlyCostUSD,
+	// with a per-cloud "if you spent this on storage" retention
+	// column. Independent of cfg.InfraProvider — runs all of them.
+	CostCompare                 bool
+	// BudgetUSDMonth, when > 0, drives a retention calculation:
+	// budget − compute = leftover; leftover ÷ block-storage $/GB-mo
+	// = how much persistent volume capacity remains for
+	// observability / DB buckets after the cluster is paid for.
+	BudgetUSDMonth              float64
 	// ResourceBudgetFraction caps the share of available Proxmox host
 	// CPU/memory/storage that the configured clusters may consume.
 	// 0.75 by default — the remaining 25 % is reserved for the host
@@ -116,7 +127,7 @@ type Config struct {
 	//     CP + worker EC2 nodes + EBS.
 	//   - "eks": EKS-managed control plane (AWSManagedControlPlane)
 	//     + EC2 worker nodes (AWSManagedMachinePool). CP costs flip
-	//     from 3× EC2 to a flat $73/month per cluster.
+	//     from 3× EC2 to a flat hourly fee per cluster (live AWS price).
 	//   - "eks-fargate": EKS CP + Fargate workers (AWSFargateProfile).
 	//     No worker EC2 fleet; pay per pod-vCPU-hour + GB-hour.
 	AWSMode                     string
@@ -142,6 +153,77 @@ type Config struct {
 	AWSDataTransferGB           string // monthly egress estimate
 	AWSCloudWatchLogsGB         string
 	AWSRoute53HostedZones       string
+	// AzureControlPlaneMachineType / AzureNodeMachineType drive the
+	// Azure VM SKUs CAPZ provisions for the workload cluster when
+	// --infrastructure-provider azure. Defaults match the CAPZ
+	// quick-start (Standard_D2s_v3 for both CP and worker). The Azure
+	// provider also uses these to estimate monthly cost in dry-run.
+	AzureControlPlaneMachineType string
+	AzureNodeMachineType         string
+	AzureLocation                string
+	// AzureMode picks the CAPZ flavor:
+	//   - "unmanaged" (default): self-managed Kubernetes on Azure VMs.
+	//     CAPZ emits AzureCluster + AzureMachineTemplate; you pay for
+	//     CP + worker VMs + managed boot disks.
+	//   - "aks": AKS-managed control plane (AzureManagedControlPlane)
+	//     + Node Pool VMs (AzureManagedMachinePool). CP costs flip
+	//     from N× VM to a flat hourly fee per cluster (Standard tier;
+	//     the Free tier was retired mid-2024). Priced live via the
+	//     Azure Retail Prices API.
+	AzureMode string
+	// AzureOverheadTier picks the bundled "everything else" cost
+	// estimate (NAT Gateway, Standard Load Balancer, Public IP, Log
+	// Analytics, DNS zone, egress):
+	//   - "dev"        — no NAT, 1 LB, 1 public IP, minimal Log Analytics
+	//   - "prod"       — 1 NAT GW, 1 LB, 2 public IPs, Log Analytics, DNS  (default)
+	//   - "enterprise" — 3 NAT GWs (multi-zone), 2 LBs, 4 public IPs, heavy Log Analytics
+	AzureOverheadTier string
+	// GCPControlPlaneMachineType / GCPNodeMachineType drive the GCE
+	// machine types CAPG provisions for the workload cluster when
+	// --infrastructure-provider gcp. Defaults match the CAPG quick-
+	// start (n2-standard-2 for both CP and worker). The GCP provider
+	// uses these to estimate monthly cost in dry-run via live Cloud
+	// Billing Catalog API (region from GCPRegion). Sustained-use
+	// discount and spot/preemptible discounts are NOT applied.
+	GCPControlPlaneMachineType string
+	GCPNodeMachineType         string
+	GCPRegion                  string
+	GCPProject                 string
+	// GCPMode picks the CAPG flavor:
+	//   - "unmanaged" (default): self-managed Kubernetes on GCE.
+	//     CAPG emits GCPCluster + GCPMachineTemplate; you pay for
+	//     CP + worker GCE nodes + persistent-disk boot volumes.
+	//   - "gke": GKE Standard managed control plane + GCE worker
+	//     nodes (GKE node pool). CP costs flip from N× GCE to a flat
+	//     hourly fee per cluster (priced live via the GCP Cloud Billing
+	//     Catalog API). Autopilot mode is per-pod-billed (similar to
+	//     AWS Fargate) and not modeled today.
+	GCPMode string
+	// GCPOverheadTier picks the bundled "everything else" cost
+	// estimate (Cloud NAT, Load Balancers, Cloud Logging, Cloud DNS,
+	// internet egress):
+	//   - "dev"        — public IPs only (no NAT), 1 LB, minimal logging
+	//   - "prod"       — 1 NAT, 1 LB, 10 GB logging, 1 DNS zone   (default)
+	//   - "enterprise" — 3 NATs (multi-region HA), 3 LBs, 50 GB logging
+	GCPOverheadTier string
+	// HetznerControlPlaneMachineType / HetznerNodeMachineType drive
+	// the Hetzner Cloud server types CAPHV provisions for the
+	// workload cluster when --infrastructure-provider hetzner.
+	// Defaults to cx22 (2 vCPU shared, 4 GB RAM, 40 GB SSD) — the
+	// cheapest Hetzner type that comfortably runs k3s. The Hetzner
+	// provider uses these to estimate monthly cost in dry-run.
+	// Hetzner has no managed-Kubernetes service in CAPHV today, so
+	// there's no Mode equivalent to AWSMode/AzureMode.
+	HetznerControlPlaneMachineType string
+	HetznerNodeMachineType         string
+	HetznerLocation                string // fsn1 (Falkenstein DE), nbg1 (Nuremberg), hel1 (Helsinki), ash (US-east), hil (US-west), sin (Singapore)
+	// HetznerOverheadTier picks the bundled "everything else" cost
+	// estimate (Cloud Load Balancers, Floating IPs, optional extra
+	// Cloud Volumes, optional backup surcharge):
+	//   - "dev"        — 1 LB11 (ingress), 0 floating IPs, no backups
+	//   - "prod"       — 1 LB21, 1 floating IP, no backups            (default)
+	//   - "enterprise" — 2 LB21, 2 floating IPs, 5 TB volume budget, +20% backups
+	HetznerOverheadTier string
 	// BootstrapMode selects the Kubernetes flavor:
 	//   - "kubeadm" (default): standard upstream Kubernetes via kubeadm,
 	//     control-plane runs etcd + apiserver + controller-manager +
@@ -587,6 +669,21 @@ func Load() *Config {
 	c.AWSDataTransferGB = getenv("AWS_DATA_TRANSFER_GB", "")
 	c.AWSCloudWatchLogsGB = getenv("AWS_CLOUDWATCH_LOGS_GB", "")
 	c.AWSRoute53HostedZones = getenv("AWS_ROUTE53_HOSTED_ZONES", "")
+	c.AzureControlPlaneMachineType = getenv("AZURE_CONTROL_PLANE_MACHINE_TYPE", "Standard_D2s_v3")
+	c.AzureNodeMachineType = getenv("AZURE_NODE_MACHINE_TYPE", "Standard_D2s_v3")
+	c.AzureLocation = getenv("AZURE_LOCATION", "eastus")
+	c.AzureMode = getenv("AZURE_MODE", "unmanaged")
+	c.AzureOverheadTier = getenv("AZURE_OVERHEAD_TIER", "prod")
+	c.GCPControlPlaneMachineType = getenv("GCP_CONTROL_PLANE_MACHINE_TYPE", "n2-standard-2")
+	c.GCPNodeMachineType = getenv("GCP_NODE_MACHINE_TYPE", "n2-standard-2")
+	c.GCPRegion = getenv("GCP_REGION", "us-central1")
+	c.GCPProject = getenv("GCP_PROJECT", "")
+	c.GCPMode = getenv("GCP_MODE", "unmanaged")
+	c.GCPOverheadTier = getenv("GCP_OVERHEAD_TIER", "prod")
+	c.HetznerControlPlaneMachineType = getenv("HCLOUD_CONTROL_PLANE_MACHINE_TYPE", "cx22")
+	c.HetznerNodeMachineType = getenv("HCLOUD_NODE_MACHINE_TYPE", "cx22")
+	c.HetznerLocation = getenv("HCLOUD_REGION", "fsn1")
+	c.HetznerOverheadTier = getenv("HETZNER_OVERHEAD_TIER", "prod")
 	c.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
 	c.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
 

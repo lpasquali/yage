@@ -302,6 +302,12 @@ func Parse(c *config.Config, argv []string) {
 			c.PivotDryRun = true
 		case "--dry-run":
 			c.DryRun = true
+		case "--cost-compare":
+			c.CostCompare = true
+		case "--budget-usd-month":
+			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil {
+				c.BudgetUSDMonth = f
+			}
 		case "--allow-resource-overcommit":
 			c.AllowResourceOvercommit = true
 		case "--system-apps-cpu-millicores":
@@ -334,6 +340,36 @@ func Parse(c *config.Config, argv []string) {
 			c.AWSDataTransferGB = shiftVal(a)
 		case "--aws-cloudwatch-logs-gb":
 			c.AWSCloudWatchLogsGB = shiftVal(a)
+		case "--azure-mode":
+			c.AzureMode = strings.ToLower(shiftVal(a))
+		case "--azure-location":
+			c.AzureLocation = shiftVal(a)
+		case "--azure-control-plane-machine-type":
+			c.AzureControlPlaneMachineType = shiftVal(a)
+		case "--azure-node-machine-type":
+			c.AzureNodeMachineType = shiftVal(a)
+		case "--azure-overhead-tier":
+			c.AzureOverheadTier = strings.ToLower(shiftVal(a))
+		case "--gcp-mode":
+			c.GCPMode = strings.ToLower(shiftVal(a))
+		case "--gcp-region":
+			c.GCPRegion = shiftVal(a)
+		case "--gcp-project":
+			c.GCPProject = shiftVal(a)
+		case "--gcp-control-plane-machine-type":
+			c.GCPControlPlaneMachineType = shiftVal(a)
+		case "--gcp-node-machine-type":
+			c.GCPNodeMachineType = shiftVal(a)
+		case "--gcp-overhead-tier":
+			c.GCPOverheadTier = strings.ToLower(shiftVal(a))
+		case "--hetzner-control-plane-machine-type":
+			c.HetznerControlPlaneMachineType = shiftVal(a)
+		case "--hetzner-node-machine-type":
+			c.HetznerNodeMachineType = shiftVal(a)
+		case "--hetzner-location":
+			c.HetznerLocation = shiftVal(a)
+		case "--hetzner-overhead-tier":
+			c.HetznerOverheadTier = strings.ToLower(shiftVal(a))
 		case "--resource-budget-fraction":
 			v := shiftVal(a)
 			if f, err := strconv.ParseFloat(v, 64); err == nil {

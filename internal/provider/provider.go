@@ -125,13 +125,16 @@ type Provider interface {
 	// install-as-helm-only (or doesn't exist).
 	EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error
 
-	// EstimateMonthlyCostUSD returns a rough monthly billing estimate
-	// in USD for the planned cluster (compute + storage; not network
-	// egress, NAT, ELB extras unless documented). Implementations are
-	// best-effort napkin math — they read cfg.<provider>InstanceType-
-	// style fields against a small in-binary price table. Return
-	// ErrNotApplicable when the provider is self-hosted (Proxmox) or
-	// pricing is too variable (private OpenStack, on-prem vSphere).
+	// EstimateMonthlyCostUSD returns a monthly billing estimate in
+	// USD for the planned cluster. Implementations fetch every price
+	// LIVE from the vendor's FinOps / billing API via internal/pricing
+	// — there are no hardcoded money numbers. Tier-based component
+	// counts (NAT GW, LB, egress GB, etc.) describe shape and stay
+	// constant across price changes. Return ErrNotApplicable when the
+	// provider is self-hosted (Proxmox) or pricing is too variable
+	// (private OpenStack, on-prem vSphere). Wrap ErrNotApplicable
+	// when a live API is unreachable so callers can surface "estimate
+	// unavailable" instead of fabricating a number.
 	EstimateMonthlyCostUSD(cfg *config.Config) (CostEstimate, error)
 }
 

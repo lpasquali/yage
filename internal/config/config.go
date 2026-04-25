@@ -109,6 +109,16 @@ type Config struct {
 	// over-the-budget capacity check to a warning instead of failing
 	// the run.
 	AllowResourceOvercommit     bool
+	// OvercommitTolerancePct caps how far above 100% of host capacity
+	// the combined (existing-VM + planned) demand may go before the
+	// orchestrator refuses to continue. 15 = "(existing + planned)
+	// must be ≤ host × 1.15" — Proxmox supports memory overcommit
+	// via ballooning + swap, but >15% drift starts to OOM under
+	// load. Below the soft threshold (ResourceBudgetFraction) is
+	// fine; between threshold and 1+tolerance is "tight, warn-and-
+	// continue"; above 1+tolerance is "abort unless --allow-resource-
+	// overcommit". Default 15. See capacity.CheckCombined.
+	OvercommitTolerancePct      float64
 	// SystemAppsCPUMillicores / SystemAppsMemoryMiB define the cluster-
 	// wide reserve for the system add-ons bootstrap-capi installs:
 	// kyverno, cert-manager, proxmox-csi (controller), argocd (operator
@@ -655,6 +665,7 @@ func Load() *Config {
 	c.DryRun = envBool("DRY_RUN", false)
 	c.AllowResourceOvercommit = envBool("ALLOW_RESOURCE_OVERCOMMIT", false)
 	c.ResourceBudgetFraction = envFloat("RESOURCE_BUDGET_FRACTION", 2.0/3.0)
+	c.OvercommitTolerancePct = envFloat("OVERCOMMIT_TOLERANCE_PCT", 15.0)
 	c.BootstrapMode = getenv("BOOTSTRAP_MODE", "kubeadm")
 	c.AWSControlPlaneMachineType = getenv("AWS_CONTROL_PLANE_MACHINE_TYPE", "t3.large")
 	c.AWSNodeMachineType = getenv("AWS_NODE_MACHINE_TYPE", "t3.medium")

@@ -14,6 +14,7 @@ package bootstrap
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"errors"
@@ -295,19 +296,53 @@ func planCapacity(w *os.File, cfg *config.Config) {
 	if hc.IsSmallEnv() && cfg.BootstrapMode != "k3s" {
 		bullet(w, "💡 host is small — consider --bootstrap-mode k3s for a 1 vCPU / 1 GiB-per-node footprint")
 	}
-	if err := capacity.Check(plan, hc, threshold); err != nil {
-		bullet(w, "❌ %v", err)
-		bullet(w, "(real run aborts; use --allow-resource-overcommit to override)")
-		// Suggest k3s when the same machine counts under k3s sizing
-		// would fit the budget.
+
+	// Existing-VM awareness: query what's already provisioned and
+	// fold it into the verdict alongside the plan. Soft budget
+	// (threshold) lets the user proceed silently; tight (between
+	// threshold and 1+tolerance) warns; abort (>1+tolerance) fails
+	// the real run unless --allow-resource-overcommit.
+	used, uerr := capacity.FetchExistingUsage(cfg)
+	tolerancePct := cfg.OvercommitTolerancePct
+	if tolerancePct <= 0 {
+		tolerancePct = capacity.DefaultOvercommitTolerancePct
+	}
+	if uerr == nil && used != nil && used.VMCount > 0 {
+		bullet(w, "existing VMs on host: %d (CPU %d cores, mem %d MiB, disk %d GB)",
+			used.VMCount, used.CPUCores, used.MemoryMiB, used.StorageGB)
+		// Show pool breakdown when there's more than one
+		if len(used.ByPool) > 1 {
+			parts := []string{}
+			for pool, n := range used.ByPool {
+				parts = append(parts, fmt.Sprintf("%s=%d", pool, n))
+			}
+			sort.Strings(parts)
+			bullet(w, "  by pool: %s", strings.Join(parts, ", "))
+		}
+	} else if uerr == nil {
+		bullet(w, "existing VMs on host: 0 (fresh host)")
+	}
+
+	verdict, msg := capacity.CheckCombined(plan, hc, used, threshold, tolerancePct)
+	switch verdict {
+	case capacity.VerdictFits:
+		bullet(w, "✅ verdict: fits within %.0f%% soft budget", threshold*100)
+		bullet(w, "   %s", msg)
+	case capacity.VerdictTight:
+		bullet(w, "⚠️  verdict: tight — above soft budget but inside %.0f%% overcommit tolerance",
+			tolerancePct)
+		bullet(w, "   %s", msg)
+		bullet(w, "   real run will proceed with a warning; raise --resource-budget-fraction or shrink the plan if you want headroom.")
+	case capacity.VerdictAbort:
+		bullet(w, "❌ verdict: abort — over %.0f%% overcommit ceiling", tolerancePct)
+		bullet(w, "   %s", msg)
+		bullet(w, "   real run aborts; --allow-resource-overcommit forces, --overcommit-tolerance-pct raises the ceiling.")
 		if cfg.BootstrapMode != "k3s" {
 			if fits, k3sPlan := capacity.WouldFitAsK3s(cfg, hc, threshold); fits {
 				bullet(w, "💡 same machine counts would fit under --bootstrap-mode k3s: %d cores / %d MiB / %d GB",
 					k3sPlan.CPUCores, k3sPlan.MemoryMiB, k3sPlan.StorageGB)
 			}
 		}
-	} else {
-		bullet(w, "✅ plan fits within %.0f%% budget.", threshold*100)
 	}
 }
 

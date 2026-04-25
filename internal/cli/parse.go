@@ -315,6 +315,10 @@ func Parse(c *config.Config, argv []string) {
 			c.PrintPricingSetup = strings.ToLower(strings.TrimSpace(shiftVal(a)))
 		case "--allow-resource-overcommit":
 			c.AllowResourceOvercommit = true
+		case "--overcommit-tolerance-pct":
+			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil && f >= 0 {
+				c.OvercommitTolerancePct = f
+			}
 		case "--system-apps-cpu-millicores":
 			if n, err := strconv.Atoi(shiftVal(a)); err == nil {
 				c.SystemAppsCPUMillicores = n

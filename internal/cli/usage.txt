@@ -73,6 +73,14 @@ OPTIONS
         --aws-cloudwatch-logs-gb N    CloudWatch Logs ingested per month (live $/GB from AWS pricing).
         --allow-resource-overcommit   Downgrade the capacity check to a warning instead of failing
                                       the run when the plan exceeds --resource-budget-fraction.
+        --overcommit-tolerance-pct N  How far above 100% of host capacity (existing VMs + planned
+                                      cluster) is allowed before the orchestrator aborts. Default 15.
+                                      Memory overcommit via Proxmox ballooning is fine within ~15%;
+                                      beyond that, OOMs under load become likely. Verdicts:
+                                        ≤ resource-budget-fraction          → ✓ proceed silently
+                                        ≤ 1 + tolerance-pct/100             → ⚠  proceed with warning
+                                        >  1 + tolerance-pct/100            → ❌ abort (unless
+                                                                              --allow-resource-overcommit)
         --system-apps-cpu-millicores N    Cluster-wide CPU reserve for system add-ons bootstrap-capi
                                           installs (kyverno + cert-manager + proxmox-csi controller +
                                           argocd + keycloak + external-secrets + infisical). Default

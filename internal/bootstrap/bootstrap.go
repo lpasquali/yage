@@ -988,9 +988,30 @@ func preflightCapacity(cfg *config.Config) error {
 		logx.Warn("Proxmox host is small (%d cores, %d MiB) — full kubeadm CAPI may be tight. Consider --bootstrap-mode k3s for a 1 vCPU / 1 GiB-per-node footprint.",
 			hc.CPUCores, hc.MemoryMiB)
 	}
-	if err := capacity.Check(plan, hc, threshold); err != nil {
+	// Existing-VM awareness: read what's already provisioned and
+	// fold it into the verdict alongside the plan. Soft budget +
+	// overcommit tolerance from cfg.
+	used, _ := capacity.FetchExistingUsage(cfg)
+	if used != nil && used.VMCount > 0 {
+		logx.Log("Existing-VM census: %d VMs, %d cores / %d MiB / %d GB already allocated",
+			used.VMCount, used.CPUCores, used.MemoryMiB, used.StorageGB)
+	}
+	tolerancePct := cfg.OvercommitTolerancePct
+	if tolerancePct <= 0 {
+		tolerancePct = capacity.DefaultOvercommitTolerancePct
+	}
+	verdict, msg := capacity.CheckCombined(plan, hc, used, threshold, tolerancePct)
+	switch verdict {
+	case capacity.VerdictFits:
+		// Silent — fits within soft budget.
+		return nil
+	case capacity.VerdictTight:
+		logx.Warn("Capacity tight (above %.0f%% soft budget but inside %.0f%% overcommit tolerance): %s",
+			threshold*100, tolerancePct, msg)
+		return nil
+	case capacity.VerdictAbort:
 		if cfg.AllowResourceOvercommit {
-			logx.Warn("ALLOW_RESOURCE_OVERCOMMIT=true — proceeding despite: %v", err)
+			logx.Warn("ALLOW_RESOURCE_OVERCOMMIT=true — proceeding despite overcommit: %s", msg)
 			return nil
 		}
 		// Suggest --bootstrap-mode k3s when (a) the user is running
@@ -1008,7 +1029,7 @@ func preflightCapacity(cfg *config.Config) error {
 					capacity.K3sCPCores, capacity.K3sCPMemMiB)
 			}
 		}
-		return fmt.Errorf("%w\n  re-run with --allow-resource-overcommit to override, or shrink the cluster sizing / machine counts.%s", err, hint)
+		return fmt.Errorf("capacity preflight: %s\n  re-run with --allow-resource-overcommit to override, raise --overcommit-tolerance-pct, or shrink the plan.%s", msg, hint)
 	}
 	return nil
 }

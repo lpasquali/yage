@@ -64,6 +64,77 @@ type HostCapacity struct {
 	StorageBy    map[string]int64
 }
 
+// ExistingUsage is what's already provisioned on the Proxmox host
+// before the planned bootstrap runs. Aggregated from the VM list
+// (`/api2/json/cluster/resources?type=vm`) — every VM on the
+// allowed nodes contributes its `maxcpu / maxmem / maxdisk` (the
+// VM's *configured* size, not its current load).
+//
+// Used to surface "what's already running fits / overcommits /
+// blocks the new cluster" in the dry-run plan, and to fail real
+// runs when (existing + planned) overshoots host capacity beyond
+// the configured overcommit tolerance.
+type ExistingUsage struct {
+	VMCount   int
+	CPUCores  int
+	MemoryMiB int64
+	StorageGB int64
+	// ByPool groups VMs by Proxmox pool so the dry-run can show
+	// "5 VMs in 'capi-quickstart', 3 VMs in 'other-cluster'".
+	ByPool map[string]int
+}
+
+// FetchExistingUsage queries every VM on the allowed nodes and
+// aggregates their declared (max*) resources. Returns an empty
+// ExistingUsage on a fresh host. Caller must have valid creds
+// just like FetchHostCapacity.
+func FetchExistingUsage(cfg *config.Config) (*ExistingUsage, error) {
+	auth, insecure, base, err := authForCfg(cfg)
+	if err != nil {
+		return nil, err
+	}
+	url := base + "/api2/json/cluster/resources?type=vm"
+	var resp struct {
+		Data []struct {
+			Node    string `json:"node"`
+			VMID    int    `json:"vmid"`
+			Name    string `json:"name"`
+			Type    string `json:"type"`
+			Status  string `json:"status"`
+			Pool    string `json:"pool"`
+			MaxCPU  int    `json:"maxcpu"`
+			MaxMem  int64  `json:"maxmem"`
+			MaxDisk int64  `json:"maxdisk"`
+		} `json:"data"`
+	}
+	if err := fetchJSON(url, auth, insecure, &resp); err != nil {
+		return nil, fmt.Errorf("query Proxmox /cluster/resources?type=vm: %w", err)
+	}
+	allowed := allowedSet(cfg)
+	out := &ExistingUsage{ByPool: map[string]int{}}
+	for _, v := range resp.Data {
+		// Only count actual VMs (containers/lxc are reported here too).
+		if v.Type != "qemu" {
+			continue
+		}
+		if len(allowed) > 0 {
+			if _, ok := allowed[v.Node]; !ok {
+				continue
+			}
+		}
+		out.VMCount++
+		out.CPUCores += v.MaxCPU
+		out.MemoryMiB += v.MaxMem / (1024 * 1024)
+		out.StorageGB += v.MaxDisk / (1024 * 1024 * 1024)
+		if v.Pool != "" {
+			out.ByPool[v.Pool]++
+		} else {
+			out.ByPool["(no pool)"]++
+		}
+	}
+	return out, nil
+}
+
 // Plan is the aggregate of CPU + memory + storage that the configured
 // workload + (optional) management clusters would consume.
 type Plan struct {
@@ -278,6 +349,106 @@ func (h *HostCapacity) IsSmallEnv() bool {
 		return false
 	}
 	return h.CPUCores < SmallEnvCPUCores || h.MemoryMiB < int64(SmallEnvMemoryGiB)*1024
+}
+
+// DefaultOvercommitTolerancePct caps how far above 100% of host
+// capacity the combined (existing + planned) demand may go before
+// the orchestrator refuses to continue. 15 means "(existing+planned)
+// ≤ host × 1.15 is acceptable; over that, abort". Memory is the
+// dimension this matters for in practice — Proxmox supports memory
+// overcommit via ballooning + swap, but >15% drift starts to cause
+// OOMs under load.
+const DefaultOvercommitTolerancePct = 15.0
+
+// Verdict is the result of a combined existing-vs-planned capacity
+// check. The orchestrator uses this to decide whether to continue,
+// warn-and-continue, or abort.
+type Verdict int
+
+const (
+	// VerdictFits means (existing + planned) fits inside the soft
+	// budget (threshold × host). Proceed silently.
+	VerdictFits Verdict = iota
+	// VerdictTight means (existing + planned) exceeds the soft
+	// budget but is within (1 + tolerance) × host. Proceed with
+	// a warning — the host is overcommitted but inside the
+	// operator-approved tolerance.
+	VerdictTight
+	// VerdictAbort means (existing + planned) exceeds (1 + tolerance)
+	// × host. The orchestrator refuses to continue unless
+	// --allow-resource-overcommit is set.
+	VerdictAbort
+)
+
+func (v Verdict) String() string {
+	switch v {
+	case VerdictFits:
+		return "fits"
+	case VerdictTight:
+		return "tight"
+	}
+	return "abort"
+}
+
+// CheckCombined evaluates (existing + planned) against host capacity
+// at two thresholds: the soft budget (threshold) and the hard
+// overcommit ceiling (1 + tolerance/100). Returns a Verdict and a
+// human-readable message describing the math behind it.
+//
+// Either existing or threshold may be nil/zero — when existing is
+// nil it's treated as zero usage (fresh host); when threshold is 0
+// it falls back to DefaultThreshold; when tolerancePct is ≤ 0 it
+// falls back to DefaultOvercommitTolerancePct.
+func CheckCombined(plan Plan, host *HostCapacity, existing *ExistingUsage, threshold, tolerancePct float64) (Verdict, string) {
+	if threshold <= 0 || threshold > 1 {
+		threshold = DefaultThreshold
+	}
+	if tolerancePct <= 0 {
+		tolerancePct = DefaultOvercommitTolerancePct
+	}
+	usedCPU, usedMem, usedDisk := 0, int64(0), int64(0)
+	if existing != nil {
+		usedCPU = existing.CPUCores
+		usedMem = existing.MemoryMiB
+		usedDisk = existing.StorageGB
+	}
+	totalCPU := usedCPU + plan.CPUCores
+	totalMem := usedMem + plan.MemoryMiB
+	totalDisk := usedDisk + plan.StorageGB
+
+	cpuFrac := float64(totalCPU) / float64(host.CPUCores)
+	memFrac := float64(totalMem) / float64(host.MemoryMiB)
+	diskFrac := 0.0
+	if host.StorageGB > 0 {
+		diskFrac = float64(totalDisk) / float64(host.StorageGB)
+	}
+
+	maxFrac := cpuFrac
+	if memFrac > maxFrac {
+		maxFrac = memFrac
+	}
+	if diskFrac > maxFrac {
+		maxFrac = diskFrac
+	}
+
+	hardCeiling := 1.0 + tolerancePct/100.0
+
+	msg := fmt.Sprintf("CPU %d+%d=%d/%d (%.0f%%), mem %d+%d=%d/%d MiB (%.0f%%), disk %d+%d=%d/%d GB (%.0f%%)",
+		usedCPU, plan.CPUCores, totalCPU, host.CPUCores, cpuFrac*100,
+		usedMem, plan.MemoryMiB, totalMem, host.MemoryMiB, memFrac*100,
+		usedDisk, plan.StorageGB, totalDisk, host.StorageGB, diskFrac*100,
+	)
+
+	switch {
+	case maxFrac <= threshold:
+		return VerdictFits, msg + fmt.Sprintf(" — within soft budget %.0f%%", threshold*100)
+	case maxFrac <= hardCeiling:
+		return VerdictTight, msg + fmt.Sprintf(" — exceeds soft budget %.0f%% but within %.0f%% overcommit tolerance",
+			threshold*100, tolerancePct)
+	default:
+		return VerdictAbort, msg + fmt.Sprintf(" — exceeds %.0f%% overcommit ceiling (%.0f%% > %.0f%%)",
+			tolerancePct, maxFrac*100, hardCeiling*100)
+	}
 }
 
 // Check returns nil when plan fits inside threshold * capacity, or an

@@ -76,6 +76,11 @@ type Config struct {
 	BootstrapPersistLocalSecrets bool
 	Purge                       bool
 	BuildAll                    bool
+	// DryRun, when true, makes Run() print a structured plan of what
+	// every phase would do (based on the current cfg) and exit without
+	// executing any phase. Distinct from PivotDryRun (which actually
+	// provisions the mgmt cluster and stops at `clusterctl move`).
+	DryRun                      bool
 
 	// ---- Kind / management cluster ----
 	ClusterID                    string
@@ -480,6 +485,7 @@ func Load() *Config {
 	c.BootstrapPersistLocalSecrets = envBool("BOOTSTRAP_PERSIST_LOCAL_SECRETS", false)
 	c.Purge = envBool("PURGE", false)
 	c.BuildAll = envBool("BUILD_ALL", false)
+	c.DryRun = envBool("DRY_RUN", false)
 
 	// --- Kind / management ----
 	c.ClusterID = getenv("CLUSTER_ID", "1")

@@ -295,6 +295,8 @@ func Parse(c *config.Config, argv []string) {
 			c.PivotKeepKind = true
 		case "--pivot-dry-run":
 			c.PivotDryRun = true
+		case "--dry-run":
+			c.DryRun = true
 		case "--pivot-verify-timeout":
 			c.PivotVerifyTimeout = shiftVal(a)
 		case "--mgmt-cluster-name":

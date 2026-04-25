@@ -24,6 +24,10 @@ OPTIONS
     -p, --purge                       Delete generated files + Terraform state before continuing
     -b, --build-all                   Build and kind-load all images even when arm64 images exist online
         --regenerate-capi-manifest    Always re-run clusterctl to refresh the workload manifest
+        --dry-run                     Print a structured plan of what every phase would do (based on
+                                      the current config + env + kind state) and exit. No state is
+                                      changed. Distinct from --pivot-dry-run (which actually
+                                      provisions the mgmt cluster, stops at `clusterctl move`).
 
   kind cluster
         --kind-cluster-name NAME      Management kind cluster name (default: capi-provisioner)
@@ -156,6 +160,9 @@ ENVIRONMENT
         MGMT_CONTROL_PLANE_TEMPLATE_ID       MGMT_WORKER_TEMPLATE_ID
 
 EXAMPLES
+
+    # See what a real run would do (no state changes)
+    bootstrap-capi --dry-run
 
     # Standard bootstrap (kind = forever-management)
     bootstrap-capi \

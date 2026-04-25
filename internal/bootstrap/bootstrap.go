@@ -48,6 +48,14 @@ func Run(cfg *config.Config) int {
 		cfg.AllowedNodes = cfg.ProxmoxNode
 	}
 
+	// Top-level dry-run: print the plan and exit before any phase runs.
+	// Distinct from PivotDryRun (that flag actually provisions mgmt and
+	// stops at clusterctl move).
+	if cfg.DryRun {
+		PrintPlan(cfg)
+		return 0
+	}
+
 	// -------------------------------------------------------------------------
 	// Standalone: kind backup / restore (bash L7746-L7760)
 	// -------------------------------------------------------------------------

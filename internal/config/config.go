@@ -345,21 +345,43 @@ type Config struct {
 	// is created from the management cluster, and the kind cluster is
 	// torn down once the management cluster is verified to carry the
 	// same state.
+	//
+	// Default sizing is intentionally smaller than the workload defaults:
+	// the management cluster runs only CAPI controllers, CAAPH, capmox,
+	// in-cluster IPAM, and the bootstrap-state Secrets — no application
+	// workload. 1 socket / 2 cores / 4 GiB is enough; one CP endpoint
+	// VIP and a 2-IP node range (so a rollout can land a replacement VM
+	// before draining the original).
+	//
+	// CNI: Cilium with Hubble enabled but LB-IPAM disabled (the
+	// management cluster has no Services that need LoadBalancer IPs).
+	// CSI: disabled by default (the management cluster is stateless
+	// unless explicitly opted-in via MGMT_PROXMOX_CSI_ENABLED=true).
 	PivotEnabled                  bool
 	MgmtClusterName               string
 	MgmtClusterNamespace          string
 	MgmtKubernetesVersion         string
 	MgmtCiliumClusterID           string
-	MgmtControlPlaneMachineCount  string // typically "1" (single-node mgmt)
-	MgmtWorkerMachineCount        string // typically "0"
-	MgmtControlPlaneNumSockets    string
-	MgmtControlPlaneNumCores      string
-	MgmtControlPlaneMemoryMiB     string
+	MgmtControlPlaneMachineCount  string // "1" by default (single-node mgmt)
+	MgmtWorkerMachineCount        string // "0" by default (CP-only)
+	MgmtControlPlaneNumSockets    string // "1"
+	MgmtControlPlaneNumCores      string // "2"
+	MgmtControlPlaneMemoryMiB     string // "4096"
 	MgmtControlPlaneBootVolumeDevice string
 	MgmtControlPlaneBootVolumeSize   string
-	MgmtControlPlaneEndpointIP    string
+	MgmtControlPlaneEndpointIP    string // 1 VIP — user-provided
 	MgmtControlPlaneEndpointPort  string
-	MgmtNodeIPRanges              string
+	MgmtNodeIPRanges              string // 2-IP range — user-provided
+	// MgmtCiliumHubble / MgmtCiliumLBIPAM tune the mgmt-side Cilium
+	// HelmChartProxy. Hubble defaults to true (observability is cheap on
+	// a single-node cluster); LB-IPAM defaults to false (no L2/BGP
+	// announcements needed for management add-ons).
+	MgmtCiliumHubble              string
+	MgmtCiliumLBIPAM              string
+	// MgmtProxmoxCSIEnabled — when true, install Proxmox CSI on the
+	// management cluster too. Default false: management is stateless
+	// (CAPI controllers + bootstrap state Secrets only — no PVCs).
+	MgmtProxmoxCSIEnabled         bool
 	// MgmtCAPIManifest is the rendered management-cluster CAPI manifest.
 	// Lives next to cfg.CAPIManifest as a Secret on the kind cluster
 	// during bootstrap; cleaned up after pivot.
@@ -705,14 +727,22 @@ func Load() *Config {
 	c.MgmtCiliumClusterID = getenv("MGMT_CILIUM_CLUSTER_ID", "")
 	c.MgmtControlPlaneMachineCount = getenv("MGMT_CONTROL_PLANE_MACHINE_COUNT", "1")
 	c.MgmtWorkerMachineCount = getenv("MGMT_WORKER_MACHINE_COUNT", "0")
-	c.MgmtControlPlaneNumSockets = getenv("MGMT_CONTROL_PLANE_NUM_SOCKETS", c.ControlPlaneNumSockets)
-	c.MgmtControlPlaneNumCores = getenv("MGMT_CONTROL_PLANE_NUM_CORES", c.ControlPlaneNumCores)
-	c.MgmtControlPlaneMemoryMiB = getenv("MGMT_CONTROL_PLANE_MEMORY_MIB", c.ControlPlaneMemoryMiB)
+	// Management-cluster sizing: leaner than workload defaults because
+	// the mgmt cluster only carries CAPI controllers + bootstrap state.
+	c.MgmtControlPlaneNumSockets = getenv("MGMT_CONTROL_PLANE_NUM_SOCKETS", "1")
+	c.MgmtControlPlaneNumCores = getenv("MGMT_CONTROL_PLANE_NUM_CORES", "2")
+	c.MgmtControlPlaneMemoryMiB = getenv("MGMT_CONTROL_PLANE_MEMORY_MIB", "4096")
 	c.MgmtControlPlaneBootVolumeDevice = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE", c.ControlPlaneBootVolumeDevice)
 	c.MgmtControlPlaneBootVolumeSize = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE", c.ControlPlaneBootVolumeSize)
 	c.MgmtControlPlaneEndpointIP = getenv("MGMT_CONTROL_PLANE_ENDPOINT_IP", "")
 	c.MgmtControlPlaneEndpointPort = getenv("MGMT_CONTROL_PLANE_ENDPOINT_PORT", c.ControlPlaneEndpointPort)
 	c.MgmtNodeIPRanges = getenv("MGMT_NODE_IP_RANGES", "")
+	// Cilium on the management cluster: Hubble on, LB-IPAM off — no
+	// LoadBalancer Services run on a stateless single-node mgmt.
+	c.MgmtCiliumHubble = getenv("MGMT_CILIUM_HUBBLE", "true")
+	c.MgmtCiliumLBIPAM = getenv("MGMT_CILIUM_LB_IPAM", "false")
+	// Proxmox CSI on the management cluster: off by default (stateless).
+	c.MgmtProxmoxCSIEnabled = envBool("MGMT_PROXMOX_CSI_ENABLED", false)
 	c.MgmtCAPIManifest = getenv("MGMT_CAPI_MANIFEST", "")
 
 	return c

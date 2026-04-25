@@ -171,6 +171,12 @@ func (c *Config) Snapshot() []SnapshotField {
 		sp("MGMT_CONTROL_PLANE_ENDPOINT_IP", &c.MgmtControlPlaneEndpointIP),
 		sp("MGMT_CONTROL_PLANE_ENDPOINT_PORT", &c.MgmtControlPlaneEndpointPort),
 		sp("MGMT_NODE_IP_RANGES", &c.MgmtNodeIPRanges),
+		sp("MGMT_CONTROL_PLANE_NUM_SOCKETS", &c.MgmtControlPlaneNumSockets),
+		sp("MGMT_CONTROL_PLANE_NUM_CORES", &c.MgmtControlPlaneNumCores),
+		sp("MGMT_CONTROL_PLANE_MEMORY_MIB", &c.MgmtControlPlaneMemoryMiB),
+		sp("MGMT_CILIUM_HUBBLE", &c.MgmtCiliumHubble),
+		sp("MGMT_CILIUM_LB_IPAM", &c.MgmtCiliumLBIPAM),
+		bp("MGMT_PROXMOX_CSI_ENABLED", &c.MgmtProxmoxCSIEnabled),
 		sp("CONTROL_PLANE_MACHINE_COUNT", &c.ControlPlaneMachineCount),
 		sp("WORKER_MACHINE_COUNT", &c.WorkerMachineCount),
 		// --- ArgoCD toggles ---

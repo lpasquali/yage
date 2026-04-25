@@ -15,6 +15,7 @@ import (
 	"github.com/lpasquali/bootstrap-capi/internal/capimanifest"
 	"github.com/lpasquali/bootstrap-capi/internal/config"
 	"github.com/lpasquali/bootstrap-capi/internal/logx"
+	"github.com/lpasquali/bootstrap-capi/internal/sysinfo"
 )
 
 // renderManagementManifest generates the CAPI manifest for the management
@@ -311,6 +312,18 @@ func renderMgmtCiliumHelmChartProxy(cfg *config.Config) string {
 		port = "6443"
 	}
 	fmt.Fprintf(&vt, "k8sServicePort: %s\n", port)
+	// Hubble: on by default for the management cluster (cheap on a
+	// single-node cluster, valuable for observability).
+	if sysinfo.IsTrue(cfg.MgmtCiliumHubble) {
+		vt.WriteString("hubble:\n  enabled: true\n  relay:\n    enabled: true\n")
+	}
+	// LB-IPAM: off by default for management (no Service type=LoadBalancer
+	// targets on a stateless mgmt cluster). Setting `loadBalancer.l2.enabled`
+	// to false here is informational; the operator default is already off,
+	// but we render the key explicitly so an inspector can confirm.
+	if !sysinfo.IsTrue(cfg.MgmtCiliumLBIPAM) {
+		vt.WriteString("loadBalancer:\n  l2:\n    enabled: false\n")
+	}
 	pool := strings.ReplaceAll(strings.TrimSpace(cfg.CiliumIPAMClusterPoolIPv4), `"`, "")
 	if pool == "" {
 		pool = "10.244.0.0/16"

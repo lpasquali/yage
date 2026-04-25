@@ -89,12 +89,12 @@ OPTIONS
 
   Workload VM sizing
         --control-plane-boot-volume-device DEV (default: scsi0)
-        --control-plane-boot-volume-size GB    (default: 100)
+        --control-plane-boot-volume-size GB    (default: 40 — OS + container images + etcd; CSI handles persistent state)
         --control-plane-num-sockets N          (default: 2)
         --control-plane-num-cores N            (default: 1)
         --control-plane-memory-mib N           (default: 8192)
         --worker-boot-volume-device DEV        (default: scsi0)
-        --worker-boot-volume-size GB           (default: 100)
+        --worker-boot-volume-size GB           (default: 40 — OS + container images; CSI carries logs / app data)
         --worker-num-sockets N                 (default: 2)
         --worker-num-cores N                   (default: 4)
         --worker-memory-mib N                  (default: 16384)

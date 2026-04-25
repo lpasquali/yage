@@ -59,12 +59,12 @@
 #   --capi-user-id USER_ID           Proxmox CAPI user ID for Terraform bootstrap (default: capmox-<CLUSTER_SET_ID>@pve)
 #   --capi-token-prefix PREFIX       Proxmox CAPI token name prefix for Terraform bootstrap (default: capi)
 #   --control-plane-boot-volume-device DEVICE  Control plane boot volume device (default: scsi0)
-#   --control-plane-boot-volume-size SIZE      Control plane boot volume size in GB (default: 100)
+#   --control-plane-boot-volume-size SIZE      Control plane boot volume size in GB (default: 40; CSI handles persistent state — see proxmox-csi)
 #   --control-plane-num-sockets N              Control plane sockets (default: 2)
 #   --control-plane-num-cores N                Control plane cores (default: 1)
 #   --control-plane-memory-mib N               Control plane memory in MiB (default: 8192)
 #   --worker-boot-volume-device DEVICE         Worker boot volume device (default: scsi0)
-#   --worker-boot-volume-size SIZE             Worker boot volume size in GB (default: 100)
+#   --worker-boot-volume-size SIZE             Worker boot volume size in GB (default: 40; CSI carries logs / app data — see proxmox-csi)
 #   --worker-num-sockets N                     Worker sockets (default: 2)
 #   --worker-num-cores N                       Worker cores (default: 4)
 #   --worker-memory-mib N                      Worker memory in MiB (default: 16384)
@@ -657,12 +657,12 @@ PROXMOX_CSI_DEFAULT_CLASS="${PROXMOX_CSI_DEFAULT_CLASS:-true}"
 PROXMOX_CAPI_USER_ID="${PROXMOX_CAPI_USER_ID:-}"
 PROXMOX_CAPI_TOKEN_PREFIX="${PROXMOX_CAPI_TOKEN_PREFIX:-capi}"
 CONTROL_PLANE_BOOT_VOLUME_DEVICE="${CONTROL_PLANE_BOOT_VOLUME_DEVICE:-scsi0}"
-CONTROL_PLANE_BOOT_VOLUME_SIZE="${CONTROL_PLANE_BOOT_VOLUME_SIZE:-100}"
+CONTROL_PLANE_BOOT_VOLUME_SIZE="${CONTROL_PLANE_BOOT_VOLUME_SIZE:-40}"
 CONTROL_PLANE_NUM_SOCKETS="${CONTROL_PLANE_NUM_SOCKETS:-2}"
 CONTROL_PLANE_NUM_CORES="${CONTROL_PLANE_NUM_CORES:-1}"
 CONTROL_PLANE_MEMORY_MIB="${CONTROL_PLANE_MEMORY_MIB:-8192}"
 WORKER_BOOT_VOLUME_DEVICE="${WORKER_BOOT_VOLUME_DEVICE:-scsi0}"
-WORKER_BOOT_VOLUME_SIZE="${WORKER_BOOT_VOLUME_SIZE:-100}"
+WORKER_BOOT_VOLUME_SIZE="${WORKER_BOOT_VOLUME_SIZE:-40}"
 WORKER_NUM_SOCKETS="${WORKER_NUM_SOCKETS:-2}"
 WORKER_NUM_CORES="${WORKER_NUM_CORES:-4}"
 WORKER_MEMORY_MIB="${WORKER_MEMORY_MIB:-16384}"
@@ -696,7 +696,7 @@ MGMT_CONTROL_PLANE_NUM_SOCKETS="${MGMT_CONTROL_PLANE_NUM_SOCKETS:-1}"
 MGMT_CONTROL_PLANE_NUM_CORES="${MGMT_CONTROL_PLANE_NUM_CORES:-2}"
 MGMT_CONTROL_PLANE_MEMORY_MIB="${MGMT_CONTROL_PLANE_MEMORY_MIB:-4096}"
 MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE="${MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE:-${CONTROL_PLANE_BOOT_VOLUME_DEVICE}}"
-MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE="${MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE:-${CONTROL_PLANE_BOOT_VOLUME_SIZE}}"
+MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE="${MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE:-30}"
 # 1 control-plane endpoint VIP and a 2-IP node range so a rollout can land
 # a replacement VM before draining the original — user-provided.
 MGMT_CONTROL_PLANE_ENDPOINT_IP="${MGMT_CONTROL_PLANE_ENDPOINT_IP:-}"

@@ -737,12 +737,12 @@ func Load() *Config {
 
 	// --- VM sizing ---
 	c.ControlPlaneBootVolumeDevice = getenv("CONTROL_PLANE_BOOT_VOLUME_DEVICE", "scsi0")
-	c.ControlPlaneBootVolumeSize = getenv("CONTROL_PLANE_BOOT_VOLUME_SIZE", "100")
+	c.ControlPlaneBootVolumeSize = getenv("CONTROL_PLANE_BOOT_VOLUME_SIZE", "40")
 	c.ControlPlaneNumSockets = getenv("CONTROL_PLANE_NUM_SOCKETS", "2")
 	c.ControlPlaneNumCores = getenv("CONTROL_PLANE_NUM_CORES", "1")
 	c.ControlPlaneMemoryMiB = getenv("CONTROL_PLANE_MEMORY_MIB", "8192")
 	c.WorkerBootVolumeDevice = getenv("WORKER_BOOT_VOLUME_DEVICE", "scsi0")
-	c.WorkerBootVolumeSize = getenv("WORKER_BOOT_VOLUME_SIZE", "100")
+	c.WorkerBootVolumeSize = getenv("WORKER_BOOT_VOLUME_SIZE", "40")
 	c.WorkerNumSockets = getenv("WORKER_NUM_SOCKETS", "2")
 	c.WorkerNumCores = getenv("WORKER_NUM_CORES", "4")
 	c.WorkerMemoryMiB = getenv("WORKER_MEMORY_MIB", "16384")
@@ -780,7 +780,7 @@ func Load() *Config {
 	c.MgmtControlPlaneNumCores = getenv("MGMT_CONTROL_PLANE_NUM_CORES", "2")
 	c.MgmtControlPlaneMemoryMiB = getenv("MGMT_CONTROL_PLANE_MEMORY_MIB", "4096")
 	c.MgmtControlPlaneBootVolumeDevice = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE", c.ControlPlaneBootVolumeDevice)
-	c.MgmtControlPlaneBootVolumeSize = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE", c.ControlPlaneBootVolumeSize)
+	c.MgmtControlPlaneBootVolumeSize = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE", "30")
 	c.MgmtControlPlaneEndpointIP = getenv("MGMT_CONTROL_PLANE_ENDPOINT_IP", "")
 	c.MgmtControlPlaneEndpointPort = getenv("MGMT_CONTROL_PLANE_ENDPOINT_PORT", c.ControlPlaneEndpointPort)
 	c.MgmtNodeIPRanges = getenv("MGMT_NODE_IP_RANGES", "")

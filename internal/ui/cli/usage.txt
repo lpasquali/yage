@@ -195,6 +195,24 @@ OPTIONS
         --dns-servers LIST                Comma-separated DNS servers (default: 8.8.8.8,8.8.4.4)
         --allowed-nodes LIST              Allowed Proxmox nodes (default: same as --node)
 
+  CSI add-ons (registry — §20 Phase F)
+        --csi-driver NAME                 Install the named CSI driver on the workload cluster.
+                                          Repeatable: pass once per driver to install multiples
+                                          (e.g. --csi-driver aws-ebs --csi-driver longhorn).
+                                          When omitted, yage installs the per-provider default
+                                          (aws→aws-ebs, azure→azure-disk, gcp→gcp-pd; full
+                                          matrix in docs/abstraction-plan.md §20.5). Unknown
+                                          names are dropped with a warning so partial driver
+                                          coverage doesn't break dry-run plans.
+                                          Env: YAGE_CSI_DRIVERS (comma-separated).
+        --csi-default-class NAME          Pick which driver supplies the cluster default
+                                          StorageClass when multiple drivers install. Empty
+                                          (default) → first driver in --csi-driver order wins.
+                                          Env: YAGE_CSI_DEFAULT_CLASS.
+                                          (Same flag also mirrored into the legacy Proxmox
+                                          CSI install path until Proxmox migrates onto the
+                                          registry.)
+
   Proxmox CSI
         --csi-url URL                     CSI API URL (default: <proxmox-url>/api2/json)
         --csi-token-id TOKEN_ID           CSI token ID (auto-derived if omitted)

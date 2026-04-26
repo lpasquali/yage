@@ -35,6 +35,14 @@ import (
 	_ "github.com/lpasquali/yage/internal/provider/openstack"
 	_ "github.com/lpasquali/yage/internal/provider/proxmox"
 	_ "github.com/lpasquali/yage/internal/provider/vsphere"
+
+	// CSI driver registrations: importing each driver package runs
+	// its init() which calls csi.Register. Phase F (scoped) ships
+	// AWS-EBS, Azure-Disk, GCP-PD; the rest of the §20.1 matrix
+	// lands in follow-ups.
+	_ "github.com/lpasquali/yage/internal/csi/awsebs"
+	_ "github.com/lpasquali/yage/internal/csi/azuredisk"
+	_ "github.com/lpasquali/yage/internal/csi/gcppd"
 )
 
 func main() {

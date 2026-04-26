@@ -463,6 +463,33 @@ type CostCurrency struct {
 	EURUSDOverride string
 }
 
+// CSIConfig holds the multi-driver CSI add-on selection (§20). The
+// driver registry lives in internal/csi/; cfg.CSI is the operator-
+// facing selection knob. Empty means "use the per-provider default
+// from internal/csi.DefaultsFor(cfg.InfraProvider)".
+//
+// Phase F (this commit, scoped) ships AWS-EBS, Azure-Disk, and
+// GCP-PD drivers. The same shape supports the rest of the §20.1
+// matrix once each driver registers itself.
+type CSIConfig struct {
+	// Drivers is the ordered list of CSI driver names to install on
+	// the workload cluster. Empty → use the provider's default set
+	// (internal/csi.DefaultsFor(cfg.InfraProvider)). Names that
+	// aren't registered are silently dropped with a logx warning so
+	// a partial driver matrix doesn't break dry-run plans.
+	//
+	// Env: YAGE_CSI_DRIVERS (comma-separated). CLI: --csi-driver
+	// <name> (repeatable; appends each occurrence).
+	Drivers []string
+
+	// DefaultClass picks which driver provides the cluster default
+	// StorageClass when multiple drivers install. Empty → first
+	// driver in Drivers (after registry-filtering) wins.
+	//
+	// Env: YAGE_CSI_DEFAULT_CLASS. CLI: --csi-default-class <name>.
+	DefaultClass string
+}
+
 // Config holds every runtime tunable. Zero value is not meaningful — always
 // call Load().
 type Config struct {
@@ -472,6 +499,9 @@ type Config struct {
 	// Cost groups cross-cutting cost-estimation configuration: vendor
 	// pricing credentials + currency/FX preferences. See §16.
 	Cost CostConfig
+	// CSI groups multi-driver CSI add-on selection (§20). The
+	// driver registry lives in internal/csi/.
+	CSI CSIConfig
 
 
 	// ---- Tool versions ----
@@ -981,6 +1011,21 @@ func Load() *Config {
 	c.HardwareSupportUSDMonth = envFloat("HARDWARE_SUPPORT_USD_MONTH", 0)
 	c.Airgapped = envBool("YAGE_AIRGAPPED", false)
 	c.ImageRegistryMirror = strings.TrimRight(getenv("YAGE_IMAGE_REGISTRY_MIRROR", ""), "/")
+
+	// CSI add-on selection (§20 / Phase F). YAGE_CSI_DRIVERS is a
+	// comma-separated list of driver names — empty values get
+	// dropped so "a,,b" reads as ["a","b"] rather than three
+	// elements. Empty env → cfg.CSI.Drivers stays nil, which means
+	// "use the per-provider default" at Selector() time.
+	if v := os.Getenv("YAGE_CSI_DRIVERS"); v != "" {
+		for _, n := range strings.Split(v, ",") {
+			n = strings.TrimSpace(n)
+			if n != "" {
+				c.CSI.Drivers = append(c.CSI.Drivers, n)
+			}
+		}
+	}
+	c.CSI.DefaultClass = os.Getenv("YAGE_CSI_DEFAULT_CLASS")
 
 	// Cost-estimation credentials and currency preferences (§16).
 	// Each YAGE_X spelling wins over the vendor-native fallback.

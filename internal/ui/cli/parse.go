@@ -245,7 +245,19 @@ func Parse(c *config.Config, argv []string) {
 		case "--csi-fstype":
 			c.Providers.Proxmox.CSIFsType = shiftVal(a)
 		case "--csi-default-class":
-			c.Providers.Proxmox.CSIDefaultClass = shiftVal(a)
+			// §20: the canonical home for default-class is the top-
+			// level cfg.CSI.DefaultClass (multi-driver registry).
+			// Keep mirroring into Providers.Proxmox.CSIDefaultClass
+			// so the legacy Proxmox CSI install path keeps working
+			// until it migrates onto the registry.
+			v := shiftVal(a)
+			c.CSI.DefaultClass = v
+			c.Providers.Proxmox.CSIDefaultClass = v
+		case "--csi-driver":
+			// Repeatable: each occurrence appends one driver name to
+			// cfg.CSI.Drivers. Empty value rejects (consistent with
+			// shiftVal's missing-value Die for other flags).
+			c.CSI.Drivers = append(c.CSI.Drivers, shiftVal(a))
 		case "--capi-user-id":
 			c.Providers.Proxmox.CAPIUserID = shiftVal(a)
 		case "--capi-token-prefix":

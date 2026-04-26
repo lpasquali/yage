@@ -43,3 +43,38 @@ func (p *Provider) TemplateVars(cfg *config.Config) map[string]string {
 		"AWS_SSH_KEY_NAME":               cfg.Providers.AWS.SSHKeyName,
 	}
 }
+
+// AbsorbConfigYAML is the reverse of KindSyncFields: reads the
+// lowercase bare-key map the new yage-system/bootstrap-config Secret
+// schema writes (per provider section, no provider prefix — the
+// orchestrator strips it before dispatching) and fills empty cfg
+// fields with non-empty values. Universal keys (provider,
+// cluster_name, …) are handled by the orchestrator and ignored here.
+func (p *Provider) AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bool {
+	assigned := false
+	assign := func(cur *string, v string) {
+		if *cur == "" && v != "" {
+			*cur = v
+			assigned = true
+		}
+	}
+	for k, v := range kv {
+		switch k {
+		case "region":
+			assign(&cfg.Providers.AWS.Region, v)
+		case "ami_id":
+			assign(&cfg.Providers.AWS.AMIID, v)
+		case "ssh_key_name":
+			assign(&cfg.Providers.AWS.SSHKeyName, v)
+		case "control_plane_machine_type":
+			assign(&cfg.Providers.AWS.ControlPlaneMachineType, v)
+		case "node_machine_type":
+			assign(&cfg.Providers.AWS.NodeMachineType, v)
+		case "mode":
+			assign(&cfg.Providers.AWS.Mode, v)
+		case "overhead_tier":
+			assign(&cfg.Providers.AWS.OverheadTier, v)
+		}
+	}
+	return assigned
+}

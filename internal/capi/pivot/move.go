@@ -151,19 +151,11 @@ func MoveCAPIState(cfg *config.Config, mgmtKubeconfig string) error {
 	// `clusterctl move` operates on a single namespace at a time;
 	// we run it for each so both cluster objects + their dependants
 	// land on mgmt.
-	var namespaces []string
-	if prov, err := provider.For(cfg); err == nil {
-		if target, terr := prov.PivotTarget(cfg); terr == nil && target.Namespaces != nil {
-			namespaces = dedupe(target.Namespaces)
-		}
+	var prov provider.Pivoter
+	if p, err := provider.For(cfg); err == nil {
+		prov = p
 	}
-	if namespaces == nil {
-		namespaces = dedupe([]string{
-			cfg.WorkloadClusterNamespace,
-			cfg.Mgmt.ClusterNamespace,
-			cfg.Providers.Proxmox.BootstrapSecretNamespace,
-		})
-	}
+	namespaces := selectPivotNamespaces(cfg, prov)
 
 	for _, ns := range namespaces {
 		if ns == "" {
@@ -239,6 +231,37 @@ func scaleDeploymentsToZero(kindCtx string) error {
 		logx.Log("Paused kind-side reconciler %s/%s (replicas=0) before clusterctl move.", t.ns, t.name)
 	}
 	return nil
+}
+
+// selectPivotNamespaces resolves the namespace list `clusterctl move`
+// runs against. Per Phase E.4 / §12, the active provider's
+// PivotTarget owns the namespace list; nil means "use default" —
+// workload + mgmt + the provider-managed bootstrap Secret namespace.
+//
+// Extracted from MoveCAPIState so the namespace-selection logic is
+// unit-testable without spinning up clusterctl. The Pivoter argument
+// may be nil (e.g. when provider.For(cfg) errored — air-gap rejection,
+// unknown provider name); in that case we always fall through to the
+// default list.
+//
+// This is the pivot mechanism's single provider-specific decision
+// point; everything else in MoveCAPIState (kubeconfig serialisation,
+// reconciler-pause, retry loop) is provider-agnostic.
+func selectPivotNamespaces(cfg *config.Config, prov provider.Pivoter) []string {
+	var namespaces []string
+	if prov != nil {
+		if target, err := prov.PivotTarget(cfg); err == nil && target.Namespaces != nil {
+			namespaces = dedupe(target.Namespaces)
+		}
+	}
+	if namespaces == nil {
+		namespaces = dedupe([]string{
+			cfg.WorkloadClusterNamespace,
+			cfg.Mgmt.ClusterNamespace,
+			cfg.Providers.Proxmox.BootstrapSecretNamespace,
+		})
+	}
+	return namespaces
 }
 
 func dedupe(in []string) []string {

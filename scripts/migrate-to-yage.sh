@@ -4,13 +4,11 @@
 # cluster previously bootstrapped by the old bootstrap-capi binary.
 #
 # Today's rename impact (HEAD):
-#   • Secret rename:  <ns>/proxmox-bootstrap-capi-manifest → <ns>/proxmox-yage-manifest
+#   • Secret rename:  <old-ns>/proxmox-bootstrap-capi-manifest → <old-ns>/proxmox-yage-manifest
 #   • Label rewrite:  app.kubernetes.io/managed-by: bootstrap-capi → yage
-#
-# The kind-side namespace stays as proxmox-bootstrap-system today;
-# Phase D will rename it to yage-system. When Phase D ships, this
-# script grows a third step (copy Secrets across namespaces, delete
-# the old one). Until then, leave the namespace alone.
+#   • Namespace move: proxmox-bootstrap-system → yage-system
+#                     (every Secret + ConfigMap copied across, then
+#                      the old namespace is deleted)
 #
 # Usage:
 #   ./scripts/migrate-to-yage.sh                # dry-run (default)
@@ -27,7 +25,9 @@ set -euo pipefail
 APPLY=0
 [[ "${1:-}" == "--apply" ]] && APPLY=1
 
-NS=${YAGE_NS:-proxmox-bootstrap-system}
+OLD_NS=${YAGE_OLD_NS:-proxmox-bootstrap-system}
+NEW_NS=${YAGE_NEW_NS:-yage-system}
+NS=$OLD_NS    # step 1 + 2 still operate on the old namespace
 OLD_SEC=proxmox-bootstrap-capi-manifest
 NEW_SEC=proxmox-yage-manifest
 
@@ -41,14 +41,19 @@ case "$ctx" in
     *) echo "⚠ context '$ctx' doesn't look like a kind context (kind-*). Continuing anyway." ;;
 esac
 
-if ! kubectl get ns "$NS" >/dev/null 2>&1; then
-    echo "❌ namespace '$NS' not found in $ctx — nothing to migrate." >&2
+if ! kubectl get ns "$OLD_NS" >/dev/null 2>&1; then
+    if kubectl get ns "$NEW_NS" >/dev/null 2>&1; then
+        echo "ℹ namespace '$OLD_NS' is already gone and '$NEW_NS' exists — nothing to migrate."
+        exit 0
+    fi
+    echo "❌ namespace '$OLD_NS' not found in $ctx — nothing to migrate." >&2
     exit 1
 fi
 
-echo "Cluster:   $ctx"
-echo "Namespace: $NS"
-echo "Mode:      $( ((APPLY)) && echo apply || echo dry-run )"
+echo "Cluster:    $ctx"
+echo "From ns:    $OLD_NS"
+echo "To ns:      $NEW_NS"
+echo "Mode:       $( ((APPLY)) && echo apply || echo dry-run )"
 echo
 
 run() {
@@ -107,6 +112,62 @@ else
         run kubectl -n "$tns" label "$kind" "$tname" \
             app.kubernetes.io/managed-by=yage --overwrite
     done
+fi
+echo
+
+# ─────────────────────────────────────────────────────────────────────
+# Step 3: Move the namespace
+# ─────────────────────────────────────────────────────────────────────
+echo "▸ Step 3 — Namespace move: $OLD_NS → $NEW_NS"
+
+if ! kubectl get ns "$NEW_NS" >/dev/null 2>&1; then
+    run kubectl create namespace "$NEW_NS"
+fi
+
+# Mirror every Secret + ConfigMap from OLD_NS into NEW_NS. We use
+# `kubectl get -o yaml | sed namespace | kubectl apply` so labels +
+# annotations + data + immutable type round-trip cleanly. Skip
+# server-managed default service-account-token Secrets — those are
+# regenerated automatically in the new namespace.
+copy_resources() {
+    local kind=$1
+    mapfile -t names < <(
+        kubectl -n "$OLD_NS" get "$kind" \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
+            2>/dev/null \
+        | grep -v '^$' \
+        | grep -Ev '^default-token-|^kube-root-ca\.crt$|^default$' \
+        || true
+    )
+    if (( ${#names[@]} == 0 )); then
+        echo "  (no $kind to copy)"
+        return
+    fi
+    for n in "${names[@]}"; do
+        if ((APPLY)); then
+            echo "+ copy $kind/$n"
+            kubectl -n "$OLD_NS" get "$kind" "$n" -o yaml \
+                | sed -E "s/^(  namespace: )$OLD_NS\$/\\1$NEW_NS/" \
+                | sed -E '/^  resourceVersion:/d; /^  uid:/d; /^  creationTimestamp:/d' \
+                | kubectl apply -f -
+        else
+            echo "[dry-run] copy $kind/$n from $OLD_NS to $NEW_NS"
+        fi
+    done
+}
+
+copy_resources secret
+copy_resources configmap
+
+# Once everything is mirrored, delete the old namespace. This is
+# the destructive step; only do it if APPLY and only after both
+# copies above succeeded (set -e bails before reaching this line
+# otherwise).
+if ((APPLY)); then
+    echo "+ delete namespace $OLD_NS"
+    kubectl delete namespace "$OLD_NS"
+else
+    echo "[dry-run] delete namespace $OLD_NS (after the copies above)"
 fi
 echo
 

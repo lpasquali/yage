@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package provider — shared helpers used by self-hosted providers
 // (Proxmox, vSphere) that don't have a vendor pricing API. The TCO
 // path here is the only "monetary number" they emit, and every input

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package opentofux
 
 // IdentityHCL is the HCL body written to ${state_dir}/proxmox-identity.tf

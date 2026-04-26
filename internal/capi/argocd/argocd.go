@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package argocdx ports the Argo CD helpers: initial-admin password
 // retrieval, workload kubeconfig discovery for standalone modes, access
 // info printing, port-forward, and the argocd-redis seed Secret.

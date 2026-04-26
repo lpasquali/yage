@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package shell ports RUN_PRIVILEGED and adds small exec helpers the rest of
 // the bootstrap relies on (capture stdout, run with tty, etc.).
 //

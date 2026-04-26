@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package helmvalues hosts the Helm-values YAML generators for the
 // workload add-ons the bootstrap ships. Each function returns the YAML
 // body as a string; callers write it to disk, feed to `helm template`,

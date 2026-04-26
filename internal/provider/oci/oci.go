@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package oci is the yage Provider implementation for the
 // Cluster API Oracle Cloud Infrastructure provider (CAPOCI —
 // oracle/cluster-api-provider-oci).

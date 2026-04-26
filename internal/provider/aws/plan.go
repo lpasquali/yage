@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package aws
 
 // AWS provider plan-output hooks (Phase B per §8/§14.B + §13's
@@ -63,4 +66,3 @@ func (p *Provider) DescribePivot(w provider.PlanWriter, cfg *config.Config) {
 	w.Section("Pivot to managed mgmt cluster")
 	w.Skip("AWS provider has no PivotTarget yet (kind remains the mgmt cluster)")
 }
-

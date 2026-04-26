@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package proxmox
 
 // Proxmox provider plan-output hooks (Phase B per §8/§14.B).

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package gcp is the yage Provider implementation for the
 // Cluster API GCP infrastructure provider (CAPG —
 // github.com/kubernetes-sigs/cluster-api-provider-gcp).
@@ -216,4 +219,3 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {
 	return nil
 }
-

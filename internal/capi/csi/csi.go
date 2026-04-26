@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package csix ports Proxmox CSI config helpers: loading from the
 // local YAML, and pushing the config Secret into the workload cluster.
 //

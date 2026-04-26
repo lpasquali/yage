@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package hetzner is the yage Provider implementation for
 // the Cluster API Hetzner Cloud infrastructure provider (CAPHV —
 // github.com/syself/cluster-api-provider-hetzner).
@@ -235,4 +238,3 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {
 	return nil
 }
-

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package cost is the multi-cloud comparator: given one logical
 // cluster shape, run every registered provider's
 // EstimateMonthlyCostUSD and surface the results side-by-side.

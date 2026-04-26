@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package sysinfo ports small bash helpers around OS/arch detection and
 // "is_true"-style bool parsing.
 package sysinfo

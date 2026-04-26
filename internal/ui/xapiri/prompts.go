@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package xapiri
 
 // prompts.go — small bufio-backed helpers used by the xapiri walkthrough.

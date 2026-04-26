@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package xapiri
 
 // cloud.go — fork-specific step methods for the cloud branch

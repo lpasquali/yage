@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package pveapi is the low-level Proxmox VE HTTP client and helper
 // suite (URL parsing, token shape, region/node decoding, identity
 // hashing). It is the *implementation* layer that the Provider

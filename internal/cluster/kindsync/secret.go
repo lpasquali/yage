@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package kindsync ports the bash helpers that push Proxmox bootstrap
 // state into kind Secrets (so a re-run finds the same state in the
 // management cluster when local env is thin).

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // K3s flavor renderer.
 //
 // Upstream CAPMOX (cluster-api-provider-proxmox) ships only kubeadm

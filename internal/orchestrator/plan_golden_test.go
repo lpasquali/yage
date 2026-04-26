@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package orchestrator
 
 // Snapshot goldens for the dry-run plan output (Track D of the §19

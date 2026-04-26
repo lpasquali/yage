@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package linode is the yage Provider implementation for
 // the Cluster API Linode/Akamai infrastructure provider (CAPL —
 // linode/cluster-api-provider-linode).

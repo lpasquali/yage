@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Bootstrap-config snapshot schema.
 //
 // The management kind cluster holds a Secret

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package postsync ports the Argo CD PostSync-hook helpers + proxmox-csi
 // smoke-test renderers.
 //

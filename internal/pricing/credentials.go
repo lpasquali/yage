@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package pricing
 
 // Credentials carries the per-vendor pricing API credentials that

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package cli mirrors the bash parse_options() flag surface exactly.
 //
 // Every case in the bash `case` statement has a matching case here, with the

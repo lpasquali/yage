@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package csi is yage's add-on registry for Container Storage
 // Interface drivers, mirroring the shape of internal/provider/. It
 // promotes CSI from "Proxmox-only hardcoded" to "registered add-on

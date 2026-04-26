@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package wlargocd ports the workload Argo CD Application YAML
 // renderers. Each renderer emits a complete `---`-prefixed Application
 // document the orchestrator will concatenate into one kubectl-apply

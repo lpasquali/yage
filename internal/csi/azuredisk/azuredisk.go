@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package azuredisk implements the Azure Disk CSI driver
 // registration for yage's CSI add-on registry (internal/csi).
 //

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package proxmox is the yage Provider implementation for
 // the Cluster API Proxmox VE infrastructure provider (CAPMOX).
 //

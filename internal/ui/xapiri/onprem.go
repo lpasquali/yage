@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package xapiri
 
 // onprem.go — fork-specific step methods for the on-prem branch

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package openstack is the yage Provider implementation
 // for the Cluster API OpenStack infrastructure provider (CAPO —
 // https://github.com/kubernetes-sigs/cluster-api-provider-openstack).

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package pricing fetches live monthly pricing from each cloud
 // vendor's FinOps / billing API. No hardcoded money numbers — when
 // a vendor's API is unreachable, callers get ErrUnavailable and the

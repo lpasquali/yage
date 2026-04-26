@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package bootstrap — global dry-run plan printer.
 //
 // PrintPlan is invoked from Run() when cfg.DryRun is true. It walks the

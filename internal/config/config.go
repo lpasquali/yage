@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package config holds every tunable variable the bash script's globals
 // expose, with the same env-var overrides and defaults. One struct is shared
 // by every other package: subsystems read from *Config, they never reach

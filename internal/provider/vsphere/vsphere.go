@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package vsphere is the yage Provider implementation for
 // the Cluster API vSphere infrastructure provider (CAPV —
 // github.com/kubernetes-sigs/cluster-api-provider-vsphere).

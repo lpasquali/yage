@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package aws is the yage Provider implementation for the
 // Cluster API AWS infrastructure provider (CAPA —
 // github.com/kubernetes-sigs/cluster-api-provider-aws).
@@ -211,4 +214,3 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {
 	return nil
 }
-

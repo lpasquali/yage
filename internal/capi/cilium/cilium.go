@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package ciliumx ports the pure-logic Cilium helpers from
 // the original bash port. The heavy orchestration helpers (apply_workload_
 // cilium_helmchartproxy, apply_workload_cilium_lbb_to_workload_if_enabled,

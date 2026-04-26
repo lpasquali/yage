@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Methods and small predicates over *Config. These replace bash helpers
 // that simply query the current global state (is_workload_gitops_caaph_mode,
 // persist_local_secrets, _clusterctl_cfg_file_present, …).

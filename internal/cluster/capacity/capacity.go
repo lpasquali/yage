@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package capacity computes resource budget plans (PlanFor /
 // PlanForK3s / AllocationsFor) and verdicts (Check / CheckCombined
 // / WouldFitAsK3s) used by the orchestrator's preflight and

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package kindsync
 
 // Phase D / §16 commit 2: the new yage-system/bootstrap-config

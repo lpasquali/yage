@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package kubectlx ports thin wrappers around kubectl that the rest of the
 // bootstrap calls repeatedly.
 //

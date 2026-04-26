@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package plan defines the Writer seam every Provider's plan-body
 // hook prints through. It exists so the orchestrator's dry-run plan
 // output stays decoupled from any specific provider's text: the

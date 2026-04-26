@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // defaults.go — per-provider default driver list (§20.5).
 //
 // The full §20.1 matrix names 12 provider-default drivers + 3 cross-

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package kindsync
 
 // handoff.go — bootstrap-state Secret hand-off from kind → Proxmox-hosted

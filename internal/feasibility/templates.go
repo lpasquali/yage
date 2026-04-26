@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package feasibility implements the §23 feasibility gate — the
 // "anti-scrooge" cluster sizing check that prevents yage from
 // provisioning a cluster that physically can't run the user's stated

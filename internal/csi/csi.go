@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // csi.go — Selector resolves cfg into a concrete Driver list.
 //
 // Two inputs feed into the resolution:

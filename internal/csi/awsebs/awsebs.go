@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package awsebs implements the AWS EBS CSI driver registration
 // for yage's CSI add-on registry (internal/csi). The upstream chart
 // is aws-ebs-csi-driver published by kubernetes-sigs; auth is via

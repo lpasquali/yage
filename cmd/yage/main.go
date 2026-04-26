@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // yage is a Cluster API bootstrap orchestrator: provisions a kind-based
 // CAPI management plane and brings up a workload cluster on the configured
 // infrastructure provider, then layers in CNI, CSI, and an Argo CD app-of-apps.

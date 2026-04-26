@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package capd is a reference implementation of provider.Provider
 // for the CAPI Docker provider (https://cluster-api.sigs.k8s.io/user/quick-start.html#docker).
 //

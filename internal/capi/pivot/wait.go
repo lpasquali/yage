@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package pivot implements the standard CAPI "bootstrap-and-pivot" pattern:
 // kind boots, clusterctl init runs on kind, then this package provisions a
 // management cluster on Proxmox via CAPI, runs `clusterctl move` from the

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package installer ports install_binary and every ensure_* helper from
 // the original bash port (lines ~1994-2858). These functions install or upgrade
 // third-party CLIs to pinned versions, mirroring the bash behavior:

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package gcppd implements the GCP Persistent Disk CSI driver
 // registration for yage's CSI add-on registry (internal/csi).
 //

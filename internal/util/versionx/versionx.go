@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package versionx ports _normalize_git_version and _versions_match from
 // the original bash port — used to decide whether a locally-installed CLI matches
 // the pinned *_VERSION and should be reinstalled.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package provider
 
 // Inventory is the cloud-correct picture of "what's there + what's

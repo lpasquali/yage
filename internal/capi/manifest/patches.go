@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package capimanifest ports the YAML-patch functions that mutate the
 // workload CAPI manifest on disk. Every function reads a file,
 // transforms the text, writes it back. The source file is always the

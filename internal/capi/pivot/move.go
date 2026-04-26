@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package pivot
 
 import (
@@ -283,4 +286,3 @@ func boolStrOr(s, def string) string {
 	}
 	return s
 }
-

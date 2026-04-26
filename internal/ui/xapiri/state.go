@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package xapiri
 
 // state.go — shared state for the eight-step xapiri walkthrough.

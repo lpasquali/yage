@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package k8sclient is the in-process replacement for the kubectl shell-outs
 // scattered across the rest of the orchestrator. A single Client carries the
 // typed clientset, dynamic client, REST mapper, and a server-side-apply

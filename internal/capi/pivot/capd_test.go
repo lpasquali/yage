@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package pivot
 
 // E.5 — CAPD-as-target sanity test (provider-agnostic move).

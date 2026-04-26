@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package bootstrap is the orchestrator. The bash script's top-level flow
 // (phases 1-10, roughly L7700-L8509) is the model we're porting piecewise.
 package orchestrator

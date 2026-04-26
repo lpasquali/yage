@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package yamlx ports the tiny flat-YAML helpers the bootstrap uses to
 // read/write ${PROXMOX_BOOTSTRAP_CONFIG_FILE} and other non-nested config
 // files. The bash implementation handles only top-level scalar key:value

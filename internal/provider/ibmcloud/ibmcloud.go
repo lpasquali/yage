@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package ibmcloud is the yage Provider implementation for
 // the Cluster API IBM Cloud provider (CAPIBM —
 // kubernetes-sigs/cluster-api-provider-ibmcloud).

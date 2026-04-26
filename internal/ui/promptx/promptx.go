@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package promptx ports the interactive-prompt helpers from
 // the original bash port. The bootstrap uses these for yes/no confirmations
 // and numeric menu selection when a kind cluster already exists, when

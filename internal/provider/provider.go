@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package provider is yage's plugin point for CAPI
 // infrastructure providers. The orchestrator drives the
 // CAPI-standard flow (kind boots → clusterctl init → workload Cluster

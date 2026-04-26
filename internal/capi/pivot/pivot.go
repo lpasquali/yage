@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 package pivot
 
 import (
@@ -414,4 +417,3 @@ func jsonEscape(s string) string {
 	)
 	return r.Replace(s)
 }
-

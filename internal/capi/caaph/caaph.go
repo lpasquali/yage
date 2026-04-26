@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package caaph ports the Cluster API Add-on Provider Helm workflow —
 // HelmChartProxy rendering + apply for Cilium, plus the Argo CD Operator
 // + ArgoCD CR installation on the workload cluster.
@@ -609,4 +612,3 @@ func fallbackStr(a, b string) string {
 	}
 	return b
 }
-

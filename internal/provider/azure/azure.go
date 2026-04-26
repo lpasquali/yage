@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package azure is the yage Provider implementation for the
 // Cluster API Azure infrastructure provider (CAPZ —
 // github.com/kubernetes-sigs/cluster-api-provider-azure).
@@ -228,4 +231,3 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {
 	return nil
 }
-

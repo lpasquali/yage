@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Luca Pasquali
+
 // Package proxmoxcsi registers the proxmox-csi-plugin driver with
 // yage's CSI add-on registry (internal/csi). The upstream chart is
 // proxmox-csi-plugin published by sergelogvinov on GHCR; auth is via

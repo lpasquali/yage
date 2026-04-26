@@ -13,7 +13,6 @@
 package proxmox
 
 import (
-	"github.com/lpasquali/yage/internal/capacity"
 	"github.com/lpasquali/yage/internal/capimanifest"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/csix"
@@ -42,8 +41,10 @@ func (p *Provider) EnsureIdentity(cfg *config.Config) error {
 
 // Capacity queries `/api2/json/cluster/resources` (filtered by
 // AllowedNodes) and returns the aggregated CPU + memory + storage.
+// The underlying queries live in inventory.go alongside the
+// Phase A.3 Inventory() implementation that supersedes this method.
 func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) {
-	hc, err := capacity.FetchHostCapacity(cfg)
+	hc, err := fetchHostCapacity(cfg)
 	if err != nil {
 		return nil, err
 	}

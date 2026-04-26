@@ -1,5 +1,5 @@
 // Package versionx ports _normalize_git_version and _versions_match from
-// yage.sh — used to decide whether a locally-installed CLI matches
+// the original bash port — used to decide whether a locally-installed CLI matches
 // the pinned *_VERSION and should be reinstalled.
 package versionx
 

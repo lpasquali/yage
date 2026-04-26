@@ -22,7 +22,7 @@ import (
 
 // TryFillWorkloadInputsFromManagement ports
 // try_fill_workload_manifest_inputs_from_management_cluster
-// (yage.sh L5024-L5147). Best-effort fill from the management
+// (the original bash port L5024-L5147). Best-effort fill from the management
 // cluster: pulls PROXMOX_TEMPLATE_ID / PROXMOX_NODE from existing
 // ProxmoxMachineTemplates, and network + DNS from the live
 // ProxmoxCluster when the workload is selected. Guards respect the

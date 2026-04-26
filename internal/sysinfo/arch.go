@@ -9,7 +9,7 @@ import (
 )
 
 // Arch maps `uname -m` to the Go-release binary convention.
-// Mirrors _arch() in yage.sh.
+// Mirrors _arch() in the original bash port.
 func Arch() string {
 	out, err := exec.Command("uname", "-m").Output()
 	if err != nil {

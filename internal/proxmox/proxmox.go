@@ -1,5 +1,5 @@
 // Package proxmox ports Proxmox identity / token / URL helpers from
-// yage.sh. Pure-logic helpers (no HTTP, no exec) live here.
+// the original bash port. Pure-logic helpers (no HTTP, no exec) live here.
 // HTTP-backed helpers (resolve_available_cluster_set_id_for_roles,
 // _resolve_proxmox_region_and_node_from_pve_auth_value) are stubbed until
 // their calling phases are ported — they need the management cluster /

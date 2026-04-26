@@ -6,7 +6,7 @@
 // Naming convention: the Go field is the UpperCamelCase spelling of the
 // bash var, with _EXPLICIT suffixed flags kept as <Name>Explicit.
 //
-// Defaults are taken verbatim from yage.sh (lines ~337-673). When
+// Defaults are taken verbatim from the original bash port (lines ~337-673). When
 // bash uses ${FOO:-default}, we use getenv(..., "default"); when bash uses
 // ${FOO-default} (empty-string preserved), we use getenvKeep(..., "default").
 package config

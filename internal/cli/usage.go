@@ -8,7 +8,7 @@ import (
 )
 
 // usageText is the binary's --help body. The bash script's own help is
-// the comment block at the top of yage.sh extracted via
+// the comment block at the top of the original bash port extracted via
 // `sed -n '2,300p'`; here we embed a Go-CLI-native rewrite that groups
 // flags by topic, lists pivot/standalone sections explicitly, and ends
 // with concrete examples. The bash script remains the canonical

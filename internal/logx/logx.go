@@ -1,4 +1,4 @@
-// Package logx mirrors the bash log/warn/die helpers from yage.sh.
+// Package logx mirrors the bash log/warn/die helpers from the original bash port.
 //
 // Bash equivalents:
 //

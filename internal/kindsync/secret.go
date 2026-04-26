@@ -2,7 +2,7 @@
 // state into kind Secrets (so a re-run finds the same state in the
 // management cluster when local env is thin).
 //
-// Bash source map (yage.sh):
+// Bash source map (the original bash port):
 //   - sync_bootstrap_config_to_kind                        ~L840-L850
 //   - sync_proxmox_bootstrap_literal_credentials_to_kind   ~L857-L1043
 //   - _apply_proxmox_bootstrap_admin_yaml_to_kind          ~L1046-L1103

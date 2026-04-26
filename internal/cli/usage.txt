@@ -10,10 +10,9 @@ DESCRIPTION
     moved to a Proxmox-hosted management cluster (clusterctl move) and
     kind is torn down.
 
-    The bash script yage.sh is the canonical reference for
-    every behavior detail. The Go binary is a 1:1 port and accepts the
-    same flags + environment variables; see docs/ARCHITECTURE.md for
-    the in-process implementation overview.
+    yage was originally a Go port of a bash script; the Go binary is
+    now the canonical implementation. See docs/ARCHITECTURE.md for
+    an in-process implementation overview.
 
 OPTIONS
 
@@ -271,5 +270,6 @@ EXAMPLES
 
 SEE ALSO
 
-    yage.sh        canonical bash reference (every default + behavior detail)
-    docs/ARCHITECTURE.md     Go implementation overview + 6 mermaid diagrams
+    docs/ARCHITECTURE.md       Go implementation overview + mermaid diagrams
+    docs/providers.md          Adding a new CAPI infrastructure provider
+    docs/abstraction-plan.md   In-progress refactor toward true multi-cloud

@@ -1,7 +1,7 @@
 // Package kind ports kind cluster lifecycle + bootstrap-state
 // backup/restore functions.
 //
-// Bash source map (yage.sh):
+// Bash source map (the original bash port):
 //   - ensure_kind()                                   — internal/installer.Kind (now no-op)
 //   - kind_bootstrap_state_backup_namespaces          — BackupNamespaces    (L2287-L2296)
 //   - kind_bootstrap_state_backup_write_kind_dir      — writeKindDir        (L2157-L2284)

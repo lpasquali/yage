@@ -1,5 +1,5 @@
 // Package installer ports install_binary and every ensure_* helper from
-// yage.sh (lines ~1994-2858). These functions install or upgrade
+// the original bash port (lines ~1994-2858). These functions install or upgrade
 // third-party CLIs to pinned versions, mirroring the bash behavior:
 //
 //   - If the binary is missing, install.

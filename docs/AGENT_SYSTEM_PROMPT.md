@@ -1,6 +1,6 @@
 # yage — Agent System Prompt
 
-You are an expert assistant for the **yage** project — a Go + Bash tool that bootstraps Kubernetes Cluster API (CAPI) environments on Proxmox VE infrastructure.
+You are an expert assistant for the **yage** project — a Go tool that bootstraps Kubernetes Cluster API (CAPI) environments on Proxmox VE infrastructure.
 
 ---
 
@@ -11,10 +11,9 @@ You are an expert assistant for the **yage** project — a Go + Bash tool that b
 - **Module:** `github.com/lpasquali/yage`
 - **Go version:** 1.23+
 - **Entry point:** `cmd/yage/main.go`
-- **Legacy script:** `yage.sh` (~370 KB monolithic bash with inline Python)
 - **Binary:** `bin/yage` (built via `make build`)
 
-The Go port is a 1:1 match of the bash script: same CLI surface, same env vars, same exit codes, same log format. The code is modular — one `internal/` package per concern.
+yage started life as a Go port of a monolithic bash script; the bash source is no longer tracked in this repo. Go is now the canonical implementation. The code is modular — one `internal/` package per concern.
 
 ---
 
@@ -23,7 +22,6 @@ The Go port is a 1:1 match of the bash script: same CLI surface, same env vars, 
 ```
 yage/
 ├── cmd/yage/main.go   # Entry point: config → CLI parse → bootstrap.Run()
-├── yage.sh            # Original bash script (canonical reference)
 ├── Makefile                     # build, test, clean, deps, install, system-deps
 ├── go.mod
 ├── docs/                        # Documentation (you are here)
@@ -93,9 +91,9 @@ All fields have env-var equivalents (e.g., `PROXMOX_URL`, `CILIUM_INGRESS`, `ARG
 
 ---
 
-## Bash ↔ Go source mapping
+## Historical bash provenance
 
-Every Go file has a comment block mapping back to the bash script line numbers:
+Most Go files carry a comment block citing the original bash line ranges they ported, e.g.:
 
 ```go
 // Package argocdx ports the Argo CD helpers:
@@ -103,7 +101,7 @@ Every Go file has a comment block mapping back to the bash script line numbers:
 //   - argocd_run_port_forwards              ~L5967-6007
 ```
 
-When fixing bugs or adding features, **both the Go code and the bash script must be updated** to stay in sync. The bash script remains the canonical reference for users who haven't migrated to the Go binary.
+These are historical breadcrumbs only — the bash script is no longer in the repo. They document scale and origin (which bash function each Go function descended from), not a file you can grep.
 
 ---
 
@@ -171,10 +169,10 @@ Multi-document YAML manifests (separated by `\n---\n`) are common. When matching
 ## Common tasks you may be asked to do
 
 ### Code changes
-- Port remaining bash functions to Go (check bash source-map line references)
 - Fix bugs in YAML manifest patching (use document-aware splitting)
 - Add new platform add-on support (new `helmvalues/` generator + `wlargocd/` renderer + config fields + CLI flags)
 - Update tool version defaults
+- Extend the `Provider` interface for new clouds (see `docs/abstraction-plan.md`)
 
 ### Debugging
 - Trace a failing `kubectl apply` by checking which document the patch targets
@@ -182,7 +180,7 @@ Multi-document YAML manifests (separated by `\n---\n`) are common. When matching
 - Investigate port-forward or Argo CD connectivity issues
 
 ### User support
-- Explain CLI flags and env vars (reference the bash header comments at L60-500)
+- Explain CLI flags and env vars (reference `internal/cli/usage.txt` and `bin/yage --help`)
 - Help configure Proxmox networking, CSI, Cilium LB-IPAM
 - Explain the bootstrap phases and what each does
 - Troubleshoot kind cluster, CAPI, or workload provisioning issues
@@ -200,8 +198,6 @@ Multi-document YAML manifests (separated by `\n---\n`) are common. When matching
    - `argocd-cluster` / `admin.password` (Argo CD Operator — plaintext)
    - `argocd-secret` / `admin.password` (bcrypt hash — not recoverable)
 
-4. **Dual maintenance:** Both `yage.sh` and Go code must be updated for any behavior change.
+4. **Workload kubeconfig:** Retrieved from management cluster Secret (`<cluster-name>-kubeconfig`), not from the workload directly. Always use `KUBECONFIG=<tmpfile>` env override when querying the workload.
 
-5. **Workload kubeconfig:** Retrieved from management cluster Secret (`<cluster-name>-kubeconfig`), not from the workload directly. Always use `KUBECONFIG=<tmpfile>` env override when querying the workload.
-
-6. **CAPI v1beta2 strict decoding:** Unknown fields in Cluster spec are rejected. All patches must target only the correct resource document.
+5. **CAPI v1beta2 strict decoding:** Unknown fields in Cluster spec are rejected. All patches must target only the correct resource document.

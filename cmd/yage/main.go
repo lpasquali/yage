@@ -1,14 +1,11 @@
-// yage is the Go port of yage.sh.
+// yage is a Cluster API bootstrap orchestrator: provisions a kind-based
+// CAPI management plane and brings up a workload cluster on the configured
+// infrastructure provider, then layers in CNI, CSI, and an Argo CD app-of-apps.
 //
-// Goal: identical CLI surface (same flags, same env vars, same exit codes,
-// same log output format). Internal structure is modular Go packages under
-// internal/, one per concern.
-//
-// The port is incremental. Today:
-//   - CLI parse matches bash parse_options() 1:1
-//   - Usage output matches bash usage() (embedded from the .sh header)
-//   - Dependency installers (ensure_*) are ported
-//   - Top-level orchestration is stubbed with pointers back to bash line ranges
+// Internal structure is modular Go packages under internal/, one per concern.
+// Started life as a Go port of a bash script; the bash source is no longer
+// tracked here, but historical provenance comments still cite the original
+// line ranges where useful.
 package main
 
 import (

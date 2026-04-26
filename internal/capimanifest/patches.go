@@ -3,7 +3,7 @@
 // transforms the text, writes it back. The source file is always the
 // value of cfg.CAPIManifest.
 //
-// Bash source map (yage.sh):
+// Bash source map (the original bash port):
 //   - apply_role_resource_overrides                           ~L4678-4762
 //   - patch_capi_manifest_proxmox_csi_topology_labels         ~L4768-4825
 //   - patch_capi_manifest_kubeadm_skip_kube_proxy_for_cilium  ~L4832-4895

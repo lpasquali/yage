@@ -1,11 +1,12 @@
 # yage — Go Architecture
 
-This document describes the Go implementation of `yage`. The bash
-script `yage.sh` remains the canonical reference (and is the source
-the Go port is reconciled against — phase comments throughout
-`internal/bootstrap/bootstrap.go` cite the originating bash line ranges as
-`L8133-L8211` etc.). The Go binary lives in `cmd/yage` and dispatches
-to `internal/bootstrap.Run`.
+This document describes the Go implementation of `yage`. The Go code
+is the canonical implementation; the original bash port that
+predated it is no longer tracked here, though phase comments
+throughout `internal/bootstrap/bootstrap.go` still cite the
+originating bash line ranges (e.g. `L8133-L8211`) as historical
+provenance. The Go binary lives in `cmd/yage` and dispatches to
+`internal/bootstrap.Run`.
 
 ## High-level overview
 

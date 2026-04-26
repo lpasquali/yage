@@ -3,11 +3,10 @@
 > **yage** — say it **"yah-HEY"** (rhymes with *olé*).
 >
 > Named after *Banisteriopsis caapi* (B. caapi → bcapi → yage),
-> the Amazonian vine brewed into the psychoactive *yagé*. The
-> project started life as `bootstrap-capi`; the new name keeps the
-> "capi" lineage while shedding the literal mouthful.
+> the Amazonian vine brewed into the psychoactive *yagé*.
+> As in the famous south american visionary concotion, yage Go program
 
-A Go + Bash tool that bootstraps a Cluster API (CAPI) management
+A Go tool that bootstraps a Cluster API (CAPI) management
 plane in a local kind cluster and provisions a Proxmox VE workload
 cluster on top, with CNI (Cilium), CSI (Proxmox CSI), and an
 Argo CD app-of-apps GitOps surface. Twelve infrastructure providers
@@ -27,9 +26,8 @@ bin/yage --dry-run          # plan without applying
 Everything lives under [`docs/`](docs/):
 
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the Go
-  implementation, package-by-package; the `yage.sh` bash script is
-  the canonical behavior reference and the Go port is reconciled
-  against it.
+  implementation, package-by-package, with notes on the historical
+  bash provenance.
 - **[providers.md](docs/providers.md)** — how to add a new CAPI
   infrastructure provider behind the `Provider` interface.
 - **[capacity-preflight.md](docs/capacity-preflight.md)** — the
@@ -48,7 +46,6 @@ Everything lives under [`docs/`](docs/):
 ```
 cmd/yage/         entry point (main.go)
 internal/         Go packages — orchestrator, providers, capacity, cost, pivot, …
-yage.sh           original bash script — canonical behavior reference
 docs/             documentation (see above)
 Makefile          build / test / install
 ```

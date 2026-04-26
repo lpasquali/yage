@@ -1,7 +1,7 @@
 // Package kubectlx ports thin wrappers around kubectl that the rest of the
 // bootstrap calls repeatedly.
 //
-// Bash source map (yage.sh):
+// Bash source map (the original bash port):
 //   - contains_line                                         ~L1130-1139
 //   - _resolve_bootstrap_kubectl_context                    ~L821-835
 //   - wait_for_service_endpoint                             ~L2059-2070

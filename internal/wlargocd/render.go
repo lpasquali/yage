@@ -3,7 +3,7 @@
 // document the orchestrator will concatenate into one kubectl-apply
 // stream.
 //
-// Bash source map (yage.sh):
+// Bash source map (the original bash port):
 //   - _wl_argocd_render_helm_git           ~L6229-6318
 //   - _kyverno_argocd_values_toleration_fragment ~L6321-6333
 //   - _wl_argocd_render_kyverno            ~L6344-6468

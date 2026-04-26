@@ -1,5 +1,5 @@
 // Package promptx ports the interactive-prompt helpers from
-// yage.sh. The bootstrap uses these for yes/no confirmations
+// the original bash port. The bootstrap uses these for yes/no confirmations
 // and numeric menu selection when a kind cluster already exists, when
 // destructive operations are about to run, etc.
 //

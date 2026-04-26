@@ -1,7 +1,7 @@
 // Package opentofux ports the OpenTofu-backed Proxmox identity
 // bootstrap flow.
 //
-// Bash source map (yage.sh):
+// Bash source map (the original bash port):
 //   - install_bpg_proxmox_provider                          ~L2860-2879
 //   - write_embedded_terraform_files                        ~L2881-3038
 //   - apply_proxmox_identity_terraform                      ~L3040-3067

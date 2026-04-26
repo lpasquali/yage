@@ -1,5 +1,5 @@
 // Package ciliumx ports the pure-logic Cilium helpers from
-// yage.sh. The heavy orchestration helpers (apply_workload_
+// the original bash port. The heavy orchestration helpers (apply_workload_
 // cilium_helmchartproxy, apply_workload_cilium_lbb_to_workload_if_enabled,
 // …) live later in the script and depend on kubectlx / argocdx / kind
 // wiring that is not yet ported; those will land in a later batch.

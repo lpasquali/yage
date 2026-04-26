@@ -2,7 +2,7 @@ package opentofux
 
 // IdentityHCL is the HCL body written to ${state_dir}/proxmox-identity.tf
 // by WriteEmbeddedFiles. Verbatim copy of the bash heredoc
-// (yage.sh L2885-L3037).
+// (the original bash port L2885-L3037).
 const IdentityHCL = `# Plugin: bpg/proxmox
 
 terraform {

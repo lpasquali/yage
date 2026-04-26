@@ -3,7 +3,7 @@
 // body as a string; callers write it to disk, feed to `helm template`,
 // or embed as valuesTemplate inside a HelmChartProxy.
 //
-// Bash source map (yage.sh):
+// Bash source map (the original bash port):
 //   - workload_argocd_metrics_server_helm_values             ~L6010-6024
 //   - workload_argocd_victoria_helm_values                   ~L6826-6850
 //   - workload_argocd_opentelemetry_helm_values              ~L6852-6858

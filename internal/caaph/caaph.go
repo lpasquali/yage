@@ -2,7 +2,7 @@
 // HelmChartProxy rendering + apply for Cilium, plus the Argo CD Operator
 // + ArgoCD CR installation on the workload cluster.
 //
-// Bash source map (yage.sh):
+// Bash source map (the original bash port):
 //   - patch_capi_cluster_caaph_helm_labels                     ~L5362-5429
 //   - caaph_print_helmchartproxy_cilium_yaml                   ~L5433-5513
 //   - apply_workload_cilium_helmchartproxy                     ~L5515-5533

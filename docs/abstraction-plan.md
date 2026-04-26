@@ -1996,3 +1996,143 @@ imports, or assumptions outside `internal/provider/proxmox/` and
 `internal/proxmox/`. Multi-cloud is then a question of "implement
 the methods" per provider, not "rewire the orchestrator."
 
+---
+
+## 15. `internal/` reorganization — proposal
+
+`internal/` today has 30 top-level packages, all flat. The Provider
+abstraction — the centerpiece of this whole plan — lives as one of
+those 30, structurally indistinguishable from `logx` or `yamlx`.
+That's not the layering we just spent 14 sections designing.
+
+This section proposes a target layout that mirrors the interface
+design. Doc-only for now: lands as a code change after user review.
+
+### Target
+
+```
+internal/
+├── orchestrator/       (was bootstrap/) — the top-level driver
+├── provider/           — the Provider abstraction (UNCHANGED location)
+│   ├── provider.go, minstub.go, inventory.go, …
+│   ├── proxmox/, aws/, azure/, gcp/, hetzner/, openstack/, vsphere/,
+│   ├── digitalocean/, linode/, oci/, ibmcloud/, capd/
+│   └── pveapi/         (was internal/pveapi/) — Proxmox HTTP client,
+│                        moved INSIDE provider/proxmox/ once Phases B/D/E
+│                        finish (until then orchestrator-side packages
+│                        still import it directly; see §15.3)
+├── capi/               — Cluster API machinery
+│   ├── manifest/       (was capimanifest/)
+│   ├── pivot/          (was pivot/)
+│   ├── argocd/         (was argocdx/)
+│   ├── cilium/         (was ciliumx/)
+│   ├── csi/            (was csix/)
+│   ├── caaph/          (was caaph/)
+│   ├── postsync/       (was postsync/)
+│   ├── helmvalues/     (was helmvalues/)
+│   └── wlargocd/       (was wlargocd/) — workload Argo Application renderers
+├── cluster/            — cluster-lifecycle
+│   ├── kind/           (was kind/)
+│   ├── kindsync/       (was kindsync/)
+│   └── capacity/       (was capacity/) — planning + verdicts
+├── cost/               — stays
+├── pricing/            — stays
+├── platform/           — cross-cutting plumbing
+│   ├── installer/      (was installer/)
+│   ├── opentofux/      (was opentofux/)
+│   ├── kubectlx/       (was kubectlx/)
+│   ├── k8sclient/      (was k8sclient/)
+│   ├── shell/          (was shell/)
+│   └── sysinfo/        (was sysinfo/) — OS/arch detection
+├── ui/                 — user-facing surfaces
+│   ├── cli/            (was cli/) — flag parsing + usage.txt
+│   ├── xapiri/         (was xapiri/) — TUI stub
+│   ├── plan/           — new: PlanWriter (lands with §8 / Phase B)
+│   ├── logx/           (was logx/)
+│   └── promptx/        (was promptx/)
+├── config/             — stays (post-Phase C)
+└── util/               — generic utilities
+    ├── versionx/       (was versionx/)
+    └── yamlx/          (was yamlx/)
+```
+
+**Top-level count: 30 → 10.** Provider abstraction visually
+central. Five logical buckets (capi, cluster, platform, ui, util)
+each tell you what's inside before you read a file.
+
+### Why this shape
+
+| Bucket | What's in it | Boundary rule |
+|---|---|---|
+| `orchestrator/` | `Run()`, phase functions | One package; everything else is something it composes |
+| `provider/` | the abstraction + per-cloud impls | Anything provider-specific lives behind this seam |
+| `capi/` | CAPI controllers, manifests, pivot, addons | Code that operates on CAPI objects (Cluster, MachineDeployment, HelmChartProxy, Application) |
+| `cluster/` | kind lifecycle, kind-Secret sync, capacity preflight | Code that operates on the management/workload cluster as a whole |
+| `cost/`, `pricing/` | unchanged | Cost estimation + live pricing |
+| `platform/` | shell, kubectl, helm, opentofu, k8s client, sysinfo | "How we talk to tools" — no business logic |
+| `ui/` | CLI, TUI, plan rendering, logging, prompts | What users see |
+| `config/` | unchanged | Post-Phase-C namespaced struct |
+| `util/` | yaml/version helpers | Generic, no project semantics |
+
+### Open questions before applying
+
+1. **`pveapi` placement.** Today seven orchestrator-side packages
+   import `pveapi` directly (kindsync, capimanifest, opentofux,
+   caaph, bootstrap, etc.). Moving it inside `provider/proxmox/`
+   would force them to import "across the abstraction barrier" —
+   not what we want. *Recommendation: keep `pveapi` at
+   `internal/pveapi/` for now; move it into `provider/proxmox/pveapi/`
+   only after Phases B/D/E shrink the orchestrator-side direct
+   dependencies to zero.*
+
+2. **`bootstrap` → `orchestrator` rename.** Reads better but every
+   import path changes. *Recommendation: yes — name reflects role
+   and avoids confusion with bootstrap-mode CLI flags
+   (`BootstrapMode`, `BootstrapKindStateOp`).*
+
+3. **`x` suffixes** (argocdx, ciliumx, csix, kubectlx). These were
+   "thing-but-our-version" disambiguators during the bash port.
+   Moving them under `capi/` lets the suffix go: `capi/argocd`,
+   `capi/cilium`, `capi/csi`, `platform/kubectl`. *Recommendation:
+   drop the `x` suffix when each package moves.*
+
+4. **`wlargocd` vs `capi/argocd`** — both render Argo CD wiring.
+   `wlargocd` is the workload-side Application YAML; the (renamed)
+   `capi/argocd` is the management-side Argo CD Operator install.
+   Keep separate or merge? *Recommendation: keep separate;
+   different abstraction levels.* `capi/wlargocd` (no rename) reads
+   fine.
+
+### Cost of applying
+
+| Step | Files touched | Risk |
+|---|---|---|
+| `bootstrap/` → `orchestrator/` rename | ~30 import-path updates | Low (mechanical) |
+| Group under `capi/` (8 packages) | ~50 import-path updates | Low |
+| Group under `cluster/`, `platform/`, `ui/`, `util/` | ~50 import-path updates | Low |
+| Drop `x` suffixes during move | included | Low |
+| Total | ~130 files, all import-path-only | One commit, atomic |
+
+The work is `git mv` + sed across imports — no behavior change, no
+new tests. Build is the canary: must compile after every step.
+
+### Sequencing vs Phases A–E
+
+This restructure is **orthogonal** to Phases A–E:
+- Phase A (done) used the OLD layout.
+- Phase C (done) used the OLD layout.
+- Phase B/D/E haven't started; they should start AFTER this restructure
+  lands so they don't have to re-do imports.
+
+**Recommended order:** Phase 15 (this restructure) → Phase B / D / E.
+
+### Definition of Done
+
+- All packages live at their target paths
+- `go build ./...`, `go vet ./...`, `go test ./...` all green
+- Single atomic commit (or one per bucket if user prefers, with
+  each commit individually buildable)
+- §1 of this plan's "where Proxmox is currently bound" file paths
+  refreshed to the new locations
+- README.md `## Layout` section updated
+

@@ -2670,5 +2670,278 @@ follow-ups is closed except #7 + #8 (both deliberate deferrals).
 yage's interface design hits the "perfect" target the user named
 upfront.
 
+---
+
+## 20. CSI parity — driver matrix + add-on registry
+
+§6 flagged the gap: "Proxmox CSI is wired; other clouds use their
+vendor-supplied CSI via Helm and yage doesn't ship the values."
+This section closes the gap by promoting CSI from "Proxmox-only
+hardcoded" to "registered add-on driver, picked per cluster, with
+per-provider defaults."
+
+### 20.1 The driver matrix
+
+| Category | Driver name | k8s identifier | Default for provider |
+|---|---|---|---|
+| **Hyperscale block** | aws-ebs | `ebs.csi.aws.com` | aws |
+|  | aws-efs | `efs.csi.aws.com` | aws (file, opt-in) |
+|  | azure-disk | `disk.csi.azure.com` | azure |
+|  | gcp-pd | `pd.csi.storage.gke.io` | gcp |
+|  | hcloud | `csi.hetzner.cloud` (driver: `hcloud-csi`) | hetzner |
+|  | digitalocean-bs | `dobs.csi.digitalocean.com` | digitalocean |
+|  | linode-bs | `linodebs.csi.linode.com` (driver: `linode-blockstorage-csi`) | linode |
+|  | oci-bv | `blockvolume.csi.oraclecloud.com` (driver: `oci-bv-csi`) | oci |
+|  | ibm-vpc-block | `vpc.block.csi.ibm-cloud.com` (driver: `ibm-vpc-block-csi`) | ibmcloud |
+| **Virt / on-prem** | proxmox-csi | `csi.proxmox.sinextra.dev` | proxmox |
+|  | vsphere-csi | `csi.vsphere.vmware.com` | vsphere |
+|  | cinder-csi | `cinder.csi.openstack.org` | openstack |
+|  | nutanix-csi | `csi.nutanix.com` | nutanix (provider not registered yet) |
+|  | cloudstack-csi | `csi.cloudstack.apache.org` | (provider not registered yet) |
+|  | kubevirt-csi | `csi.kubevirt.io` | (used when running yage clusters as KubeVirt VMs) |
+| **Software-defined / cross-provider** | rook-ceph | `rook-ceph.rbd.csi.ceph.com` | — opt-in for any provider with multi-node disk |
+|  | longhorn | `driver.longhorn.io` | — opt-in for any virt-style provider |
+|  | openebs | (multiple variants: lvm, zfs, mayastor) | — opt-in for any provider |
+
+Twelve provider-default drivers + three software-defined cross-
+provider options + four virt-platform extras. Total: 19 distinct
+drivers.
+
+### 20.2 Why this isn't `Provider.EnsureCSISecret` extended
+
+Today the `Provider` interface has `EnsureCSISecret(cfg,
+kubeconfig)` (one method). That assumes ONE CSI per provider, and
+that it's always Secret-driven. Both assumptions break:
+
+- **Multi-CSI per provider**: AWS routinely runs EBS *and* EFS;
+  vSphere clusters often add Longhorn for dynamic-volume
+  scenarios; OpenStack might layer Rook-Ceph on top of Cinder. The
+  one-method-one-CSI model can't express this.
+- **Helm is the dominant install path** for hyperscale CSIs (EBS
+  is a Helm chart with IRSA; Azure Disk via Helm or AKS-managed;
+  GCP PD on GKE is preinstalled, on self-managed it's a Helm
+  chart). yage already ships Helm-via-CAAPH for Cilium and Argo
+  CD; the same pattern extends to CSI.
+- **Cross-provider drivers (Rook, Longhorn, OpenEBS)** don't
+  belong to any single Provider plugin. They're add-ons.
+
+So CSI gets its own registry, parallel to `internal/provider/`.
+
+### 20.3 Proposed shape: `internal/csi/` registry
+
+```go
+// internal/csi/driver.go
+package csi
+
+type Driver interface {
+    // Name is the stable internal id ("aws-ebs", "azure-disk",
+    // "rook-ceph", …). Used as the registry key.
+    Name() string
+
+    // K8sCSIDriverName is the value that appears in the
+    // CSIDriver/<name> object's spec.attachRequired etc., e.g.
+    // "ebs.csi.aws.com". Operators recognize this from kubectl
+    // describe.
+    K8sCSIDriverName() string
+
+    // Defaults indicate which provider this driver is the
+    // default choice for. Empty slice = cross-provider opt-in
+    // (Rook, Longhorn, OpenEBS).
+    Defaults() []string
+
+    // HelmChart returns the chart's repo URL, name, and version.
+    HelmChart(cfg *config.Config) (repo, chart, version string, err error)
+
+    // RenderValues produces the Helm values YAML for this
+    // driver's chart, taking the active config (region, instance
+    // metadata, secrets, etc.).
+    RenderValues(cfg *config.Config) (string, error)
+
+    // EnsureSecret pushes any per-driver Secret to the workload
+    // cluster (Hetzner: HCLOUD_TOKEN as Secret; Proxmox: existing
+    // Secret pattern; AWS-EBS: ErrNotApplicable because IRSA).
+    EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) error
+
+    // DefaultStorageClass returns the StorageClass name yage
+    // creates / labels as default. "" = no default-class
+    // creation; operator picks via Helm values.
+    DefaultStorageClass() string
+
+    // DescribeInstall emits plan-output bullets for --dry-run
+    // (mirror of Provider.DescribeWorkload). Gets a plan.Writer.
+    DescribeInstall(w plan.Writer, cfg *config.Config)
+}
+```
+
+Plus a registry mirroring `internal/provider`:
+
+```go
+var (
+    mu      sync.RWMutex
+    drivers = map[string]Driver{}
+)
+
+func Register(d Driver) { /* idempotent, panics on duplicate */ }
+func Get(name string) (Driver, error)
+func Registered() []string  // sorted
+```
+
+### 20.4 Selection model
+
+`cfg.CSI` (new sub-config):
+
+```go
+type CSIConfig struct {
+    // Drivers is the list of CSI driver names to install on the
+    // workload cluster. Empty → use the provider's default set
+    // (defaultDriversFor(cfg.InfraProvider)).
+    Drivers []string  // env: YAGE_CSI_DRIVERS=aws-ebs,longhorn
+
+    // DefaultClass picks which driver provides the default
+    // StorageClass when multiple are installed. Empty → first
+    // driver in Drivers wins.
+    DefaultClass string  // env: YAGE_CSI_DEFAULT_CLASS
+
+    // Per-driver opt-in/out switches when needed (today only
+    // proxmox has one; AWS-EBS would be always-on when aws is
+    // selected, etc.). Reflective lookup via struct tags so new
+    // drivers don't need code changes here.
+    Proxmox    bool  // legacy default: true
+    AWSEBS     bool
+    AWSEFS     bool
+    Longhorn   bool
+    RookCeph   bool
+    OpenEBS    bool
+    // ... etc, one per registered driver
+}
+```
+
+CLI: `--csi-driver <name>` (repeatable), `--csi-default-class <name>`.
+
+### 20.5 Per-provider defaults
+
+```go
+// internal/csi/defaults.go
+func defaultDriversFor(provider string) []string {
+    switch provider {
+    case "aws":          return []string{"aws-ebs"}
+    case "azure":        return []string{"azure-disk"}
+    case "gcp":          return []string{"gcp-pd"}
+    case "hetzner":      return []string{"hcloud"}
+    case "digitalocean": return []string{"digitalocean-bs"}
+    case "linode":       return []string{"linode-bs"}
+    case "oci":          return []string{"oci-bv"}
+    case "ibmcloud":     return []string{"ibm-vpc-block"}
+    case "proxmox":      return []string{"proxmox-csi"}
+    case "vsphere":      return []string{"vsphere-csi"}
+    case "openstack":    return []string{"cinder-csi"}
+    default:             return nil
+    }
+}
+```
+
+When `cfg.CSI.Drivers` is empty, yage installs the provider's
+default. Operator can override or add: `yage --csi-driver longhorn
+--csi-driver aws-ebs` runs both on AWS.
+
+### 20.6 Migration: Proxmox CSI from Provider into csi/
+
+Existing `internal/capi/csi/` package (the Proxmox CSI plumbing)
+becomes `internal/csi/proxmox/`. The `Provider.EnsureCSISecret`
+method on the `Provider` interface deprecates — gets a `Deprecated:`
+comment and forwards to `csi.Get("proxmox-csi").EnsureSecret(...)`
+during a migration window. After the migration, drop the method
+from the Provider interface entirely.
+
+`Phase F: CSI registry` — sequence into the plan as the next
+phase after current Wave 1 lands. Not in scope of Wave 1.
+
+### 20.7 Per-driver effort
+
+Each Helm-driven driver is small: ~50 LOC for the `Driver` impl
+(chart URL, values renderer, Secret wiring). Per-driver effort:
+
+| Driver | Helm chart | Secret? | LOC est. | Priority |
+|---|---|---|---|---|
+| aws-ebs | aws-ebs-csi-driver | IRSA (no Secret) | 60 | high |
+| azure-disk | csi-driver-azuredisk | Workload Identity OR Secret | 80 | high |
+| gcp-pd | gcp-compute-persistent-disk-csi-driver | WI OR JSON Secret | 70 | high |
+| hcloud | hcloud-csi | HCLOUD_TOKEN Secret | 50 | high |
+| digitalocean-bs | digitalocean-csi | DIGITALOCEAN_TOKEN Secret | 50 | medium |
+| linode-bs | linode-blockstorage-csi | LINODE_API_TOKEN Secret | 50 | medium |
+| oci-bv | oci-csi | Instance Principal OR config Secret | 70 | medium |
+| ibm-vpc-block | ibm-vpc-block-csi-driver | IAM API key Secret | 70 | medium |
+| vsphere-csi | vsphere-csi-driver | clouds.yaml-style Secret | 70 | medium |
+| cinder-csi | openstack-cinder-csi | clouds.yaml Secret | 60 | medium |
+| nutanix-csi | nutanix-csi-storage | username/password Secret | 60 | low (no provider yet) |
+| cloudstack-csi | cloudstack-csi | API key Secret | 60 | low (no provider yet) |
+| kubevirt-csi | kubevirt-csi-driver | none (uses KubeVirt API) | 50 | low |
+| rook-ceph | rook-ceph + rook-ceph-cluster | cluster spec values | 120 | high |
+| longhorn | longhorn | none | 60 | high |
+| openebs (lvm) | openebs-lvm-csi | none | 80 | medium |
+| proxmox-csi | (existing) | (existing) | port: 0 LOC | done |
+
+Total Phase F estimate: ~1100 LOC, ~14 driver impls + 1 registry
++ 1 selector. About 2 days of focused work for one developer. With
+parallelization (one driver per agent in a future Wave) it's
+half-day wall-clock.
+
+### 20.8 Open design questions
+
+1. **Default-class arbitration when multiple drivers install.**
+   Today only one CSI runs per cluster so "default" is unambiguous.
+   With Rook + AWS-EBS both present, which wins? Recommendation:
+   first-listed in `cfg.CSI.Drivers` wins; explicit
+   `--csi-default-class` overrides.
+
+2. **Identity-model coupling for CSI drivers that share creds with
+   provisioning.** Hetzner CSI uses the SAME `HCLOUD_TOKEN` that
+   CAPHV uses. AWS EBS uses IRSA (no secret). Azure Disk can use
+   SP, Managed Identity, or Workload Identity (the §13.4 #4
+   discriminator). The CSI driver's `EnsureSecret` should reuse
+   the provider's identity model when applicable, not invent its
+   own.
+
+3. **Operator override of values.** Helm values are a long tail.
+   Should yage support `--csi-values-file <path>`? Recommendation:
+   yes, eventually; out of Phase F's MVP.
+
+4. **Volume class plumbing.** Some drivers (Rook, OpenEBS) emit
+   multiple StorageClasses (rbd-replicated-3, cephfs-shared, …).
+   yage should label one as default; the rest are visible to
+   workloads via name. Out of Phase F MVP — operator manages.
+
+### 20.9 Sequencing relative to current waves
+
+Phase F is **the next wave after current Wave 1 lands**. Sequencing:
+
+```
+Current Wave 1 (in flight):  A xapiri | B kindsync write | C E.5 ✅ | D goldens | E config + image mirror
+                                          ↓
+Future Wave 2 (small):       #7 identity discriminator | #8 drop legacy fallback
+                                          ↓
+Future Wave F (this section): CSI registry + 14 drivers (parallelizable per driver)
+```
+
+CSI work is independent of identity-discriminator + drop-legacy-
+fallback, so Wave 2 and Wave F can run in parallel. Suggest
+launching Wave F as the immediate follow-up to current Wave 1
+since it's the larger, higher-impact body of work.
+
+### 20.10 Definition of Done — Phase F
+
+- `internal/csi/` registry exists: `Driver` interface, `Register`,
+  `Get`, `Registered`.
+- `cfg.CSI.{Drivers, DefaultClass}` + per-driver opt-in fields.
+- CLI flags: `--csi-driver` (repeatable), `--csi-default-class`.
+- 14 driver impls land (priorities high → medium → low per
+  §20.7).
+- Existing Proxmox CSI flow goes through the registry; Provider
+  interface's `EnsureCSISecret` deprecates with a forwarding
+  shim, then is removed in a follow-up.
+- Each driver has a `DescribeInstall` plan-output hook so
+  `--dry-run` shows what gets installed.
+- Per-driver tests where Secret content is non-trivial (chart
+  values render, token plumbed correctly).
 
 

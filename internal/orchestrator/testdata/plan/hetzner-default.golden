@@ -1,0 +1,70 @@
+────────────────────────────────────────────────────────────────────────────
+📝 DRY-RUN PLAN — yage would perform the following actions
+────────────────────────────────────────────────────────────────────────────
+
+▸ Pre-phase
+    • ClusterSetID = test-clusterset (identity suffix: <derived>)
+
+▸ Phase 1 — install host dependencies (CLIs for the operator)
+    • system packages: git, curl, python3 (apt/dnf/yum/apk)
+    • Docker: install if missing; upgrade unless --no-delete-kind or kind cluster exists
+    • kubectl      v1.32.0    (install)
+    • kind         v0.24.0    (install)
+    • clusterctl   v1.8.5     (install)
+    • cilium       v0.16.20   (install)
+    • helm         latest     (install)
+    • argocd       v2.13.2    (install)
+    • kyverno      v1.13.2    (install)
+    • cmctl        v2.1.1     (install)
+    • tofu         1.8.5      (install)
+
+▸ Identity bootstrap — Hetzner Cloud
+    ◦ skip: HCLOUD_TOKEN supplied via env (operator-managed, not minted by yage)
+
+▸ Phase 2.1 — clusterctl credentials
+    • synthesize ephemeral clusterctl config from Proxmox env (URL/TOKEN/SECRET)
+
+▸ Phase 2.4 — kind cluster
+    • create kind cluster 'capi-test' (config: <ephemeral default>)
+
+▸ Phase 2.8 — clusterctl init on kind
+    • providers: infrastructure=hetzner, ipam=in-cluster, addon=helm
+    • CAPMOX image: v0.7.0 (build arm64 if needed)
+
+▸ Workload Cluster — Hetzner Cloud
+    • Cluster: default/capi-quickstart, k8s v1.32.0, region fsn1
+    • control plane: 1 × cx22
+    • workers: 2 × cx22
+    • overhead tier: prod (LB / floating IP / volume counts → see Cost section)
+    ◦ skip: Hetzner CSI installed by operator via Helm (hcloud-csi-driver) — out of scope for yage
+
+▸ Pivot to managed mgmt cluster
+    ◦ skip: Hetzner provider has no PivotTarget yet (kind remains the mgmt cluster)
+
+▸ Phase 2.10 — Argo CD on workload
+    • Argo CD Operator + ArgoCD CR (version v2.13.2, operator v0.12.2)
+    • CAAPH argocd-apps HelmChartProxy → root Application 'capi-quickstart'
+    •   app-of-apps: https://github.com/example/app-of-apps @ main, path apps
+
+▸ Final — kind teardown
+    ◦ skip: PIVOT_ENABLED=false (kind stays — it IS the management cluster)
+
+▸ Capacity budget
+    • budget: 75% of available host CPU/memory/storage
+    •   workload control-plane     1 × (1 cores, 0 MiB, 0 GB) = 1 cores, 0 MiB, 0 GB
+    •   workload worker            2 × (1 cores, 0 MiB, 0 GB) = 2 cores, 0 MiB, 0 GB
+    • TOTAL requested:  3 cores, 0 MiB (0 GiB), 0 GB disk
+    ◦ skip: provider "hetzner" has no flat-pool inventory model — preflight skipped (§13.4 #1)
+
+▸ Workload allocations (per-bucket budget on workers)
+    • total worker capacity:    2000 millicores, 0 MiB (workers=2 ×  sockets ×  cores ×  MiB)
+    • system-apps reserve:      2000 millicores, 4096 MiB
+    •   ├─ argocd (operator + server + repo + redis), kyverno, cert-manager,
+    •   ├─ proxmox-csi (controller), keycloak (SSO), external-secrets, infisical
+    •   └─ tune via SYSTEM_APPS_CPU_MILLICORES / SYSTEM_APPS_MEMORY_MIB
+    • ❌ system reserve (2000 mCPU / 4096 MiB) exceeds total worker capacity (2000 / 0)
+    •    grow worker count / sizing, OR untaint the control-plane node and let it host system pods
+────────────────────────────────────────────────────────────────────────────
+✅ Dry run complete — NO state was changed.
+   Re-run without --dry-run to execute the plan above.
+────────────────────────────────────────────────────────────────────────────

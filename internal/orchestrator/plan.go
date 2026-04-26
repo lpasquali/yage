@@ -14,6 +14,7 @@ package orchestrator
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -31,7 +32,14 @@ import (
 // Mirrors Run() phase ordering so reading top-to-bottom shows the real
 // run's sequence.
 func PrintPlan(cfg *config.Config) {
-	w := os.Stdout
+	PrintPlanTo(os.Stdout, cfg)
+}
+
+// PrintPlanTo is the same as PrintPlan but writes to an arbitrary
+// io.Writer. Used by the snapshot-golden tests in
+// plan_golden_test.go so the full dry-run output can be captured into
+// a buffer and compared against an on-disk fixture.
+func PrintPlanTo(w io.Writer, cfg *config.Config) {
 	pw := plan.NewTextWriter(w)
 	hr := strings.Repeat("─", 76)
 
@@ -69,19 +77,19 @@ func PrintPlan(cfg *config.Config) {
 	fmt.Fprintln(w, hr)
 }
 
-func section(w *os.File, title string) {
+func section(w io.Writer, title string) {
 	fmt.Fprintf(w, "\n▸ %s\n", title)
 }
 
-func bullet(w *os.File, format string, args ...interface{}) {
+func bullet(w io.Writer, format string, args ...interface{}) {
 	fmt.Fprintf(w, "    • "+format+"\n", args...)
 }
 
-func skip(w *os.File, format string, args ...interface{}) {
+func skip(w io.Writer, format string, args ...interface{}) {
 	fmt.Fprintf(w, "    ◦ skip: "+format+"\n", args...)
 }
 
-func planStandalone(w *os.File, cfg *config.Config) {
+func planStandalone(w io.Writer, cfg *config.Config) {
 	switch {
 	case cfg.BootstrapKindStateOp == "backup":
 		section(w, "Standalone: kind backup")
@@ -106,7 +114,7 @@ func planStandalone(w *os.File, cfg *config.Config) {
 	}
 }
 
-func planPrePhase(w *os.File, cfg *config.Config) {
+func planPrePhase(w io.Writer, cfg *config.Config) {
 	if cfg.BootstrapKindStateOp != "" || cfg.WorkloadRolloutStandalone ||
 		cfg.ArgoCDPrintAccessStandalone || cfg.ArgoCDPortForwardStandalone {
 		return
@@ -121,7 +129,7 @@ func planPrePhase(w *os.File, cfg *config.Config) {
 	bullet(w, "ClusterSetID = %s (identity suffix: %s)", firstNonEmptyStr(cfg.ClusterSetID, "<generated>"), firstNonEmptyStr(cfg.Providers.Proxmox.IdentitySuffix, "<derived>"))
 }
 
-func planPhase1(w *os.File, cfg *config.Config) {
+func planPhase1(w io.Writer, cfg *config.Config) {
 	section(w, "Phase 1 — install host dependencies (CLIs for the operator)")
 	bullet(w, "system packages: git, curl, python3 (apt/dnf/yum/apk)")
 	bullet(w, "Docker: install if missing; upgrade unless --no-delete-kind or kind cluster exists")
@@ -158,7 +166,7 @@ func describeIdentity(pw plan.Writer, cfg *config.Config, prov provider.Provider
 	prov.DescribeIdentity(pw, cfg)
 }
 
-func planPhase2Clusterctl(w *os.File, cfg *config.Config) {
+func planPhase2Clusterctl(w io.Writer, cfg *config.Config) {
 	section(w, "Phase 2.1 — clusterctl credentials")
 	if cfg.ClusterctlCfg != "" {
 		bullet(w, "use explicit clusterctl config: %s", cfg.ClusterctlCfg)
@@ -167,7 +175,7 @@ func planPhase2Clusterctl(w *os.File, cfg *config.Config) {
 	}
 }
 
-func planPhase2Kind(w *os.File, cfg *config.Config) {
+func planPhase2Kind(w io.Writer, cfg *config.Config) {
 	section(w, "Phase 2.4 — kind cluster")
 	want := "kind-" + cfg.KindClusterName
 	if k8sclient.ContextExists(want) {
@@ -181,7 +189,7 @@ func planPhase2Kind(w *os.File, cfg *config.Config) {
 	}
 }
 
-func planPhase2CAPI(w *os.File, cfg *config.Config) {
+func planPhase2CAPI(w io.Writer, cfg *config.Config) {
 	section(w, "Phase 2.8 — clusterctl init on kind")
 	bullet(w, "providers: infrastructure=%s, ipam=%s, addon=helm", cfg.InfraProvider, cfg.IPAMProvider)
 	bullet(w, "CAPMOX image: %s (build arm64 if needed)", firstNonEmptyStr(cfg.CAPMOXVersion, "<resolve from CAPMOX_REPO>"))
@@ -213,7 +221,7 @@ func describePivot(pw plan.Writer, cfg *config.Config, prov provider.Provider, p
 	prov.DescribePivot(pw, cfg)
 }
 
-func planPhase210ArgoCD(w *os.File, cfg *config.Config) {
+func planPhase210ArgoCD(w io.Writer, cfg *config.Config) {
 	section(w, "Phase 2.10 — Argo CD on workload")
 	if !cfg.ArgoCDEnabled {
 		skip(w, "ARGOCD_ENABLED=false (--disable-argocd)")
@@ -228,7 +236,7 @@ func planPhase210ArgoCD(w *os.File, cfg *config.Config) {
 	}
 }
 
-func planFinal(w *os.File, cfg *config.Config) {
+func planFinal(w io.Writer, cfg *config.Config) {
 	section(w, "Final — kind teardown")
 	switch {
 	case !cfg.PivotEnabled:
@@ -251,7 +259,7 @@ func planFinal(w *os.File, cfg *config.Config) {
 // instead of the direct capacity.FetchHostCapacity +
 // capacity.FetchExistingUsage pair. Same math, same verdict — only
 // the plumbing moved.
-func planCapacity(w *os.File, cfg *config.Config) {
+func planCapacity(w io.Writer, cfg *config.Config) {
 	section(w, "Capacity budget")
 	plan := capacity.PlanFor(cfg)
 	threshold := cfg.ResourceBudgetFraction
@@ -345,7 +353,7 @@ func planCapacity(w *os.File, cfg *config.Config) {
 // Surfaces a warning when the system reserve alone exceeds total
 // worker capacity (operator must either grow workers or pin add-ons
 // to the control-plane node).
-func planAllocations(w *os.File, cfg *config.Config) {
+func planAllocations(w io.Writer, cfg *config.Config) {
 	section(w, "Workload allocations (per-bucket budget on workers)")
 	a := capacity.AllocationsFor(cfg)
 	bullet(w, "total worker capacity:    %d millicores, %d MiB (workers=%s × %s sockets × %s cores × %s MiB)",
@@ -373,7 +381,7 @@ func planAllocations(w *os.File, cfg *config.Config) {
 // providers (Proxmox, vSphere, CAPD) and ones with too-variable
 // pricing (OpenStack) return ErrNotApplicable and the section is
 // skipped silently — see docs/aws-cost-tiers.md for the AWS table.
-func planMonthlyCost(w *os.File, cfg *config.Config) {
+func planMonthlyCost(w io.Writer, cfg *config.Config) {
 	p, err := provider.For(cfg)
 	if err != nil {
 		return
@@ -415,7 +423,7 @@ func planMonthlyCost(w *os.File, cfg *config.Config) {
 // rightmost column shows what the same total budget would buy as
 // persistent block storage on each cloud — handy for picking where
 // observability + DB go when storage is the dominant cost driver.
-func planCostCompare(w *os.File, cfg *config.Config) {
+func planCostCompare(w io.Writer, cfg *config.Config) {
 	if !cfg.CostCompare {
 		return
 	}
@@ -425,7 +433,7 @@ func planCostCompare(w *os.File, cfg *config.Config) {
 // planRetention prints how many GB of cheap-tier block storage the
 // user's budget buys AFTER paying for compute on the active provider.
 // No-op when --budget-usd-month is unset.
-func planRetention(w *os.File, cfg *config.Config) {
+func planRetention(w io.Writer, cfg *config.Config) {
 	if cfg.BudgetUSDMonth <= 0 {
 		return
 	}

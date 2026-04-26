@@ -1,0 +1,91 @@
+────────────────────────────────────────────────────────────────────────────
+📝 DRY-RUN PLAN — yage would perform the following actions
+────────────────────────────────────────────────────────────────────────────
+
+▸ Pre-phase
+    • ClusterSetID = test-clusterset (identity suffix: test)
+
+▸ Phase 1 — install host dependencies (CLIs for the operator)
+    • system packages: git, curl, python3 (apt/dnf/yum/apk)
+    • Docker: install if missing; upgrade unless --no-delete-kind or kind cluster exists
+    • kubectl      v1.32.0    (install)
+    • kind         v0.24.0    (install)
+    • clusterctl   v1.8.5     (install)
+    • cilium       v0.16.20   (install)
+    • helm         latest     (install)
+    • argocd       v2.13.2    (install)
+    • kyverno      v1.13.2    (install)
+    • cmctl        v2.1.1     (install)
+    • tofu         1.8.5      (install)
+
+▸ Identity bootstrap — Proxmox (OpenTofu)
+    • interactive prompt (PROXMOX_ADMIN_USERNAME / PROXMOX_ADMIN_TOKEN unset)
+    • tofu apply: create CAPI user 'capi@pve' + token prefix 'capi-token'
+    • tofu apply: create CSI user 'csi@pve' + token prefix 'csi-token'
+    • outputs piped into clusterctl + CSI configs
+
+▸ Phase 2.1 — clusterctl credentials
+    • synthesize ephemeral clusterctl config from Proxmox env (URL/TOKEN/SECRET)
+
+▸ Phase 2.4 — kind cluster
+    • create kind cluster 'capi-test' (config: <ephemeral default>)
+
+▸ Phase 2.8 — clusterctl init on kind
+    • providers: infrastructure=proxmox, ipam=in-cluster, addon=helm
+    • CAPMOX image: v0.7.0 (build arm64 if needed)
+
+▸ Workload Cluster — Proxmox
+    • Cluster: default/capi-quickstart, k8s v1.32.0
+    • control plane: 1 replica(s), VIP 10.0.0.1:6443
+    • workers: 2 replica(s)
+    • node IP range: 10.0.0.10-10.0.0.30, gateway: 10.0.0.1/24, DNS: 1.1.1.1,8.8.8.8
+    • CP sizing: 1 sockets × 2 cores, 4096 MiB, scsi0 30 GB
+    • Worker sizing: 1 sockets × 4 cores, 8192 MiB, scsi0 60 GB
+    • Proxmox templates: control-plane=9000, worker=9000 (catch-all PROXMOX_TEMPLATE_ID=9000)
+    • Proxmox pool: "capi-quickstart" (auto-created via admin API; tags VMs for ACLs/UI grouping)
+    • Cilium HCP: kpr=true, ingress=false, hubble=true, LB-IPAM=true, GatewayAPI=false
+    • Proxmox CSI on workload: chart proxmox-csi-plugin/0.10.0, namespace csi-proxmox, StorageClass proxmox-csi (default: true)
+
+▸ Pivot to managed mgmt cluster — Proxmox
+    • provision mgmt Cluster 'yage-system/yage-mgmt' on Proxmox (k8s v1.32.0)
+    •   CP: 1 replica(s), VIP 10.0.0.2:6443, range 10.0.0.40-10.0.0.41
+    •   CP sizing: 1 sockets × 2 cores, 4096 MiB
+    •   Proxmox templates: control-plane=9000, worker=9000
+    •   Cilium: hubble=true, LB-IPAM=false; CSI: false
+    •   Proxmox pool: "yage-mgmt" (auto-created)
+    • clusterctl init on mgmt (idempotent)
+    • clusterctl move kind → mgmt for namespaces: default, yage-system, yage-system
+    • handoff yage-system Secrets kind → mgmt
+    • VerifyParity (timeout: 5m)
+    • rebind kind-capi-test context to mgmt kubeconfig (subsequent phases target mgmt)
+
+▸ Phase 2.10 — Argo CD on workload
+    • Argo CD Operator + ArgoCD CR (version v2.13.2, operator v0.12.2)
+    • CAAPH argocd-apps HelmChartProxy → root Application 'capi-quickstart'
+    •   app-of-apps: https://github.com/example/app-of-apps @ main, path apps
+
+▸ Final — kind teardown
+    • delete kind cluster 'capi-test'
+
+▸ Capacity budget
+    • budget: 75% of available host CPU/memory/storage
+    •   workload control-plane     1 × (2 cores, 4096 MiB, 30 GB) = 2 cores, 4096 MiB, 30 GB
+    •   workload worker            2 × (4 cores, 8192 MiB, 60 GB) = 8 cores, 16384 MiB, 120 GB
+    •   mgmt control-plane         1 × (2 cores, 4096 MiB, 30 GB) = 2 cores, 4096 MiB, 30 GB
+    • TOTAL requested:  12 cores, 24576 MiB (24 GiB), 180 GB disk
+    ◦ skip: host-capacity query: no Proxmox credentials available (set --admin-username/--admin-token or --proxmox-token/--proxmox-secret) (run with valid provider creds for live numbers)
+
+▸ Workload allocations (per-bucket budget on workers)
+    • total worker capacity:    8000 millicores, 16384 MiB (workers=2 × 1 sockets × 4 cores × 8192 MiB)
+    • system-apps reserve:      2000 millicores, 4096 MiB
+    •   ├─ argocd (operator + server + repo + redis), kyverno, cert-manager,
+    •   ├─ proxmox-csi (controller), keycloak (SSO), external-secrets, infisical
+    •   └─ tune via SYSTEM_APPS_CPU_MILLICORES / SYSTEM_APPS_MEMORY_MIB
+    • remaining after reserve:  6000 millicores, 12288 MiB
+    •   ├─ database:           2000 millicores, 4096 MiB  (cnpg, postgres, redis, …)
+    •   ├─ observability:      2000 millicores, 4096 MiB  (vmsingle, OTel, Grafana, Loki, …)
+    •   └─ product apps:       2000 millicores, 4096 MiB  (Argo-deployed user workloads)
+────────────────────────────────────────────────────────────────────────────
+✅ Dry run complete — NO state was changed.
+   Re-run without --dry-run to execute the plan above.
+────────────────────────────────────────────────────────────────────────────

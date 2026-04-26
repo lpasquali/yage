@@ -20,7 +20,7 @@ import (
 
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/provider"
-	"github.com/lpasquali/yage/internal/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
 )
 
 // Inventory returns the cloud-correct picture of "what's there +

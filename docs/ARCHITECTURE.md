@@ -38,9 +38,10 @@ focused leaf packages:
 - `internal/platform/opentofux` — OpenTofu wrapper. Generates the BPG provider tree,
   applies/recreates the Proxmox identity stack (CAPI + CSI users, tokens,
   ACLs), pulls outputs back into clusterctl + CSI configs.
-- `internal/pveapi` — Proxmox API client (admin + clusterctl tokens),
-  identity-suffix derivation, region/node resolution, cluster-set ID
-  validation.
+- `internal/provider/proxmox/pveapi` — Proxmox API client (admin +
+  clusterctl tokens), identity-suffix derivation, region/node
+  resolution, cluster-set ID validation. Lives under the proxmox
+  provider package because it's Proxmox-specific.
 - `internal/capi/manifest` — generates the workload `clusterctl generate
   cluster` manifest, then patches it (CSI topology labels, kube-proxy skip
   for Cilium, ProxmoxMachineTemplate spec rev, CAAPH cluster labels).

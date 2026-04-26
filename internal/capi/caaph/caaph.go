@@ -35,7 +35,7 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/logx"
-	"github.com/lpasquali/yage/internal/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
 	"github.com/lpasquali/yage/internal/platform/shell"
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
 )

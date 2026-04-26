@@ -7,7 +7,7 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/ui/logx"
-	"github.com/lpasquali/yage/internal/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
 )
 
 // GenerateConfigsFromOutputs ports generate_configs_from_terraform_outputs

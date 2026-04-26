@@ -32,7 +32,7 @@ import (
 	"github.com/lpasquali/yage/internal/capi/pivot"
 	"github.com/lpasquali/yage/internal/ui/promptx"
 	"github.com/lpasquali/yage/internal/provider"
-	"github.com/lpasquali/yage/internal/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
 	"github.com/lpasquali/yage/internal/platform/shell"
 	"github.com/lpasquali/yage/internal/util/yamlx"
 )

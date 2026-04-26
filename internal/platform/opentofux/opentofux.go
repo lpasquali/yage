@@ -33,7 +33,7 @@ import (
 	"github.com/lpasquali/yage/internal/capi/csi"
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/ui/logx"
-	"github.com/lpasquali/yage/internal/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
 	"github.com/lpasquali/yage/internal/platform/shell"
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
 )

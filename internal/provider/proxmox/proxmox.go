@@ -18,7 +18,7 @@ import (
 	"github.com/lpasquali/yage/internal/capi/csi"
 	"github.com/lpasquali/yage/internal/platform/opentofux"
 	"github.com/lpasquali/yage/internal/provider"
-	"github.com/lpasquali/yage/internal/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
 )
 
 func init() {

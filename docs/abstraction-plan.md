@@ -292,8 +292,10 @@ self-contained, ships independently, can be reverted independently.
 
 Some packages don't need abstracting because they *are* Proxmox:
 
-- `internal/pveapi/` — the Proxmox API client. Stays as-is; it's
-  the implementation detail behind `provider/proxmox/`.
+- `internal/provider/proxmox/pveapi/` — the Proxmox API client. Lives
+  under the proxmox provider package; it's the implementation detail
+  behind `provider/proxmox/`. (Moved here in Wave 3 — was
+  `internal/pveapi/` originally.)
 - `internal/platform/opentofux/` — the BPG identity stack. Same — lives
   inside `provider/proxmox/identity.go` after refactor.
 - `internal/capi/manifest/k3s_template.yaml` — could split into
@@ -1992,9 +1994,10 @@ alongside the work above so they don't get lost:
 | E | Real-Proxmox pivot works; CAPD test target validates provider-agnostic move |
 
 After E lands the orchestrator has zero Proxmox-specific text,
-imports, or assumptions outside `internal/provider/proxmox/` and
-`internal/pveapi/`. Multi-cloud is then a question of "implement
-the methods" per provider, not "rewire the orchestrator."
+imports, or assumptions outside `internal/provider/proxmox/` (which
+now hosts `pveapi/` as a sub-package). Multi-cloud is then a
+question of "implement the methods" per provider, not "rewire the
+orchestrator."
 
 ---
 
@@ -2015,12 +2018,10 @@ internal/
 ├── orchestrator/       (was bootstrap/) — the top-level driver
 ├── provider/           — the Provider abstraction (UNCHANGED location)
 │   ├── provider.go, minstub.go, inventory.go, …
-│   ├── proxmox/, aws/, azure/, gcp/, hetzner/, openstack/, vsphere/,
-│   ├── digitalocean/, linode/, oci/, ibmcloud/, capd/
-│   └── pveapi/         (was internal/pveapi/) — Proxmox HTTP client,
-│                        moved INSIDE provider/proxmox/ once Phases B/D/E
-│                        finish (until then orchestrator-side packages
-│                        still import it directly; see §15.3)
+│   ├── proxmox/        — hosts pveapi/ sub-package (the Proxmox HTTP
+│   │                      client; was internal/pveapi/ before Wave 3)
+│   ├── aws/, azure/, gcp/, hetzner/, openstack/, vsphere/,
+│   └── digitalocean/, linode/, oci/, ibmcloud/, capd/
 ├── capi/               — Cluster API machinery
 │   ├── manifest/       (was capimanifest/)
 │   ├── pivot/          (was pivot/)
@@ -2076,14 +2077,17 @@ each tell you what's inside before you read a file.
 
 ### Open questions before applying
 
-1. **`pveapi` placement.** Today seven orchestrator-side packages
-   import `pveapi` directly (kindsync, capimanifest, opentofux,
-   caaph, bootstrap, etc.). Moving it inside `provider/proxmox/`
-   would force them to import "across the abstraction barrier" —
-   not what we want. *Recommendation: keep `pveapi` at
-   `internal/pveapi/` for now; move it into `provider/proxmox/pveapi/`
-   only after Phases B/D/E shrink the orchestrator-side direct
-   dependencies to zero.*
+1. **`pveapi` placement.** Originally several orchestrator-side
+   packages imported `pveapi` directly (kindsync, capimanifest,
+   opentofux, caaph, bootstrap, etc.). Moving it inside
+   `provider/proxmox/` would have forced them to import "across
+   the abstraction barrier." *Resolved in Wave 3: with Phases B/D/E
+   landed and the remaining direct importers being either Proxmox-
+   internal or about-to-migrate paths, `pveapi/` is now at
+   `internal/provider/proxmox/pveapi/`. Cross-barrier imports that
+   remain (e.g. orchestrator-side packages still depending on
+   pveapi) are tracked as follow-ups inside the proxmox provider's
+   responsibilities.*
 
 2. **`bootstrap` → `orchestrator` rename.** Reads better but every
    import path changes. *Recommendation: yes — name reflects role

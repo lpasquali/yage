@@ -125,29 +125,35 @@ actually does:
 
 Don't do this in one mega-PR. Five phases, each shippable:
 
-### Phase A — Capacity behind the interface
+### Phase A — Inventory behind the interface
 
 **Goal:** kill the direct `capacity.Fetch*` calls in
 `bootstrap.go` / `plan.go`. Provider becomes the single point of
-truth for "host capacity + existing usage on this cloud".
+truth for "what's there + what's free on this cloud" — and the
+provider, not the orchestrator, owns the math that turns raw
+capacity into cloud-correct available headroom.
 
 Steps:
 
-1. Extend the `Provider` interface:
+1. Replace the existing `Provider.Capacity` method with a single
+   `Inventory` method (see §10 spec):
    ```go
-   ExistingUsage(cfg *config.Config) (*ExistingUsage, error)
+   Inventory(cfg *config.Config) (*Inventory, error)
    ```
-   Move `ExistingUsage` struct from `internal/capacity` into
-   `internal/provider` (or a new shared `internal/capacity/types`
-   package to avoid an import cycle).
+   Define `Inventory`, `ResourceTotals` in `internal/provider/`
+   (or a shared sub-package to avoid import cycles).
 2. Move `FetchHostCapacity` + `FetchExistingUsage` out of
-   `internal/capacity` and into `internal/provider/proxmox/` as
-   private package-level helpers. The Proxmox `Capacity()` and new
-   `ExistingUsage()` call them.
-3. Replace direct calls in `bootstrap.go` / `plan.go` with
-   `provider.For(cfg).Capacity(...)` and `.ExistingUsage(...)`.
-4. Other providers keep `ErrNotApplicable` until each implements
-   their own (AWS Service Quotas API, etc.).
+   `internal/capacity` into `internal/provider/proxmox/` as
+   private helpers. Combine them inside the proxmox provider's
+   `Inventory()` — one outbound batch, returns Total + Used +
+   Available (Proxmox computes Available = Total − Used; trivial
+   for a flat pool).
+3. Replace direct calls in `bootstrap.go` / `plan.go` with a
+   single `provider.For(cfg).Inventory(...)`. Preflight checks
+   `inv.Available`; plan output reads `inv.Total` and `inv.Used`.
+4. Other providers return `ErrNotApplicable` from `Inventory`
+   until each implements its own (AWS Service Quotas, GCP Compute
+   Engine quotas, Hetzner per-project caps, etc.).
 
 **Risk:** low. Mechanical refactor; existing tests still cover the
 math.
@@ -495,7 +501,7 @@ func Plan(w *os.File, cfg *config.Config) {
     planHostDeps(pw, cfg)              // orchestrator
     planForProvider(pw, cfg)           // provider — identity/init/cluster/pivot/teardown
     planArgoCD(pw, cfg)                // orchestrator (Argo is universal)
-    planCapacity(pw, cfg)              // orchestrator + Provider.Capacity / ExistingUsage
+    planCapacity(pw, cfg)              // orchestrator + Provider.Inventory
     planMonthlyCost(pw, cfg)           // orchestrator + Provider.EstimateMonthlyCostUSD
     planAllocations(pw, cfg)           // orchestrator
     if cfg.CostCompare {
@@ -706,11 +712,13 @@ is a one-shot migration on first run, but read-from-both is safer.
 
 ### Phase A
 
-- Existing `internal/capacity/capacity_test.go` keeps passing
-  unchanged (capacity math is independent of where the data comes from).
+- Existing `internal/capacity/capacity_test.go` keeps passing —
+  rename field accesses from `*HostCapacity` / `*ExistingUsage`
+  to `Inventory.Total` / `Inventory.Used`. Math is unchanged.
 - Add an interface-conformance test: `provider.Get("proxmox")
-  .ExistingUsage(cfg)` returns the same struct as
-  `capacity.FetchExistingUsage(cfg)` did before.
+  .Inventory(cfg)` returns `Total` matching the legacy
+  `FetchHostCapacity` output and `Used` matching legacy
+  `FetchExistingUsage`. `Available = Total − Used` for Proxmox.
 - Manual: dry-run against `legion.local` (the user's Proxmox).
   Expect identical output.
 
@@ -804,53 +812,80 @@ make alone. Pre-execution decision list:
 
 ## R.6 Phase A — concrete execution recipe
 
-To kick off Phase A immediately, here's the exact sequence:
+To kick off Phase A immediately, here's the exact sequence
+(updated for the merged `Inventory` interface — see §10 and §3
+Phase A above):
 
-1. **Move the types.** Move `HostCapacity` and `ExistingUsage`
-   structs from `internal/capacity/capacity.go` into a new
-   `internal/capacity/types.go` (no behavior change; just makes
-   the types importable without dragging in the Proxmox HTTP code).
+1. **Define the new types.** Add to `internal/provider/`:
+   ```go
+   type ResourceTotals struct {
+       Cores      int
+       MemoryMiB  int64
+       StorageGiB int64
+   }
+
+   type Inventory struct {
+       Total     ResourceTotals
+       Used      ResourceTotals
+       Available ResourceTotals
+       Notes     []string
+   }
+   ```
+   The legacy `HostCapacity` and `ExistingUsage` structs in
+   `internal/capacity/capacity.go` become provider-internal
+   helpers; the orchestrator only sees `Inventory`.
 
 2. **Move the Proxmox calls.** Cut `FetchHostCapacity` /
    `FetchExistingUsage` (and their helpers `authForCfg`,
    `fetchJSON`, `allowedSet`, etc.) from
    `internal/capacity/capacity.go` to a new
-   `internal/provider/proxmox/capacity.go`. These become package-
-   private helpers of the proxmox provider.
+   `internal/provider/proxmox/inventory.go`. These become
+   package-private helpers of the proxmox provider.
 
-3. **Wire the provider methods.**
+3. **Wire the provider method.**
    ```go
    // internal/provider/proxmox/proxmox.go
-   func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) {
-       return fetchHostCapacity(cfg) // package-private now
-   }
-   func (p *Provider) ExistingUsage(cfg *config.Config) (*provider.ExistingUsage, error) {
-       return fetchExistingUsage(cfg)
+   func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
+       cap, err := fetchHostCapacity(cfg)
+       if err != nil { return nil, err }
+       used, err := fetchExistingUsage(cfg)
+       if err != nil { return nil, err }
+       return &provider.Inventory{
+           Total:     toTotals(cap),
+           Used:      toTotals(used),
+           Available: subtract(toTotals(cap), toTotals(used)), // flat-pool math
+       }, nil
    }
    ```
+   The Proxmox `Available` is `Total − Used` because Proxmox is a
+   flat-pool cloud. AWS/GCP/Hetzner will compute Available from
+   their own quota model.
 
-4. **Add `ExistingUsage` to the interface.**
+4. **Replace `Capacity` with `Inventory` in the interface.**
    ```go
    // internal/provider/provider.go
    type Provider interface {
        // ... existing ...
-       ExistingUsage(cfg *config.Config) (*ExistingUsage, error)
+       Inventory(cfg *config.Config) (*Inventory, error)  // was: Capacity + ExistingUsage
    }
    ```
-   And update `MinStub` to default it to `ErrNotApplicable`.
+   Drop `Capacity` from the interface (it lived there as Proxmox-
+   only anyway). Update `MinStub` to default `Inventory` to
+   `ErrNotApplicable`.
 
-5. **Replace direct calls in bootstrap and plan.** 4 sites:
-   - `internal/bootstrap/bootstrap.go:971` — `capacity.FetchHostCapacity` → `prov.Capacity`
-   - `internal/bootstrap/bootstrap.go:994` — `capacity.FetchExistingUsage` → `prov.ExistingUsage`
+5. **Replace direct calls in bootstrap and plan.** 4 sites
+   collapse to 4 (same count, but one method instead of two):
+   - `internal/bootstrap/bootstrap.go:971` — `capacity.FetchHostCapacity` + nearby `FetchExistingUsage` → single `prov.Inventory`
    - `internal/bootstrap/plan.go:289` — same
-   - `internal/bootstrap/plan.go:305` — same
-   - `internal/provider/proxmox/proxmox.go:46` — same (was self-calling)
+   - The preflight math in `internal/capacity/capacity.go` reads
+     `inv.Available` instead of subtracting at the call site.
 
-6. **Build + vet + test.**
+6. **Build + vet + test.** Existing capacity tests adapt: rename
+   any `*HostCapacity` / `*ExistingUsage` references to the new
+   `Inventory.Total` / `Inventory.Used` paths.
 
-7. **Commit.** One focused commit with the message
-   "refactor(capacity): move Proxmox host/usage queries behind
-   Provider interface".
+7. **Commit.** One focused commit:
+   `refactor(capacity): collapse Proxmox host/usage queries into Provider.Inventory`.
 
 Estimated time: 1 evening's work for a focused dev. No new tests
 strictly required (existing capacity tests still cover the math),
@@ -926,8 +961,8 @@ writer.
 ### Cross-cutting sections stay central
 
 Capacity, allocations, cost, cost-compare, retention live in
-`bootstrap/plan.go` and call provider methods (`Capacity`,
-`ExistingUsage`, `EstimateMonthlyCostUSD`) for data — they don't
+`bootstrap/plan.go` and call provider methods (`Inventory`,
+`EstimateMonthlyCostUSD`) for data — they don't
 delegate the printing. This keeps the visual style consistent; no
 provider can drift the "Capacity budget" or "Estimated monthly cost"
 layout.
@@ -1132,7 +1167,7 @@ package provider
 type Provider interface {
     Identifier         // Name, InfraProviderName
     PlanDescriber      // DescribeIdentity, DescribeWorkload, DescribePivot   (Phase B)
-    CapacityProvider   // Capacity, ExistingUsage                             (Phase A)
+    CapacityProvider   // Inventory                                           (Phase A)
     IdentityProvider   // EnsureIdentity, EnsureScope, EnsureCSISecret
     ClusterAPIPlumbing // ClusterctlInitArgs, TemplateVars, K3sTemplate, PatchManifest
     KindSyncer         // KindSyncFields                                      (Phase D)
@@ -1157,8 +1192,28 @@ type PlanDescriber interface {
 }
 
 type CapacityProvider interface {
-    Capacity(cfg *config.Config) (*HostCapacity, error)
-    ExistingUsage(cfg *config.Config) (*ExistingUsage, error)
+    // Inventory returns the cloud-correct picture of "what's there
+    // and what's free" in one round-trip. Available is computed by
+    // the provider from its quota model — NOT (Total - Used) at the
+    // call site, because that arithmetic is only correct on
+    // flat-pool clouds (Proxmox). On AWS, Available reflects
+    // Service Quotas; on GCP, it accounts for committed-use; on
+    // Hetzner, project-level caps. See §10's "Why merged" rationale.
+    Inventory(cfg *config.Config) (*Inventory, error)
+}
+
+type Inventory struct {
+    Total     ResourceTotals  // host hardware totals (informational)
+    Used      ResourceTotals  // running workload (informational, drives plan output)
+    Available ResourceTotals  // cloud-correct headroom — what preflight checks
+    Notes     []string        // provider advisories ("3/5 nodes drained", "quota raise pending")
+}
+
+type ResourceTotals struct {
+    Cores      int
+    MemoryMiB  int64
+    StorageGiB int64
+    // per-storage-class breakdown when the provider has multiple backends
 }
 
 type IdentityProvider interface {
@@ -1223,7 +1278,7 @@ nothing" from "this operation doesn't apply here."
 
 | Mutating | Read-only | Output |
 |---|---|---|
-| `EnsureIdentity`, `EnsureScope`, `EnsureCSISecret`, `PatchManifest`, `Purge` | `Capacity`, `ExistingUsage`, `EstimateMonthlyCostUSD`, `K3sTemplate`, `TemplateVars`, `ClusterctlInitArgs`, `KindSyncFields`, `PivotTarget` | `DescribeIdentity`, `DescribeWorkload`, `DescribePivot` |
+| `EnsureIdentity`, `EnsureScope`, `EnsureCSISecret`, `PatchManifest`, `Purge` | `Inventory`, `EstimateMonthlyCostUSD`, `K3sTemplate`, `TemplateVars`, `ClusterctlInitArgs`, `KindSyncFields`, `PivotTarget` | `DescribeIdentity`, `DescribeWorkload`, `DescribePivot` |
 | **MUST** be safe to re-run. Re-running is the orchestrator's primary recovery mechanism on partial failure. | Re-running is by definition safe; provider may cache. | Caller controls re-write semantics; provider just emits. |
 
 ### MinStub coverage after consolidation
@@ -1252,12 +1307,19 @@ identifies itself, no sane default. Cost-only providers
    site). *Recommendation: defer to its own phase F after the
    abstraction lands.*
 
-3. **`Capacity` + `ExistingUsage` could be one method.** They
-   query the same cloud control plane. Splitting is convenient at
-   call sites (preflight vs allocation summary) but adds one
-   round-trip per dry-run. *Recommendation: keep split — the
-   orchestrator does need them separately, and each provider can
-   internally share a cached client between the two calls.*
+3. **`Capacity` + `ExistingUsage` merged into `Inventory`.**
+   *Decided* (was an open tension; resolved when we noticed the
+   subtraction `Available = Total - Used` is only correct for
+   Proxmox). For AWS, available headroom is a function of Service
+   Quotas; for GCP, it accounts for committed-use discounts; for
+   Hetzner, project-level caps. The cloud knows; the orchestrator
+   shouldn't. Bonus: one round-trip, one snapshot in time, simpler
+   stub surface, coherent caching point. The orchestrator's
+   preflight collapses to:
+   ```go
+   inv, err := provider.For(cfg).Inventory(cfg)
+   if !fits(plan, inv.Available) { return budgetError(...) }
+   ```
 
 4. **No lifecycle hooks.** No `Init(cfg) error`, no `io.Closer`.
    The current code has providers that lazily create clients on

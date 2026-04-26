@@ -56,3 +56,11 @@ User-facing knobs are namespaced `YAGE_*` (e.g.
 `YAGE_PRICING_DISABLED`, `YAGE_CURRENCY`); cloud credentials use
 their vendor-native names (`PROXMOX_*`, `AWS_*`, `HCLOUD_TOKEN`,
 …). See `bin/yage --help` for the full list.
+
+## License
+
+Apache License 2.0 — see [`LICENSE`](LICENSE).
+
+Copyright 2026 Luca Pasquali. yage is free for any use, commercial
+or otherwise, under the terms of Apache 2.0 (no warranty, patent
+grant included, contributions licensed under the same terms).

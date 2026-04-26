@@ -30,8 +30,7 @@ rather than a stale fabricated figure.
                 │  vendor catalog / billing    │
                 │  AWS Bulk JSON • Azure Retail│
                 │  GCP Catalog (key) • Hetzner │
-                │  DO • Linode • OCI • IBM •   │
-                │  Equinix Metal               │
+                │  DO • Linode • OCI • IBM     │
                 └──────────────────────────────┘
                               │
                               ▼
@@ -62,7 +61,6 @@ rather than a stale fabricated figure.
 | Linode       | `api.linode.com/v4/linode/types`                 | anonymous catalog                 |
 | OCI          | `apexapps.oracle.com/.../products` (Cost Estimator JSON) | anonymous                 |
 | IBM Cloud    | `globalcatalog.cloud.ibm.com` via IAM bearer     | API key → IAM /identity/token     |
-| Equinix Metal| `api.equinix.com/metal/v1/plans`                 | project API token (read scope)    |
 
 **All of these calls are free**. None of them appear on your bill.
 Don't confuse the AWS Pricing API (free) with AWS Cost Explorer
@@ -97,16 +95,15 @@ Hint content per vendor (excerpts):
 - **DigitalOcean** — control-panel walkthrough for a Read-scoped token
 - **IBM Cloud** — `ibmcloud iam service-id-create` with Viewer policy
   on `globalcatalog`
-- **Equinix Metal** — Console walkthrough for read-scoped project token
 - **Hetzner** — Console walkthrough for read-scoped project token
 - **Azure / Linode / OCI** — none needed (anonymous catalogs)
 
 ## Taller — internal currency abstraction
 
 "Taller" is bootstrap-capi's display currency. Vendors return prices
-in USD (AWS / Azure / GCP / DO / Linode / OCI / IBM / Equinix) or
-EUR (Hetzner — converted to USD inside the fetcher); display happens
-in whatever currency the operator wants.
+in USD (AWS / Azure / GCP / DO / Linode / OCI / IBM) or EUR (Hetzner
+— converted to USD inside the fetcher); display happens in whatever
+currency the operator wants.
 
 Resolution order:
 

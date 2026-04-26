@@ -27,7 +27,6 @@ import (
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/azure"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/capd"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/digitalocean"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/equinix"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/gcp"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/hetzner"
 	_ "github.com/lpasquali/bootstrap-capi/internal/provider/ibmcloud"
@@ -45,7 +44,7 @@ func main() {
 		switch cfg.PrintPricingSetup {
 		case "all":
 			for _, v := range []string{"aws", "azure", "gcp", "hetzner",
-				"digitalocean", "linode", "oci", "ibmcloud", "equinix"} {
+				"digitalocean", "linode", "oci", "ibmcloud"} {
 				pricing.PrintOnboardingForce(os.Stdout, v)
 			}
 		default:

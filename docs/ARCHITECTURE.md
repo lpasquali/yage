@@ -62,18 +62,20 @@ focused leaf packages:
 - `internal/cli` — flag parsing layer that hands a `*Config` back to
   `Run()`.
 - `internal/provider` — pluggable CAPI infrastructure-provider interface +
-  registry. 13 providers registered: aws, azure, gcp, hetzner, proxmox,
-  vsphere, openstack, docker (capd), digitalocean, linode, oci, ibmcloud,
-  equinix. Each provider package self-registers in `init()` and supplies the
-  per-cloud bits (clusterctl init args, K3s template, identity bootstrap, CSI
-  Secret, cost estimator). `provider.MinStub` is the embed-helper for
-  cost-only providers: defaults Capacity / EnsureIdentity / EnsureGroup /
-  EnsureCSISecret to ErrNotApplicable, K3sTemplate to ErrNotApplicable,
-  PatchManifest to a no-op. See `docs/providers.md`.
+  registry. 12 providers registered, each cross-checked against the upstream
+  CAPI provider list at https://cluster-api.sigs.k8s.io/reference/providers:
+  aws, azure, gcp, hetzner, proxmox, vsphere, openstack, docker (capd),
+  digitalocean, linode, oci, ibmcloud. Each provider package self-registers
+  in `init()` and supplies the per-cloud bits (clusterctl init args, K3s
+  template, identity bootstrap, CSI Secret, cost estimator).
+  `provider.MinStub` is the embed-helper for cost-only providers: defaults
+  Capacity / EnsureIdentity / EnsureGroup / EnsureCSISecret to
+  ErrNotApplicable, K3sTemplate to ErrNotApplicable, PatchManifest to a
+  no-op. See `docs/providers.md`.
 - `internal/pricing` — live FinOps pricing fetchers, one per vendor with a
   public catalog API (AWS Bulk JSON, Azure Retail Prices, GCP Cloud Billing
-  Catalog, Hetzner, DigitalOcean, Linode, OCI, IBM Cloud Global Catalog,
-  Equinix Metal). File-backed 24h cache at
+  Catalog, Hetzner, DigitalOcean, Linode, OCI, IBM Cloud Global Catalog).
+  File-backed 24h cache at
   `~/.cache/bootstrap-capi/pricing/`. No hardcoded $/hour or $/GB-month
   numbers anywhere — when a vendor API is unreachable, callers receive
   `ErrUnavailable` and the cost path surfaces "estimate unavailable" rather

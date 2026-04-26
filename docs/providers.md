@@ -52,11 +52,11 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 }
 ```
 
-The five clouds added in 2026-Q2 (DigitalOcean, Linode, OCI,
-IBM Cloud, Equinix Metal) each ship as MinStub-based packages in
-~80–110 LOC. Pattern is mechanical: stub registration + a cost.go
-that walks `pricing.Fetch` for compute. Overhead modeling (LBs,
-egress, etc.) goes in a separate file when needed (see
+The four clouds added in 2026-Q2 (DigitalOcean, Linode, OCI,
+IBM Cloud) each ship as MinStub-based packages in ~80–110 LOC.
+Pattern is mechanical: stub registration + a cost.go that walks
+`pricing.Fetch` for compute. Overhead modeling (LBs, egress, etc.)
+goes in a separate file when needed (see
 `internal/provider/aws/overhead.go` for the reference shape).
 
 ## Registry
@@ -118,25 +118,34 @@ per-provider phase.
     compares it against the user's plan automatically (and now
     against existing VMs too — see `docs/capacity-preflight.md`).
 
-## Currently registered (13 providers)
+## Currently registered (12 providers)
+
+Cross-checked against the upstream CAPI provider list at
+https://cluster-api.sigs.k8s.io/reference/providers — every entry
+below corresponds to an actively-maintained `cluster-api-provider-*`
+repo.
 
 ```
-provider       infrastructure-provider   pricing source                    creds for live pricing
-─────────────  ─────────────────────────  ────────────────────────────────  ──────────────────────
-aws            --infrastructure aws       AWS Bulk Pricing JSON             public anonymous
-azure          --infrastructure azure     Azure Retail Prices API           anonymous
-gcp            --infrastructure gcp       GCP Cloud Billing Catalog API     GOOGLE_BILLING_API_KEY
-hetzner        --infrastructure hetzner   Hetzner Cloud /v1/pricing+types   HCLOUD_TOKEN
-proxmox        --infrastructure proxmox   self-hosted (TCO via flags)       n/a
-vsphere        --infrastructure vsphere   self-hosted (TCO via flags)       n/a
-openstack      --infrastructure openstack operator-dependent (none today)   n/a
-docker (capd)  --infrastructure docker    free                              n/a
-digitalocean   --infrastructure digitalocean  /v2/sizes                     DIGITALOCEAN_TOKEN
-linode         --infrastructure linode    /v4/linode/types                  anonymous
-oci            --infrastructure oci       Oracle Cost Estimator JSON        anonymous
-ibmcloud       --infrastructure ibmcloud  IBM Global Catalog (IAM bearer)   IBMCLOUD_API_KEY
-equinix        --infrastructure packet    /metal/v1/plans                   METAL_AUTH_TOKEN
+provider       infrastructure-provider     upstream repo                                  pricing source                    creds for live pricing
+─────────────  ──────────────────────────  ─────────────────────────────────────────────  ────────────────────────────────  ──────────────────────
+aws            --infrastructure aws        kubernetes-sigs/cluster-api-provider-aws       AWS Bulk Pricing JSON             public anonymous
+azure          --infrastructure azure      kubernetes-sigs/cluster-api-provider-azure     Azure Retail Prices API           anonymous
+gcp            --infrastructure gcp        kubernetes-sigs/cluster-api-provider-gcp       GCP Cloud Billing Catalog API     GOOGLE_BILLING_API_KEY
+hetzner        --infrastructure hetzner    syself/cluster-api-provider-hetzner            Hetzner Cloud /v1/pricing+types   HCLOUD_TOKEN
+proxmox        --infrastructure proxmox    ionos-cloud/cluster-api-provider-proxmox       self-hosted (TCO via flags)       n/a
+vsphere        --infrastructure vsphere    kubernetes-sigs/cluster-api-provider-vsphere   self-hosted (TCO via flags)       n/a
+openstack      --infrastructure openstack  kubernetes-sigs/cluster-api-provider-openstack operator-dependent                n/a
+docker (capd)  --infrastructure docker     kubernetes-sigs/cluster-api (test/infra)       free                              n/a
+digitalocean   --infrastructure digitalocean kubernetes-sigs/cluster-api-provider-digitalocean  /v2/sizes                   DIGITALOCEAN_TOKEN
+linode         --infrastructure linode     linode/cluster-api-provider-linode             /v4/linode/types                  anonymous
+oci            --infrastructure oci        oracle/cluster-api-provider-oci                Oracle Cost Estimator JSON        anonymous
+ibmcloud       --infrastructure ibmcloud   kubernetes-sigs/cluster-api-provider-ibmcloud  IBM Global Catalog (IAM bearer)   IBMCLOUD_API_KEY
 ```
+
+> **Equinix Metal / Packet was removed** — `kubernetes-sigs/cluster-
+> api-provider-packet` was archived as `[EOL]` upstream in 2025-08
+> and there is no successor repo. Don't re-add unless the CAPI
+> provider list resurrects it.
 
 Replay first-run setup hints any time:
 
@@ -161,16 +170,25 @@ and what setup is needed.
 
 ## What about full coverage of the CAPI ecosystem?
 
-CAPI has 40+ infrastructure providers. The 13 registered cover the
-main public clouds + the typical on-prem trio + Docker. The plugin
-pattern makes adding any of the rest a self-contained ~150-line PR
-when there's a public pricing API:
+The upstream CAPI provider list has ~35 infrastructure providers.
+The 12 registered cover the main public clouds + the typical on-prem
+trio + Docker. The plugin pattern makes adding any of the rest a
+self-contained ~150-line PR when the underlying repo is active.
 
-- **Vultr** — `https://api.vultr.com/v2/plans` (token auth)
-- **OVHcloud** — `https://api.ovh.com/v1/pricing` (OAuth)
-- **Scaleway** — `https://api.scaleway.com/instance/v1/.../products/servers` (token)
-- **Outscale**, **CleverCloud**, **UpCloud** — each has a public catalog
+**Have CAPI provider AND a public pricing API — easy adds:**
 
-Without a public pricing API the provider can still register (for
-clusterctl init + provisioning) and return `ErrNotApplicable` from
-`EstimateMonthlyCostUSD`, mirroring how vSphere / OpenStack work.
+| Provider     | CAPI repo                                       | Pricing API                                                |
+|--------------|-------------------------------------------------|------------------------------------------------------------|
+| Vultr        | `vultr/cluster-api-provider-vultr`              | `api.vultr.com/v2/plans` (token auth)                      |
+| Scaleway     | `scaleway/cluster-api-provider-scaleway`        | `api.scaleway.com/instance/v1/.../products/servers` (token) |
+| Outscale     | `outscale/cluster-api-provider-outscale`        | OSC pricing API (token)                                    |
+| Huawei Cloud | `HuaweiCloudDeveloper/cluster-api-provider-huawei` | Huawei pricing API (AK/SK)                              |
+| IONOS Cloud  | `ionos-cloud/cluster-api-provider-ionoscloud`   | IONOS pricing API (token)                                  |
+
+**Have CAPI provider, no canonical public pricing API:**
+KubeVirt, Metal3, Sidero, Tinkerbell, Nutanix, MAAS, BYOH, vcluster,
+Virtink, Harvester, OpenNebula, metal-stack, microvm, Hivelocity,
+CloudStack, KubeKey, VMware Cloud Director, Azure Stack HCI, CoxEdge —
+each can register for clusterctl init + provisioning and return
+`ErrNotApplicable` from `EstimateMonthlyCostUSD`, mirroring how
+vSphere / OpenStack work today.

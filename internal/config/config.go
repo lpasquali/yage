@@ -283,11 +283,6 @@ type Config struct {
 	IBMCloudRegion                  string
 	IBMCloudControlPlaneProfile     string // bx2-2x8, cx2-4x8, ...
 	IBMCloudNodeProfile             string
-	// Equinix Metal (CAPP) — minimal config: metro/facility + plan.
-	// Catalog + provisioning use METAL_AUTH_TOKEN.
-	EquinixMetro                    string
-	EquinixControlPlaneClass        string // c3.small.x86, m3.small.x86, ...
-	EquinixNodeClass                string
 	// BootstrapMode selects the Kubernetes flavor:
 	//   - "kubeadm" (default): standard upstream Kubernetes via kubeadm,
 	//     control-plane runs etcd + apiserver + controller-manager +
@@ -766,9 +761,6 @@ func Load() *Config {
 	c.IBMCloudRegion = getenv("IBMCLOUD_REGION", "us-south")
 	c.IBMCloudControlPlaneProfile = getenv("IBMCLOUD_CONTROL_PLANE_PROFILE", "bx2-2x8")
 	c.IBMCloudNodeProfile = getenv("IBMCLOUD_NODE_PROFILE", "bx2-2x8")
-	c.EquinixMetro = getenv("METAL_METRO", "ny")
-	c.EquinixControlPlaneClass = getenv("METAL_CONTROL_PLANE_CLASS", "c3.small.x86")
-	c.EquinixNodeClass = getenv("METAL_NODE_CLASS", "c3.small.x86")
 	c.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
 	c.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
 

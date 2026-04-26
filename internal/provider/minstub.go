@@ -62,3 +62,10 @@ func (MinStub) Purge(cfg *config.Config) error {
 func (MinStub) TemplateVars(cfg *config.Config) map[string]string {
 	return nil
 }
+
+// PivotTarget default: ErrNotApplicable. Most providers don't yet
+// have a managed mgmt-cluster bootstrap story; only Proxmox
+// returns a real target today.
+func (MinStub) PivotTarget(cfg *config.Config) (PivotTarget, error) {
+	return PivotTarget{}, ErrNotApplicable
+}

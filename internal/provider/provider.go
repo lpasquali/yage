@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/lpasquali/yage/internal/config"
 )
@@ -161,6 +162,49 @@ type Provider interface {
 	// KUBERNETES_VERSION, etc.) come from the orchestrator and are
 	// NOT in this map.
 	TemplateVars(cfg *config.Config) map[string]string
+
+	// Pivoter returns the destination kubeconfig + namespaces for
+	// the kind → managed-mgmt cluster move (Phase E / §12). Only
+	// providers that ship a working management-cluster bootstrap
+	// (today: Proxmox; future: anything with a K3s template + a
+	// strategy for hosting the mgmt cluster) return a real target.
+	// Everyone else returns ErrNotApplicable.
+	Pivoter
+}
+
+// Pivoter is composed into Provider so the pivot path can depend
+// on just the pivot capability. See §12.
+type Pivoter interface {
+	// PivotTarget returns the destination kubeconfig path +
+	// namespace list + readiness timeout for clusterctl move.
+	// Returns ErrNotApplicable when this provider has no managed
+	// mgmt cluster story (kind stays as the mgmt cluster).
+	//
+	// The KubeconfigPath field reads cfg.MgmtKubeconfigPath when
+	// the orchestrator has populated it (after
+	// EnsureManagementCluster). Per §12 + §13.4, the orchestrator
+	// is responsible for setting that field; the provider is
+	// stateless and only packages what it sees.
+	PivotTarget(cfg *config.Config) (PivotTarget, error)
+}
+
+// PivotTarget is the destination for clusterctl move (Phase E / §12).
+// Zero-value + ErrNotApplicable means "no pivot target — kind
+// remains the management cluster forever."
+type PivotTarget struct {
+	// KubeconfigPath is the local path to the destination cluster's
+	// kubeconfig file. Set by the orchestrator after
+	// EnsureManagementCluster() and read back via
+	// cfg.MgmtKubeconfigPath.
+	KubeconfigPath string
+	// Namespaces is the list of CAPI namespaces clusterctl move
+	// should transfer. nil = "all CAPI namespaces" (today's behavior;
+	// idiomatic Go sentinel for unset).
+	Namespaces []string
+	// ReadyTimeout is how long to wait for the destination to
+	// accept the move. Zero = orchestrator default (typically
+	// 10 minutes).
+	ReadyTimeout time.Duration
 }
 
 // KindSyncer is composed into Provider for callers that only need

@@ -8,8 +8,10 @@ package proxmox
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 // KindSyncFields returns the Proxmox-specific fields the
@@ -100,4 +102,32 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// PivotTarget returns the destination kubeconfig + namespaces for
+// clusterctl move (Phase E / §12). Proxmox is the only provider
+// today that ships a real pivot target — the BPG-managed mgmt
+// cluster running on Proxmox VMs.
+//
+// The kubeconfig path is read from cfg.MgmtKubeconfigPath, which
+// the orchestrator sets after EnsureManagementCluster() returns
+// (per §13.4 #5). When pivot is disabled or the kubeconfig path
+// hasn't been populated yet, return ErrNotApplicable so the
+// orchestrator falls through to keeping kind as the mgmt cluster.
+func (p *Provider) PivotTarget(cfg *config.Config) (provider.PivotTarget, error) {
+	if !cfg.PivotEnabled {
+		return provider.PivotTarget{}, provider.ErrNotApplicable
+	}
+	if cfg.MgmtKubeconfigPath == "" {
+		// EnsureManagementCluster hasn't run yet (or pivot is being
+		// queried out of order). The orchestrator's pivot phase
+		// fills this field in; before then there's nothing to
+		// point at.
+		return provider.PivotTarget{}, fmt.Errorf("pivot target not yet ready: cfg.MgmtKubeconfigPath empty")
+	}
+	return provider.PivotTarget{
+		KubeconfigPath: cfg.MgmtKubeconfigPath,
+		Namespaces:     nil, // nil = all CAPI namespaces (idiomatic sentinel)
+		ReadyTimeout:   10 * time.Minute,
+	}, nil
 }

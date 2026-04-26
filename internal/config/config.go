@@ -17,6 +17,69 @@ import (
 	"strings"
 )
 
+// WorkloadShape is the user-stated product description consumed by the
+// §23 feasibility gate: how many apps of which template, database
+// size, egress budget, resilience, environment. The TUI (§22) and any
+// future YAML-loaded shape both populate this struct; the feasibility
+// gate then projects it into a minimum-viable cluster footprint and
+// compares against per-provider live pricing or on-prem inventory.
+//
+// All fields are optional today: a zero-value WorkloadShape causes
+// feasibility.Check to return ErrNotApplicable so existing
+// command-line flows that don't yet describe the product (the
+// Phase-A/B/C plumbing still drives off the explicit machine counts /
+// sizing fields) pass through unchanged.
+type WorkloadShape struct {
+	// Apps is the list of app groups (count × template). e.g.
+	// `[{6, "medium"}, {2, "heavy"}]` reads as "6 medium apps + 2
+	// heavy apps". Order is preserved for display purposes only —
+	// the feasibility math sums into a single `total cores / total
+	// memory` figure regardless of order.
+	Apps []AppGroup
+	// DatabaseGB is the total persistent volume size the workload's
+	// database needs. Drives DB compute heuristics (db_cores =
+	// max(2, db_GB/50); db_mem = max(2 GiB, db_GB × 100 MiB)) and
+	// IOPS-floor checks.
+	DatabaseGB int
+	// EgressGBMonth is monthly outbound internet traffic (DB-to-user
+	// patterns, image serving, etc.). 0 = "user did not state an
+	// estimate"; feasibility surfaces a warning instead of silently
+	// assuming zero (the §23.6 sandbag-defense path). The xapiri TUI
+	// makes this field required (default suggestion = DatabaseGB × 2).
+	EgressGBMonth int
+	// Resilience picks the redundancy tier:
+	//   - "single"  → 1 control-plane node, no anti-affinity
+	//   - "ha"      → 3 control-plane nodes, anti-affinity within zone
+	//   - "ha-mr"   → 3+ CP nodes spread across regions
+	// Empty string treated as "single" (legacy default).
+	Resilience string
+	// Environment is the sibling axis to Resilience:
+	//   - "dev"     → minimal addons, no Argo, no monitoring
+	//   - "staging" → Argo CD + light monitoring
+	//   - "prod"    → Argo CD HA + full monitoring + backups
+	// Empty string treated as "dev" (legacy default).
+	Environment string
+}
+
+// AppGroup is one entry in WorkloadShape.Apps. The combination
+// (count, template) describes a homogeneous group of pods; the
+// feasibility gate sums every group's Count × template's
+// (cores, memMiB) into the workload's total compute requirement.
+type AppGroup struct {
+	// Count is the number of pod replicas in this group.
+	Count int
+	// Template names the sizing preset used for this group. Valid
+	// values: "light" (100m / 128 MiB), "medium" (200m / 256 MiB),
+	// "heavy" (500m / 1024 MiB), or "custom" (use CustomCores +
+	// CustomMemMiB). Empty string treated as "medium".
+	Template string
+	// CustomCores / CustomMemMiB override the named template's CPU
+	// + memory request when Template == "custom". CustomCores is
+	// in millicores (e.g. 750 = 0.75 cores). Ignored otherwise.
+	CustomCores  int
+	CustomMemMiB int64
+}
+
 // MgmtConfig holds management-cluster shape that every provider needs:
 // names, K8s version, replica counts, control-plane endpoint, Cilium add-on
 // toggles, and the rendered CAPI manifest. Provider-specific bits (Proxmox
@@ -502,6 +565,13 @@ type Config struct {
 	// CSI groups multi-driver CSI add-on selection (§20). The
 	// driver registry lives in internal/csi/.
 	CSI CSIConfig
+	// Workload describes the user-stated product shape (apps × template,
+	// database GB, egress GB/month, resilience, environment) consumed by
+	// the §23 feasibility gate. Today the xapiri TUI populates these
+	// (§22 commit); legacy command-line flows leave them zero, in which
+	// case feasibility.Check returns ErrNotApplicable and the existing
+	// resource-budget check stays the only gate.
+	Workload WorkloadShape
 
 
 	// ---- Tool versions ----

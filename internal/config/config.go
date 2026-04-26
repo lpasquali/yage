@@ -1040,12 +1040,62 @@ func Load() *Config {
 	c.Providers.Azure.Location = getenv("AZURE_LOCATION", "eastus")
 	c.Providers.Azure.Mode = getenv("AZURE_MODE", "unmanaged")
 	c.Providers.Azure.OverheadTier = getenv("AZURE_OVERHEAD_TIER", "prod")
+	// Azure identity / state — surfaces the env vars CAPZ already
+	// reads (AZURE_SUBSCRIPTION_ID, AZURE_TENANT_ID, ...) on cfg so
+	// xapiri / kindsync can round-trip them. IdentityModel defaults
+	// to "service-principal" — the historical CAPZ default.
+	c.Providers.Azure.SubscriptionID = getenv("AZURE_SUBSCRIPTION_ID", "")
+	c.Providers.Azure.TenantID = getenv("AZURE_TENANT_ID", "")
+	c.Providers.Azure.ResourceGroup = getenv("AZURE_RESOURCE_GROUP", "")
+	c.Providers.Azure.VNetName = getenv("AZURE_VNET_NAME", "")
+	c.Providers.Azure.SubnetName = getenv("AZURE_SUBNET_NAME", "")
+	c.Providers.Azure.ClientID = getenv("AZURE_CLIENT_ID", "")
+	c.Providers.Azure.IdentityModel = getenv("AZURE_IDENTITY_MODEL", "service-principal")
 	c.Providers.GCP.ControlPlaneMachineType = getenv("GCP_CONTROL_PLANE_MACHINE_TYPE", "n2-standard-2")
 	c.Providers.GCP.NodeMachineType = getenv("GCP_NODE_MACHINE_TYPE", "n2-standard-2")
 	c.Providers.GCP.Region = getenv("GCP_REGION", "us-central1")
 	c.Providers.GCP.Project = getenv("GCP_PROJECT", "")
 	c.Providers.GCP.Mode = getenv("GCP_MODE", "unmanaged")
 	c.Providers.GCP.OverheadTier = getenv("GCP_OVERHEAD_TIER", "prod")
+	// GCP network / image / identity — Network surfaces as
+	// GCP_NETWORK_NAME (the spelling CAPG uses for TemplateVars);
+	// IdentityModel defaults to "service-account" (the historical
+	// GOOGLE_APPLICATION_CREDENTIALS path).
+	c.Providers.GCP.Network = getenv("GCP_NETWORK_NAME", "")
+	c.Providers.GCP.ImageFamily = getenv("GCP_IMAGE_FAMILY", "")
+	c.Providers.GCP.IdentityModel = getenv("GCP_IDENTITY_MODEL", "service-account")
+	// OpenStack — primary spelling is OPENSTACK_*, with OS_* legacy
+	// fallbacks for fields that already have a clouds.yaml convention
+	// (OS_PROJECT_NAME, OS_REGION_NAME). Empty defaults across the
+	// board: the CAPO manifest needs them set explicitly anyway.
+	c.Providers.OpenStack.Cloud = getenv("OPENSTACK_CLOUD", "")
+	c.Providers.OpenStack.ProjectName = firstNonEmpty(
+		os.Getenv("OPENSTACK_PROJECT_NAME"),
+		os.Getenv("OS_PROJECT_NAME"),
+	)
+	c.Providers.OpenStack.Region = firstNonEmpty(
+		os.Getenv("OPENSTACK_REGION"),
+		os.Getenv("OS_REGION_NAME"),
+	)
+	c.Providers.OpenStack.FailureDomain = getenv("OPENSTACK_FAILURE_DOMAIN", "")
+	c.Providers.OpenStack.ImageName = getenv("OPENSTACK_IMAGE_NAME", "")
+	c.Providers.OpenStack.ControlPlaneFlavor = getenv("OPENSTACK_CONTROL_PLANE_FLAVOR", "")
+	c.Providers.OpenStack.WorkerFlavor = getenv("OPENSTACK_WORKER_FLAVOR", "")
+	c.Providers.OpenStack.DNSNameservers = getenv("OPENSTACK_DNS_NAMESERVERS", "")
+	c.Providers.OpenStack.SSHKeyName = getenv("OPENSTACK_SSH_KEY_NAME", "")
+	// vSphere — the env-var roster CAPV's manifest expects, plus
+	// operator-supplied credentials (VSPHERE_USERNAME / VSPHERE_PASSWORD)
+	// surfaced on cfg so xapiri can prompt and kindsync can round-trip.
+	c.Providers.Vsphere.Server = getenv("VSPHERE_SERVER", "")
+	c.Providers.Vsphere.Datacenter = getenv("VSPHERE_DATACENTER", "")
+	c.Providers.Vsphere.Folder = getenv("VSPHERE_FOLDER", "")
+	c.Providers.Vsphere.ResourcePool = getenv("VSPHERE_RESOURCE_POOL", "")
+	c.Providers.Vsphere.Datastore = getenv("VSPHERE_DATASTORE", "")
+	c.Providers.Vsphere.Network = getenv("VSPHERE_NETWORK", "")
+	c.Providers.Vsphere.Template = getenv("VSPHERE_TEMPLATE", "")
+	c.Providers.Vsphere.TLSThumbprint = getenv("VSPHERE_TLS_THUMBPRINT", "")
+	c.Providers.Vsphere.Username = getenv("VSPHERE_USERNAME", "")
+	c.Providers.Vsphere.Password = getenv("VSPHERE_PASSWORD", "")
 	c.Providers.Hetzner.ControlPlaneMachineType = getenv("HCLOUD_CONTROL_PLANE_MACHINE_TYPE", "cx22")
 	c.Providers.Hetzner.NodeMachineType = getenv("HCLOUD_NODE_MACHINE_TYPE", "cx22")
 	c.Providers.Hetzner.Location = getenv("HCLOUD_REGION", "fsn1")

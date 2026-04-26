@@ -391,6 +391,20 @@ func Parse(c *config.Config, argv []string) {
 			c.Providers.Azure.NodeMachineType = shiftVal(a)
 		case "--azure-overhead-tier":
 			c.Providers.Azure.OverheadTier = strings.ToLower(shiftVal(a))
+		case "--azure-subscription-id":
+			c.Providers.Azure.SubscriptionID = shiftVal(a)
+		case "--azure-tenant-id":
+			c.Providers.Azure.TenantID = shiftVal(a)
+		case "--azure-resource-group":
+			c.Providers.Azure.ResourceGroup = shiftVal(a)
+		case "--azure-vnet-name":
+			c.Providers.Azure.VNetName = shiftVal(a)
+		case "--azure-subnet-name":
+			c.Providers.Azure.SubnetName = shiftVal(a)
+		case "--azure-client-id":
+			c.Providers.Azure.ClientID = shiftVal(a)
+		case "--azure-identity-model":
+			c.Providers.Azure.IdentityModel = strings.ToLower(shiftVal(a))
 		case "--gcp-mode":
 			c.Providers.GCP.Mode = strings.ToLower(shiftVal(a))
 		case "--gcp-region":
@@ -403,6 +417,50 @@ func Parse(c *config.Config, argv []string) {
 			c.Providers.GCP.NodeMachineType = shiftVal(a)
 		case "--gcp-overhead-tier":
 			c.Providers.GCP.OverheadTier = strings.ToLower(shiftVal(a))
+		case "--gcp-network-name":
+			c.Providers.GCP.Network = shiftVal(a)
+		case "--gcp-image-family":
+			c.Providers.GCP.ImageFamily = shiftVal(a)
+		case "--gcp-identity-model":
+			c.Providers.GCP.IdentityModel = strings.ToLower(shiftVal(a))
+		case "--openstack-cloud":
+			c.Providers.OpenStack.Cloud = shiftVal(a)
+		case "--openstack-project-name":
+			c.Providers.OpenStack.ProjectName = shiftVal(a)
+		case "--openstack-region":
+			c.Providers.OpenStack.Region = shiftVal(a)
+		case "--openstack-failure-domain":
+			c.Providers.OpenStack.FailureDomain = shiftVal(a)
+		case "--openstack-image-name":
+			c.Providers.OpenStack.ImageName = shiftVal(a)
+		case "--openstack-control-plane-flavor":
+			c.Providers.OpenStack.ControlPlaneFlavor = shiftVal(a)
+		case "--openstack-worker-flavor":
+			c.Providers.OpenStack.WorkerFlavor = shiftVal(a)
+		case "--openstack-dns-nameservers":
+			c.Providers.OpenStack.DNSNameservers = shiftVal(a)
+		case "--openstack-ssh-key-name":
+			c.Providers.OpenStack.SSHKeyName = shiftVal(a)
+		case "--vsphere-server":
+			c.Providers.Vsphere.Server = shiftVal(a)
+		case "--vsphere-datacenter":
+			c.Providers.Vsphere.Datacenter = shiftVal(a)
+		case "--vsphere-folder":
+			c.Providers.Vsphere.Folder = shiftVal(a)
+		case "--vsphere-resource-pool":
+			c.Providers.Vsphere.ResourcePool = shiftVal(a)
+		case "--vsphere-datastore":
+			c.Providers.Vsphere.Datastore = shiftVal(a)
+		case "--vsphere-network":
+			c.Providers.Vsphere.Network = shiftVal(a)
+		case "--vsphere-template":
+			c.Providers.Vsphere.Template = shiftVal(a)
+		case "--vsphere-tls-thumbprint":
+			c.Providers.Vsphere.TLSThumbprint = shiftVal(a)
+		case "--vsphere-username":
+			c.Providers.Vsphere.Username = shiftVal(a)
+		case "--vsphere-password":
+			c.Providers.Vsphere.Password = shiftVal(a)
 		case "--hetzner-control-plane-machine-type":
 			c.Providers.Hetzner.ControlPlaneMachineType = shiftVal(a)
 		case "--hetzner-node-machine-type":

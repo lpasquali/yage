@@ -7,11 +7,14 @@
 > As in the famous south american visionary concotion, yage Go program
 
 A Go tool that bootstraps a Cluster API (CAPI) management
-plane in a local kind cluster and provisions a Proxmox VE workload
-cluster on top, with CNI (Cilium), CSI (Proxmox CSI), and an
-Argo CD app-of-apps GitOps surface. Twelve infrastructure providers
-are registered (Proxmox is the fully-wired one; the rest cover
-cost-comparison and partial bring-up).
+plane in a local kind cluster and provisions a workload cluster on
+any registered infrastructure provider — with CNI (Cilium), CSI
+(per-provider via the §20 driver registry), and an Argo CD
+app-of-apps GitOps surface. Twelve providers are registered
+(Proxmox is the most-wired today; AWS / Azure / GCP / Hetzner /
+OpenStack / vSphere ship the CSI + dry-run + cost-compare surface;
+DigitalOcean / Linode / OCI / IBM Cloud / CAPD round out the
+matrix). Pick one with `--infra-provider` or `INFRA_PROVIDER`.
 
 ## Quick start
 

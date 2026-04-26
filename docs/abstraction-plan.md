@@ -2944,4 +2944,225 @@ since it's the larger, higher-impact body of work.
 - Per-driver tests where Secret content is non-trivial (chart
   values render, token plumbed correctly).
 
+---
+
+## 21. Secrets matrix + OpenTofu generalization + airgap infra
+
+User asked for a concrete matrix of "what secrets need to be
+created where, can OpenTofu be the common deployer for all of
+them, and what extra infra (image registry, etc.) does CAPI need
+to work in airgapped on-premise scenarios — for every provider."
+
+§6 ("what this *doesn't* fix") flagged the identity-bootstrap
+parity gap; §17 added `--airgapped` + `--image-registry-mirror`
+without specifying what else airgap needs. This section is the
+cross-cutting answer that ties identity, CSI secrets, and
+airgap infra into one design.
+
+### 21.1 Secrets matrix (per provider)
+
+Categories:
+- **Cloud-side identity**: what's created on the vendor's
+  control plane (IAM role, Service Principal, GCP SA, …) so CAPI
+  controllers + CSI driver can act.
+- **Cluster-side credentials Secret**: the Kubernetes Secret yage
+  pushes into the workload cluster carrying that identity's
+  credentials (or the OIDC binding when WI-style).
+- **CSI driver Secret**: separate from the CAPI identity Secret
+  in some clouds (e.g. vSphere Cinder uses clouds.yaml; AWS EBS
+  uses IRSA so no Secret).
+- **Manifest-time substitutions**: env-style values
+  (`AWS_REGION`, `AZURE_SUBSCRIPTION_ID`) consumed by clusterctl
+  generate; not secrets but ride alongside the bootstrap.
+
+| Provider | Cloud-side identity | Cluster-side CAPI Secret | CSI driver Secret | Notes |
+|---|---|---|---|---|
+| **Proxmox** | CAPI user + token + CSI user + token (pveapi `/access/users`) | `proxmox-bootstrap-config` (legacy) + `proxmox-bootstrap-capmox-credentials` | `proxmox-csi-config` (Helm values) | yage owns full lifecycle via OpenTofu/BPG |
+| **AWS** | CAPA bootstrap CloudFormation stack (`clusterawsadm bootstrap iam create-cloudformation-stack`); IRSA role for EBS CSI | `aws-credentials` (env-supplied AKID/secret OR `AWS_PROFILE`) | none — IRSA via OIDC | yage NEVER manages — operator creates pre-bootstrap |
+| **Azure** | Service Principal OR User-Assigned Managed Identity OR Workload Identity (per `cfg.Providers.Azure.IdentityModel`) | `azure-cloud-config` (clientID/secret/tenantID/subscriptionID JSON) — only when SP path | `azure-cloud-config` shared with CAPI | WI path: zero Secret on the cluster |
+| **GCP** | Service Account + JSON key OR Workload Identity (per `cfg.Providers.GCP.IdentityModel`) | `gce-conf` (SA JSON) — SA path only | `gce-conf` shared | WI path: zero Secret |
+| **Hetzner** | Project API token (manual in Hetzner console) | `hcloud` Secret with `HCLOUD_TOKEN` | same — hcloud-csi reads same Secret | yage doesn't mint; operator pastes |
+| **OpenStack** | Application Credential (Keystone) OR username/password | `cloud-config` Secret with full clouds.yaml | same — cinder-csi reads clouds.yaml | yage could mint Application Credentials via OpenTofu (see §21.2) |
+| **vSphere** | vCenter SSO user with permissions on Datacenter/Folder | `capv-manager-bootstrap-credentials` (username/password) | `csi-vsphere-config` (separate, full csi-vsphere.conf) | yage doesn't create vCenter user |
+| **DigitalOcean** | API token (manual in DO console) | `digitalocean-credentials` (token) | shared — DO CSI reads same | manual operator step today |
+| **Linode** | API token | `linode` Secret | shared | manual |
+| **OCI** | Instance Principal OR API key + tenancy/user/region OCID | `oci-credentials` Secret | `oci` Secret (CSI's separate) | dual-path identity |
+| **IBM Cloud** | IAM API key + Account ID | `ibmcloud-credentials` Secret | shared | IRSA-equivalent: Trusted Profile (future) |
+| **CAPD** | none (Docker socket on host) | none | none | dev/test only |
+
+**Concrete matrix**: each row is a distinct identity-bootstrap
+flow yage either owns, partially owns, or skips. Today's reality:
+yage fully owns Proxmox and nothing else — every other provider
+is "operator pre-creates the identity, yage consumes it."
+
+### 21.2 OpenTofu as a common deployer for cloud-side secrets
+
+yage already ships OpenTofu integration (`internal/platform/opentofux`)
+for Proxmox identity bootstrap (the BPG provider tree creates the
+CAPI + CSI users + tokens). The pattern generalizes cleanly: **every
+cloud has a Terraform/OpenTofu provider**, and OpenTofu is happy
+running multiple providers in one tree.
+
+**Proposed: `internal/platform/opentofux/` becomes the universal
+identity-bootstrap engine.** Per-provider Go code supplies an HCL
+template + the variables it needs; the same `tofu init / apply /
+destroy` lifecycle runs for everyone. The Provider interface gains
+nothing new — the existing `EnsureIdentity(cfg) error` method
+becomes "render my HCL + apply via opentofux" instead of
+"return ErrNotApplicable."
+
+Per-provider HCL templates (sketch):
+
+| Provider | Tofu provider | What gets created |
+|---|---|---|
+| Proxmox | `bpg/proxmox` (existing) | CAPI user + tokens + CSI user + tokens |
+| AWS | `hashicorp/aws` | CAPA IAM role + inline policies; EBS CSI IRSA role + OIDC trust; optional EFS role |
+| Azure | `hashicorp/azurerm` + `hashicorp/azuread` | Service Principal + role assignments (Contributor on RG); for WI, the AAD Application + federated credentials + ServiceAccount binding |
+| GCP | `hashicorp/google` | Service Account + IAM roles + JSON key (or for WI, the Workload Identity Pool + Provider + binding) |
+| Hetzner | (no usable provider for token creation; tokens are project-scoped and console-only) | (skip; manual) |
+| OpenStack | `terraform-provider-openstack/openstack` | Application Credential on Keystone + project membership |
+| vSphere | `hashicorp/vsphere` | optional: a CAPV-specific user with role bindings on the Datacenter/Folder |
+| DigitalOcean | `digitalocean/digitalocean` | (DO doesn't expose token-creation via API; skip or manual) |
+| Linode | `linode/linode` | API token (Linode supports it) |
+| OCI | `oracle/oci` | API key + IAM user + group + policies |
+| IBM Cloud | `ibm-cloud/ibm` | Trusted Profile (WI-equivalent) OR API key + access policies |
+
+**Implementation seam:**
+
+```go
+// internal/platform/opentofux/opentofux.go (extended)
+type IdentityBootstrap interface {
+    // RenderHCL returns the per-provider Terraform tree as a
+    // map of filename → contents. The orchestrator drops these
+    // into the StateDir() and runs tofu apply.
+    RenderHCL(cfg *config.Config) (map[string]string, error)
+    // ParseOutputs reads `tofu output -json` and writes the
+    // resulting credentials back into cfg (e.g.
+    // cfg.Providers.AWS.RoleARN, cfg.Providers.GCP.SAEmail).
+    ParseOutputs(cfg *config.Config, outputJSON []byte) error
+}
+
+// Each provider package implements this and registers via
+// opentofux.RegisterIdentityBootstrap(name, impl).
+```
+
+The Provider's `EnsureIdentity` becomes a thin shim that calls
+`opentofux.Apply(cfg)` with the right `IdentityBootstrap`.
+
+**Why OpenTofu over per-cloud Go SDKs**:
+- Single mental model (one tool, one state file format) for the
+  operator.
+- Idempotency for free — `tofu apply` re-applies cleanly.
+- Recovery for free — `tofu destroy` is the universal Purge.
+- Drift detection — `tofu plan` shows what changed since last
+  apply.
+- Operators can audit and edit the HCL directly if needed.
+
+**Why the Go SDK alternative is worse**:
+- Each cloud's SDK has different error semantics, retry behavior,
+  and idempotency conventions.
+- We'd reimplement state tracking; OpenTofu has it.
+- Operators couldn't easily inspect or override.
+
+**Costs**:
+- ~200 LOC HCL + 30 LOC Go per provider.
+- Operators need OpenTofu CLI installed (already required for
+  Proxmox today).
+- Some clouds (Hetzner, DigitalOcean) don't expose token-creation
+  via API — they stay manual regardless.
+
+**Phase G: Universal OpenTofu identity bootstrap.** Sequenced as
+the next big phase after Phase F (CSI) lands.
+
+### 21.3 Airgap infra requirements (per provider)
+
+`--airgapped` + `--image-registry-mirror` (§17) cover the CAPI
+controller + CSI driver image pulls. But airgapped CAPI also needs:
+
+| Concern | What | Per-provider notes |
+|---|---|---|
+| **CAPI controller images** | Mirror at internal registry; clusterctl init `--core/--bootstrap/--control-plane/--infrastructure` overrides (already wired in commit `41c90f1`) | All providers |
+| **Provider controller images** | Same — `--infrastructure` override | All providers; on-prem providers need only their own (proxmox/vsphere/openstack/capd) |
+| **CSI driver images** | Helm chart `image.repository` override per driver | Per CSI driver; Phase F drivers expose this in `RenderValues` |
+| **Cilium / Argo CD images** | CAAPH HelmChartProxy values; `image.repository` override | Same on-prem subset |
+| **Helm charts themselves** | Internal chart museum (Harbor / ChartMuseum) — yage's chart references need `--repo <internal>` | All Helm-driven add-ons |
+| **Node OS images / VM templates** | per-provider artifact (Proxmox VM template, vSphere VM template, OpenStack Glance image, AWS AMI, Azure Image, GCP Image) | On-prem ones: operator imports; cloud ones: irrelevant since mostly N/A in airgapped |
+| **OS package mirror** | apt/yum/zypper mirror inside the workload cluster's NodeImage | Pre-baked into the VM template; orthogonal to yage |
+| **Container image proxy for workload pods** | Internal registry (Harbor) + ImagePullSecrets | Operator concern; yage doesn't push images |
+| **TLS trust anchor** | Internal CA cert; mounted into every controller via `additional-trusted-ca-bundle` | yage should accept `--internal-ca-bundle <file>` and propagate to controllers |
+| **DNS** | Internal DNS only — no `8.8.8.8` etc. | operator concern; affects cilium DNS config |
+
+**On-prem-only providers airgap cleanly today** (Proxmox / vSphere
+/ OpenStack / CAPD): they don't need cloud-side IAM, just internal
+registry + Helm proxy + their own controller image override.
+
+**Hyperscale providers in airgapped mode**: nonsensical without
+operator-supplied IAM (which can't be created without internet
+access). Airgapped + cloud is correctly refused (`ErrAirgapped`)
+already — see commit `f6ba1b7`.
+
+### 21.4 Proposed additions to yage's CLI
+
+```
+--internal-ca-bundle <file>      Path to PEM bundle yage propagates
+                                  to every controller as a trusted
+                                  CA. Required when --airgapped is
+                                  set and the internal registry uses
+                                  an internal CA. Env: YAGE_INTERNAL_CA_BUNDLE
+--helm-repo-mirror <url>         Internal Helm chart repo URL.
+                                  Replaces public Helm repo URLs
+                                  (kubernetes-sigs/aws-ebs-csi-driver/
+                                  charts, etc.) at chart-render time.
+                                  Env: YAGE_HELM_REPO_MIRROR
+--node-image <name-or-id>        Override the per-provider node OS
+                                  image / template. Same effect as
+                                  cfg.Providers.<name>.Template /
+                                  ImageName / AMIID; surfaced as a
+                                  cross-provider knob for
+                                  airgap convenience.
+                                  Env: YAGE_NODE_IMAGE
+```
+
+These three (plus the existing `--image-registry-mirror`) form the
+complete airgap-readiness surface. Phase H?
+
+### 21.5 Definition of Done — Phase G + airgap completion
+
+**Phase G — universal OpenTofu identity bootstrap:**
+- `opentofux.IdentityBootstrap` interface + per-provider HCL
+  templates for AWS, Azure, GCP, OpenStack, OCI, IBM Cloud,
+  Linode (the providers where Tofu can mint identity)
+- Each provider's `EnsureIdentity` calls into opentofux instead
+  of returning `ErrNotApplicable`
+- `Provider.Purge` symmetrically calls `opentofux.Destroy(cfg)`
+- New tests: render-HCL goldens per provider; output-parsing
+  unit tests
+
+**Airgap completion (parallel to Phase G):**
+- `cfg.InternalCABundle string` + `--internal-ca-bundle` + propagate
+  to controller deployments via env / volume mount
+- `cfg.HelmRepoMirror string` + `--helm-repo-mirror` + chart-rewriter
+  in CAAPH/Phase F CSI render path
+- `cfg.NodeImage string` + `--node-image` cross-provider override
+  that maps onto the per-provider image field
+- `--airgapped` warns if `--internal-ca-bundle` and
+  `--helm-repo-mirror` aren't set (today only warns about
+  `--image-registry-mirror`)
+
+### 21.6 Sequencing relative to current waves
+
+```
+✅ Done:    Phases A / B / C / D / E + §15-§20 + Phase F (scoped)
+   Next:    Phase G (OpenTofu universal identity)
+   Parallel: Airgap completion (--internal-ca-bundle / --helm-repo-mirror / --node-image)
+   Future:  Phase F expansion (Hetzner / DO / Linode / OCI / IBM /
+            vSphere / OpenStack / Rook / Longhorn / OpenEBS CSI drivers)
+```
+
+Phase G is the natural next big design surface — it's what makes
+yage "for CAPI, not for Proxmox" in practice instead of in name.
+Today's `EnsureIdentity` returns `ErrNotApplicable` for everything
+except Proxmox; Phase G makes 7 of 12 providers actually mint
+their identity through yage instead of expecting the operator to
+do it manually.
 

@@ -1,6 +1,6 @@
 # yage — Agent System Prompt
 
-You are an expert assistant for the **yage** project — a Go tool that bootstraps Kubernetes Cluster API (CAPI) environments on Proxmox VE infrastructure.
+You are an expert assistant for the **yage** project — a Go tool that bootstraps Kubernetes Cluster API (CAPI) environments on any of twelve registered infrastructure providers (Proxmox VE, AWS, Azure, GCP, Hetzner, OpenStack, vSphere, CAPD, DigitalOcean, Linode, OCI, IBM Cloud).
 
 ---
 

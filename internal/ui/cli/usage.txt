@@ -1,14 +1,17 @@
-yage — bootstrap a Cluster API management plane and provision a Proxmox workload cluster
+yage — bootstrap a Cluster API management plane and provision a workload cluster on any registered infrastructure provider
 
 USAGE
     yage [OPTIONS]
 
 DESCRIPTION
     Bootstraps a kind-based CAPI management plane (Cilium CNI: Ingress,
-    kube-proxy replacement, Hubble) and provisions a Proxmox workload
-    cluster on top of it. With --pivot, the CAPI control plane is then
-    moved to a Proxmox-hosted management cluster (clusterctl move) and
-    kind is torn down.
+    kube-proxy replacement, Hubble) and provisions a workload cluster on
+    the configured infrastructure provider — proxmox, aws, azure, gcp,
+    hetzner, openstack, vsphere, capd, or any of the cost-only providers
+    (digitalocean, linode, oci, ibmcloud). Pick one with --infra-provider
+    or set INFRA_PROVIDER. With --pivot (where supported), the CAPI
+    control plane is moved to a managed mgmt cluster on the same provider
+    (clusterctl move) and kind is torn down.
 
     yage was originally a Go port of a bash script; the Go binary is
     now the canonical implementation. See docs/ARCHITECTURE.md for

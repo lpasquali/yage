@@ -58,11 +58,10 @@ func tryWriteToKind(cfg *config.Config) error {
 }
 
 // writeBootstrapConfigSecret is the indirection for Track B's helper.
-// When that lands, switching this from nil to
-// `kindsync.WriteBootstrapConfigSecret` is a one-line change. The
-// import keeps the package referenced so the dependency is documented
-// even before the function exists.
-var writeBootstrapConfigSecret func(cfg *config.Config) error = nil
+// Track B landed in commit 0655951; this binding is the one-line
+// promotion the original comment anticipated. yage-system/
+// bootstrap-config is now the authoritative TUI persistence target.
+var writeBootstrapConfigSecret func(cfg *config.Config) error = kindsync.WriteBootstrapConfigSecret
 
 // errUnimplemented is the sentinel we return while Track B hasn't
 // shipped the kind writer yet. We keep it package-private — callers

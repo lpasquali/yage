@@ -1196,9 +1196,21 @@ type CapacityProvider interface {
     // and what's free" in one round-trip. Available is computed by
     // the provider from its quota model — NOT (Total - Used) at the
     // call site, because that arithmetic is only correct on
-    // flat-pool clouds (Proxmox). On AWS, Available reflects
-    // Service Quotas; on GCP, it accounts for committed-use; on
-    // Hetzner, project-level caps. See §10's "Why merged" rationale.
+    // flat-pool clouds.
+    //
+    // Returns ErrNotApplicable when the provider's quota model can't
+    // be expressed as flat ResourceTotals. Per §13 validation:
+    //   • Fits cleanly:    Proxmox (host hardware), OpenStack (per-project quota)
+    //   • Returns ErrN/A:  AWS/GCP/Azure (per-family quotas — t3 vs m5),
+    //                      Hetzner (count-based — N servers/project),
+    //                      vSphere (multi-level hierarchy + soft-quota Resource Pools)
+    //
+    // When ErrNotApplicable is returned, capacity preflight is
+    // skipped for that provider; the orchestrator continues with
+    // EstimateMonthlyCostUSD and DescribeWorkload as the only
+    // pre-deploy gates. The Notes field is the escape hatch for
+    // providers that have something to say but can't express it as
+    // Total/Used/Available (e.g., Hetzner: "3 of 10 servers used").
     Inventory(cfg *config.Config) (*Inventory, error)
 }
 
@@ -1210,10 +1222,15 @@ type Inventory struct {
 }
 
 type ResourceTotals struct {
-    Cores      int
-    MemoryMiB  int64
-    StorageGiB int64
-    // per-storage-class breakdown when the provider has multiple backends
+    Cores          int
+    MemoryMiB      int64
+    StorageGiB     int64             // aggregate across all classes
+    StorageByClass map[string]int64  // optional per-class breakdown
+                                     //   AWS: gp3/io2/standard/sc1
+                                     //   GCP: pd-balanced/pd-ssd/pd-standard
+                                     //   OpenStack: Cinder backends (fast/slow/archive)
+                                     //   vSphere: Datastores
+                                     // empty/nil when the provider has a single backend
 }
 
 type IdentityProvider interface {
@@ -1257,6 +1274,23 @@ CapacityProvider + CostEstimator`.
 |---|---|---|
 | `EnsureGroup(cfg, name string)` | `EnsureScope(cfg)` | "Group" collides with k8s/RBAC Groups; most clouds don't call this concept a group. The `name` param was always `cfg.ClusterSetID` — read from cfg, drop the parameter. |
 | (no method) | `TemplateVars(cfg) map[string]string` | New in Phase D — flat env-substitution map for clusterctl-template-time injection. Sits alongside `PatchManifest`, which handles structural YAML edits. |
+
+### `EnsureScope` per-provider semantics
+
+`EnsureScope` is intentionally a single method, but the *what* it
+ensures differs per cloud (per §13.4 decision #3). Documented here
+so providers know what to implement:
+
+| Provider | What `EnsureScope` ensures |
+|---|---|
+| Proxmox | Pool exists (`pveapi.EnsurePool(cfg, cfg.ClusterSetID)`) |
+| vSphere | Folder exists at `cfg.VsphereFolder` (Resource Pool stays operator-managed) |
+| OpenStack | `ErrNotApplicable` — project is operator-supplied |
+| AWS | `ErrNotApplicable` — IAM grouping is in the operator-created CloudFormation stack |
+| GCP | `ErrNotApplicable` — Project is operator-supplied |
+| Azure | `ErrNotApplicable` — Resource Group is created by CAPZ itself |
+| Hetzner | `ErrNotApplicable` — Project is implicit in the API token's scope |
+| Cost-only providers | `ErrNotApplicable` |
 
 ### Error convention: a single sentinel
 
@@ -1434,6 +1468,36 @@ PivotTarget(cfg *config.Config) (PivotTarget, error)
 
 `(PivotTarget{}, ErrNotApplicable)` means "this provider has no
 pivot target — kind stays as the management cluster forever."
+
+### Kubeconfig path threading via `cfg.MgmtKubeconfigPath`
+
+The destination kubeconfig file is created by the orchestrator's
+`EnsureManagementCluster()` (it's a temp file on local disk), not by
+the provider. So the provider can't return `KubeconfigPath` until
+the orchestrator tells it where the file is. Thread it through
+`Config`:
+
+```go
+// internal/config/config.go
+type Config struct {
+    // ...
+    MgmtKubeconfigPath string  // set by orchestrator after EnsureManagementCluster
+                               // returns; read by Provider.PivotTarget. Empty
+                               // until that phase runs.
+}
+
+// Orchestrator sequence:
+mgmtKcfg, err := EnsureManagementCluster(cfg)  // provisions, writes temp file
+if err != nil { return err }
+cfg.MgmtKubeconfigPath = mgmtKcfg
+
+// ... later ...
+target, err := provider.For(cfg).PivotTarget(cfg)  // reads cfg.MgmtKubeconfigPath
+```
+
+Per §13.4 decision #5. The provider's `PivotTarget` is
+side-effect-free — it just packages the path the orchestrator
+already wrote.
 
 ### What the orchestrator does with it
 

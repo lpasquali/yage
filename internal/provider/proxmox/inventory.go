@@ -15,11 +15,98 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 	pveapi "github.com/lpasquali/yage/internal/proxmox"
 )
+
+// Inventory returns the cloud-correct picture of "what's there +
+// what's free" for this Proxmox cluster: host hardware totals,
+// running-VM usage, and the headroom (Total − Used, valid for the
+// flat-pool Proxmox model). Replaces today's split between
+// capacity.FetchHostCapacity and capacity.FetchExistingUsage —
+// callers see one method instead of two, with the cloud-specific
+// arithmetic encapsulated inside the provider.
+//
+// Per the Phase A spec (§13.4 #1): Proxmox is a flat-pool cloud, so
+// Available = Total − Used is correct. Other providers (AWS,
+// Azure, Hetzner, …) return ErrNotApplicable from Inventory because
+// their quota model can't be expressed as flat ResourceTotals.
+func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
+	hc, err := fetchHostCapacity(cfg)
+	if err != nil {
+		return nil, err
+	}
+	used, uerr := fetchExistingUsage(cfg)
+	// fetchExistingUsage failure is not fatal: an empty host returns
+	// a zero-VM result, and a transient API hiccup shouldn't block a
+	// preflight that already has the host totals. Surface as a Note.
+	var usageNote string
+	if uerr != nil {
+		used = &existingUsage{ByPool: map[string]int{}}
+		usageNote = "existing-VM census skipped: " + uerr.Error()
+	}
+
+	total := provider.ResourceTotals{
+		Cores:          hc.CPUCores,
+		MemoryMiB:      hc.MemoryMiB,
+		StorageGiB:     hc.StorageGB,
+		StorageByClass: copyStorageMap(hc.StorageBy),
+	}
+	usedTotals := provider.ResourceTotals{
+		Cores:      used.CPUCores,
+		MemoryMiB:  used.MemoryMiB,
+		StorageGiB: used.StorageGB,
+	}
+	avail := provider.ResourceTotals{
+		Cores:      total.Cores - usedTotals.Cores,
+		MemoryMiB:  total.MemoryMiB - usedTotals.MemoryMiB,
+		StorageGiB: total.StorageGiB - usedTotals.StorageGiB,
+	}
+
+	notes := []string{
+		// Always surface the node list so dry-run / preflight can
+		// report "host (allowed nodes [pve1 pve2]): …" without
+		// dropping into a Proxmox-specific field shape.
+		"allowed nodes: " + strings.Join(hc.Nodes, ","),
+	}
+	if used.VMCount > 0 {
+		notes = append(notes, fmt.Sprintf("existing VMs: %d (cores %d, mem %d MiB, disk %d GB)",
+			used.VMCount, used.CPUCores, used.MemoryMiB, used.StorageGB))
+		if len(used.ByPool) > 1 {
+			parts := make([]string, 0, len(used.ByPool))
+			for pool, n := range used.ByPool {
+				parts = append(parts, fmt.Sprintf("%s=%d", pool, n))
+			}
+			sort.Strings(parts)
+			notes = append(notes, "VMs by pool: "+strings.Join(parts, ", "))
+		}
+	}
+	if usageNote != "" {
+		notes = append(notes, usageNote)
+	}
+
+	return &provider.Inventory{
+		Total:     total,
+		Used:      usedTotals,
+		Available: avail,
+		Notes:     notes,
+	}, nil
+}
+
+func copyStorageMap(in map[string]int64) map[string]int64 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]int64, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
 
 // hostCapacity is the aggregate of CPU + memory + storage across
 // all Proxmox nodes that are eligible for VM placement, after

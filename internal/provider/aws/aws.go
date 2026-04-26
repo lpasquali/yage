@@ -17,10 +17,11 @@
 //     created by `clusterawsadm bootstrap iam create-cloudformation-stack`,
 //     which the user runs once per AWS account. yage
 //     doesn't manage that stack — out of scope.
-//   - Capacity: would query EC2 quotas (Service Quotas API) for the
-//     account's vCPU / instance limits per family. Future work; the
-//     orchestrator falls back to "skip preflight, trust the user"
-//     when Capacity returns ErrNotApplicable.
+//   - Inventory: per-family AWS Service Quotas (t3 vs m5 etc.)
+//     don't compose with flat Total/Used/Available, so AWS returns
+//     ErrNotApplicable per §13.4 #1; capacity preflight is skipped
+//     and EstimateMonthlyCostUSD + DescribeWorkload cover the
+//     pre-deploy gates.
 //   - Group: AWS has IAM groups, but the cluster-level grouping CAPA
 //     uses is VPC + tags (managed by CAPA itself, not us). Returning
 //     ErrNotApplicable is the honest answer.
@@ -56,9 +57,12 @@ func (p *Provider) InfraProviderName() string { return "aws" }
 // create-cloudformation-stack`.
 func (p *Provider) EnsureIdentity(cfg *config.Config) error { return provider.ErrNotApplicable }
 
-// Capacity is unimplemented for AWS today. Future: query the Service
-// Quotas API for the account's vCPU / instance limits.
-func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) {
+// Inventory is unimplemented for AWS: per-family quotas (t3 vs m5)
+// don't compose with the flat Total/Used/Available shape, and AWS
+// preflight is already covered by EstimateMonthlyCostUSD +
+// DescribeWorkload (per §13.4 #1). The orchestrator skips capacity
+// preflight when this returns ErrNotApplicable.
+func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
 	return nil, provider.ErrNotApplicable
 }
 

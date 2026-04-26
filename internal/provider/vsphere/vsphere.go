@@ -7,9 +7,14 @@
 // the CAPV-required role bindings; yage consumes the
 // resulting credentials via the standard CAPV env vars
 // (VSPHERE_USERNAME / VSPHERE_PASSWORD / VSPHERE_SERVER) which the
-// orchestrator passes through to clusterctl. Capacity is reported by
-// govmomi inventory queries in a future iteration; this stub returns
-// ErrNotApplicable so the orchestrator falls back to "trust the user".
+// orchestrator passes through to clusterctl. Inventory currently
+// returns ErrNotApplicable per §13.4 #1: vSphere's resource model
+// is a multi-level hierarchy (vCenter → Datacenter → Cluster →
+// ResourcePool) with soft per-pool reservations rather than a flat
+// Total/Used/Available pool. A future iteration could surface a
+// per-pool variant; today the orchestrator skips capacity preflight
+// for vSphere and relies on EstimateMonthlyCostUSD +
+// DescribeWorkload.
 //
 // The K3s template targets VSphereCluster + VSphereMachineTemplate
 // (apiVersion infrastructure.cluster.x-k8s.io/v1beta1 — CAPV is one
@@ -45,11 +50,12 @@ func (p *Provider) EnsureIdentity(cfg *config.Config) error {
 	return provider.ErrNotApplicable
 }
 
-// Capacity is unimplemented for vSphere. A future iteration will
-// query govmomi inventory (cluster compute resources + datastore
-// summary) and aggregate; until then the orchestrator skips the
-// capacity preflight.
-func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) {
+// Inventory is unimplemented for vSphere. The provider's resource
+// model is a multi-level hierarchy with soft reservations
+// (vCenter → Datacenter → Cluster → ResourcePool), which doesn't
+// compose with the flat Total/Used/Available shape; ErrNotApplicable
+// per §13.4 #1 is the honest answer until a per-pool variant ships.
+func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
 	return nil, provider.ErrNotApplicable
 }
 

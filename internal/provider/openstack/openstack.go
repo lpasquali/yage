@@ -20,11 +20,14 @@
 // ErrNotApplicable. (Future: we could template a clouds.yaml from
 // cfg, but that's out of scope here.)
 //
-// Capacity / grouping: OpenStack does have `nova quota-show` and
-// projects (tenants), but quota query is gophercloud-shaped (out of
-// scope) and projects are pre-existing resources rather than
-// bootstrap-creatable ones. Both phases are ErrNotApplicable for
-// now; the orchestrator skips silently.
+// Inventory / grouping: OpenStack does have `nova quota-show` and
+// projects (tenants). Per §13.4 #1 the per-project quota model
+// fits flat Total/Used/Available cleanly (Proxmox-shaped), but the
+// gophercloud integration is out of scope for the initial drop —
+// Inventory returns ErrNotApplicable until a follow-up wires it.
+// Projects are pre-existing resources rather than
+// bootstrap-creatable ones, so EnsureGroup also returns
+// ErrNotApplicable; the orchestrator skips silently.
 //
 // CSI: cinder-csi-plugin is the canonical OpenStack CSI; we don't
 // ship a Secret apply for it yet, so EnsureCSISecret is
@@ -53,10 +56,13 @@ func (p *Provider) EnsureIdentity(cfg *config.Config) error {
 	return provider.ErrNotApplicable
 }
 
-// Capacity — OpenStack quotas are reachable via gophercloud
-// (`openstack quota show`), but the integration is out of scope for
-// the initial provider drop. Skipped silently by the orchestrator.
-func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) {
+// Inventory — OpenStack per-project quotas (cores/ram/instances/
+// volumes_gigabytes) are reachable via gophercloud and fit the
+// flat Total/Used/Available shape per §13.4 #1, but the
+// integration is out of scope for the initial provider drop.
+// Returns ErrNotApplicable until a follow-up wires gophercloud;
+// the orchestrator skips capacity preflight in the meantime.
+func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
 	return nil, provider.ErrNotApplicable
 }
 

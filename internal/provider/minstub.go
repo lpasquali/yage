@@ -9,7 +9,7 @@ import (
 // clusterctl init. Concrete cloud packages embed MinStub, override
 // Name() / InfraProviderName() / EstimateMonthlyCostUSD(), and get
 // the rest (EnsureIdentity / EnsureGroup / EnsureCSISecret return
-// ErrNotApplicable; Capacity returns ErrNotApplicable;
+// ErrNotApplicable; Inventory returns ErrNotApplicable;
 // PatchManifest no-op; K3sTemplate ErrNotApplicable until the
 // per-cloud K3s flavor is wired).
 //
@@ -18,9 +18,9 @@ import (
 // package; the rest is here.
 type MinStub struct{}
 
-func (MinStub) EnsureIdentity(cfg *config.Config) error      { return ErrNotApplicable }
+func (MinStub) EnsureIdentity(cfg *config.Config) error        { return ErrNotApplicable }
 func (MinStub) EnsureGroup(cfg *config.Config, n string) error { return ErrNotApplicable }
-func (MinStub) Capacity(cfg *config.Config) (*HostCapacity, error) {
+func (MinStub) Inventory(cfg *config.Config) (*Inventory, error) {
 	return nil, ErrNotApplicable
 }
 func (MinStub) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {

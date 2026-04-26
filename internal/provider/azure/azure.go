@@ -17,11 +17,12 @@
 //     create the SP / Managed Identity — that's an out-of-band
 //     `az ad sp create-for-rbac` step the user runs once per
 //     subscription.
-//   - Capacity: would query the Azure Resource Manager Compute
-//     Quota API for the subscription's vCPU / family limits per
-//     region. Future work; the orchestrator falls back to "skip
-//     preflight, trust the user" when Capacity returns
-//     ErrNotApplicable.
+//   - Inventory: Azure Compute Quotas are per-VM-family per-region
+//     (Dsv3 vs Esv3 etc.) and don't compose with flat
+//     Total/Used/Available, so Azure returns ErrNotApplicable per
+//     §13.4 #1; capacity preflight is skipped and
+//     EstimateMonthlyCostUSD + DescribeWorkload cover the pre-deploy
+//     gates.
 //   - Group: Azure has Resource Groups, but CAPZ creates and
 //     manages those itself given AZURE_RESOURCE_GROUP. Returning
 //     ErrNotApplicable is the honest answer (we shouldn't race
@@ -58,10 +59,12 @@ func (p *Provider) InfraProviderName() string { return "azure" }
 // bootstrapped out-of-band with `az ad sp create-for-rbac`.
 func (p *Provider) EnsureIdentity(cfg *config.Config) error { return provider.ErrNotApplicable }
 
-// Capacity is unimplemented for Azure today. Future: query the
-// Resource Manager Compute Quota API for the subscription's vCPU /
-// VM-family limits per region.
-func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) {
+// Inventory is unimplemented for Azure: per-family Compute Quotas
+// don't compose with flat Total/Used/Available, and Azure preflight
+// is already covered by EstimateMonthlyCostUSD + DescribeWorkload
+// (per §13.4 #1). The orchestrator skips capacity preflight when
+// this returns ErrNotApplicable.
+func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
 	return nil, provider.ErrNotApplicable
 }
 

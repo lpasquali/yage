@@ -39,17 +39,6 @@ import (
 // can keep the orchestrator's main loop terse.
 var ErrNotApplicable = errors.New("phase not applicable to this provider")
 
-// HostCapacity is the same shape as internal/capacity.HostCapacity;
-// duplicated here to avoid an import cycle. The capacity package
-// converts between the two when surfacing budget reports.
-type HostCapacity struct {
-	Nodes        []string
-	CPUCores     int
-	MemoryMiB    int64
-	StorageGB    int64
-	StorageBy    map[string]int64
-}
-
 // Role is the per-machine-type discriminator that providers use when
 // rendering K3s templates and applying patches. Mirrors the strings
 // already in patches.go ("control-plane", "worker") so the existing
@@ -84,14 +73,25 @@ type Provider interface {
 	// provider has nothing to do here.
 	EnsureIdentity(cfg *config.Config) error
 
-	// Capacity queries the underlying cloud / hypervisor for the
-	// CPU / memory / storage available to yage (filtered
-	// by AllowedNodes / region / tag — provider-defined). Used by
-	// the capacity preflight + dry-run plan. May return
-	// ErrNotApplicable when the provider has no single capacity
-	// endpoint we can hit; the orchestrator falls back to "skip
-	// preflight, trust the user".
-	Capacity(cfg *config.Config) (*HostCapacity, error)
+	// Inventory returns the cloud-correct picture of "what's there
+	// + what's free" in a single round-trip — Total / Used /
+	// Available / Notes (see Inventory + ResourceTotals). Replaces
+	// the older split between Capacity() (host totals) and the
+	// separate capacity.FetchExistingUsage call: those two
+	// quantities were always queried together at every call site,
+	// and on non-flat-pool clouds the arithmetic
+	// Available = Total − Used is wrong (per-family quotas,
+	// count-based limits, multi-level hierarchies don't compose
+	// with flat subtraction).
+	//
+	// Per the Phase A spec (§13.4 #1): Proxmox and OpenStack-by-
+	// project populate Inventory cleanly. AWS, GCP, Azure, Hetzner,
+	// vSphere return ErrNotApplicable because their quota model
+	// can't be expressed as flat ResourceTotals. The orchestrator
+	// then skips capacity preflight for that provider and relies on
+	// EstimateMonthlyCostUSD + DescribeWorkload as the only
+	// pre-deploy gates.
+	Inventory(cfg *config.Config) (*Inventory, error)
 
 	// EnsureGroup creates an organizational grouping object on the
 	// provider — Proxmox pool, vSphere folder, AWS IAM group,

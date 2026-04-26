@@ -15,10 +15,11 @@
 //     env var. The IAM role + key are created by the operator out-of-
 //     band (gcloud iam service-accounts create + roles/owner-ish
 //     bindings) — yage doesn't manage GCP projects or IAM.
-//   - Capacity: would query the GCP Compute API for the project's
-//     per-region quotas (CPUS, IN_USE_ADDRESSES, DISKS_TOTAL_GB, …).
-//     Future work; the orchestrator falls back to "skip preflight,
-//     trust the user" when Capacity returns ErrNotApplicable.
+//   - Inventory: GCP Compute quotas are per-family (n2 vs e2 etc.)
+//     per-region and don't compose with flat Total/Used/Available,
+//     so GCP returns ErrNotApplicable per §13.4 #1; capacity
+//     preflight is skipped and EstimateMonthlyCostUSD +
+//     DescribeWorkload cover the pre-deploy gates.
 //   - Group: GCP has IAM groups via Cloud Identity, but CAPG doesn't
 //     use them — cluster-level grouping is by GCP project + label.
 //     Returning ErrNotApplicable is the honest answer.
@@ -55,10 +56,12 @@ func (p *Provider) InfraProviderName() string { return "gcp" }
 // keys create` against an account with the CAPG-required IAM roles.
 func (p *Provider) EnsureIdentity(cfg *config.Config) error { return provider.ErrNotApplicable }
 
-// Capacity is unimplemented for GCP today. Future: query the Compute
-// API for the project's per-region quotas (CPUS, DISKS_TOTAL_GB,
-// IN_USE_ADDRESSES, …).
-func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) {
+// Inventory is unimplemented for GCP: per-family Compute quotas
+// don't compose with flat Total/Used/Available, and GCP preflight
+// is already covered by EstimateMonthlyCostUSD + DescribeWorkload
+// (per §13.4 #1). The orchestrator skips capacity preflight when
+// this returns ErrNotApplicable.
+func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
 	return nil, provider.ErrNotApplicable
 }
 

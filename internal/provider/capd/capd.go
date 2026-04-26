@@ -11,7 +11,7 @@
 // INFRA_PROVIDER=docker). The orchestrator looks the implementation
 // up via provider.For(cfg) and dispatches per-phase.
 //
-// Identity / capacity are no-ops (Docker has no identity layer and
+// Identity / inventory are no-ops (Docker has no identity layer and
 // no single capacity endpoint we care about — `docker info` is
 // fine for "unlimited"). EnsureGroup is a no-op (no Docker concept
 // for VM grouping). The K3s template references DockerMachineTemplate
@@ -35,7 +35,7 @@ func (p *Provider) Name() string              { return "docker" }
 func (p *Provider) InfraProviderName() string { return "docker" }
 
 func (p *Provider) EnsureIdentity(cfg *config.Config) error { return provider.ErrNotApplicable }
-func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) {
+func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
 	return nil, provider.ErrNotApplicable
 }
 func (p *Provider) EnsureGroup(cfg *config.Config, name string) error { return provider.ErrNotApplicable }

@@ -39,23 +39,11 @@ func (p *Provider) EnsureIdentity(cfg *config.Config) error {
 	return opentofux.ApplyIdentity(cfg)
 }
 
-// Capacity queries `/api2/json/cluster/resources` (filtered by
-// AllowedNodes) and returns the aggregated CPU + memory + storage.
-// The underlying queries live in inventory.go alongside the
-// Phase A.3 Inventory() implementation that supersedes this method.
-func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) {
-	hc, err := fetchHostCapacity(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &provider.HostCapacity{
-		Nodes:     hc.Nodes,
-		CPUCores:  hc.CPUCores,
-		MemoryMiB: hc.MemoryMiB,
-		StorageGB: hc.StorageGB,
-		StorageBy: hc.StorageBy,
-	}, nil
-}
+// Inventory lives in inventory.go alongside the per-Proxmox HTTP
+// helpers — it composes fetchHostCapacity + fetchExistingUsage
+// into a single provider.Inventory result. The legacy
+// Capacity(cfg) (*HostCapacity, error) method that used to live
+// here was dropped in Phase A.4 along with the interface change.
 
 // EnsureGroup creates / verifies a Proxmox VE pool. CAPMOX places
 // VMs in the named pool (organizational + ACL only — pools don't

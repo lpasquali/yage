@@ -23,10 +23,12 @@
 //   - EnsureIdentity: Hetzner Cloud authenticates via a single
 //     HCLOUD_TOKEN that the user supplies via env var. No identity-
 //     bootstrap step the way AWS IAM or Proxmox BPG users have.
-//   - Capacity: the Hetzner Cloud API exposes per-account quotas
-//     (default 10 servers, can request raise) but not in the same
-//     vCPU/memory shape the orchestrator's preflight uses. Future
-//     work; orchestrator falls back to "trust the user".
+//   - Inventory: Hetzner's quota model is count-based (default 10
+//     servers per project) rather than aggregate vCPU/memory, so it
+//     doesn't compose with the flat Total/Used/Available shape and
+//     returns ErrNotApplicable per §13.4 #1; capacity preflight is
+//     skipped and EstimateMonthlyCostUSD + DescribeWorkload cover
+//     the pre-deploy gates.
 //   - EnsureGroup: Hetzner has Projects (billing buckets) but those
 //     pre-exist when the user creates the API token. No CAPI-side
 //     group concept beyond that.
@@ -61,11 +63,13 @@ func (p *Provider) InfraProviderName() string { return "hetzner" }
 // IAM-stack equivalent.
 func (p *Provider) EnsureIdentity(cfg *config.Config) error { return provider.ErrNotApplicable }
 
-// Capacity is unimplemented for Hetzner today. The Hetzner Cloud
-// API does expose per-project quotas via /v1/pricing + per-server
-// limits, but not in the same shape as the orchestrator's
-// vCPU/memory/storage preflight. Future work.
-func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) {
+// Inventory is unimplemented for Hetzner: the quota model is
+// count-based (servers per project) rather than aggregate
+// vCPU/memory, so it doesn't compose with flat
+// Total/Used/Available. Returning ErrNotApplicable matches §13.4
+// #1; the orchestrator skips capacity preflight and relies on
+// EstimateMonthlyCostUSD + DescribeWorkload.
+func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
 	return nil, provider.ErrNotApplicable
 }
 

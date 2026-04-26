@@ -872,3 +872,239 @@ If we go with the recommendations above:
 With these refinements the plan is executable end-to-end without
 revisiting design decisions mid-flight.
 
+---
+
+## 8. Phase B — PlanWriter design
+
+This section locks in the seam every provider lives behind for years
+once Phase B lands. It supersedes R.1 above where the two conflict
+(specifically: three split describe hooks instead of one
+`DescribePlan`, and a "minimum bar" AWS dry-run scope).
+
+### Interface
+
+`PlanWriter` is defined in `internal/bootstrap` and called by every
+provider:
+
+```go
+type PlanWriter interface {
+    Section(title string)                         // ▸ <title>
+    Bullet(format string, args ...any)            //     • …
+    Skip(reason string, args ...any)              //     ◦ skip: …
+}
+```
+
+The existing free functions in `internal/bootstrap/plan.go:65-75` move
+behind a struct that satisfies this interface. `*os.File` is replaced
+with `io.Writer` everywhere — keeps tests cheap.
+
+### Hierarchy: flat
+
+The Proxmox-bash phase numbers (2.0, 2.1, 2.4, 2.8, 2.9, 2.95, 2.10)
+get dropped — they're cruft from porting the bash script and convey
+nothing a name doesn't. New section titles use named phases:
+
+- "Identity bootstrap"
+- "Clusterctl init"
+- "Kind cluster"
+- "Workload Cluster"
+- "Pivot to mgmt"
+- "Argo CD"
+
+Ordering still matters; the orchestrator picks the order, not the
+writer.
+
+### Skip semantics: two-layer
+
+- **Structured.** Provider returns `provider.ErrNotApplicable` from a
+  Describe* hook → orchestrator silently moves on (no section
+  printed). Same convention already used by `EstimateMonthlyCostUSD`.
+- **Printable.** Provider calls `w.Skip("PIVOT_ENABLED=false (kind
+  remains the management cluster)")` when the section title still has
+  meaning but this run skips its body. Renders as today's `◦ skip: …`.
+
+### Cross-cutting sections stay central
+
+Capacity, allocations, cost, cost-compare, retention live in
+`bootstrap/plan.go` and call provider methods (`Capacity`,
+`ExistingUsage`, `EstimateMonthlyCostUSD`) for data — they don't
+delegate the printing. This keeps the visual style consistent; no
+provider can drift the "Capacity budget" or "Estimated monthly cost"
+layout.
+
+### Per-provider sections: three hooks
+
+Per-provider sections are delegated via three hooks (split for
+ordering — one big `DescribePlan` would force every provider to know
+the orchestrator's phase positions):
+
+```go
+type PlanDescriber interface {
+    DescribeIdentity(w PlanWriter, cfg *config.Config)   // Phase ~2.0 today
+    DescribeWorkload(w PlanWriter, cfg *config.Config)   // Phase ~2.9 today
+    DescribePivot(w PlanWriter, cfg *config.Config)      // Phase ~2.95 today
+}
+```
+
+Embedded in `Provider`, default no-op base struct (`provider.MinStub`
+already exists for the cost-only providers — extend it).
+
+### Sequence after Phase B
+
+```mermaid
+flowchart TD
+    PrintPlan["bootstrap.PrintPlan(cfg)"] --> Std["planStandalone"]
+    Std --> Pre["planPrePhase"]
+    Pre --> P1["planPhase1 (host deps)"]
+    P1 --> Id["p.DescribeIdentity(w, cfg)"]
+    Id --> Cctl["planClusterctl"]
+    Cctl --> Kind["planKind"]
+    Kind --> Init["planClusterctlInit"]
+    Init --> Wl["p.DescribeWorkload(w, cfg)"]
+    Wl --> Pv["p.DescribePivot(w, cfg)"]
+    Pv --> Argo["planArgoCD"]
+    Argo --> Final["planFinal (kind teardown)"]
+    Final --> X["planCapacity / Allocations / Cost / CostCompare / Retention<br/>(central; calls Provider.Capacity / EstimateMonthlyCostUSD)"]
+    classDef provider fill:#e8f3ff,stroke:#3b82f6;
+    class Id,Wl,Pv provider;
+```
+
+Blue nodes = delegated to provider. Everything else = central.
+
+### Worked AWS example
+
+This is what `--dry-run` on AWS prints today vs after Phase B.
+
+**Today** (AWS dry-run silently shows Proxmox text):
+
+```
+▸ Phase 2.0 — Proxmox identity bootstrap (OpenTofu)
+    • interactive prompt (PROXMOX_ADMIN_USERNAME / PROXMOX_ADMIN_TOKEN unset)
+    • tofu apply: create CAPI user 'capi@pve' + token prefix 'capi-'
+    …
+▸ Phase 2.9 — workload Cluster (Proxmox)
+    • Proxmox templates: control-plane=, worker= (catch-all PROXMOX_TEMPLATE_ID=)
+    • Proxmox CSI on workload: chart …
+```
+
+**After Phase B:**
+
+```
+▸ Identity bootstrap — AWS IAM
+    ◦ skip: AWS uses operator-supplied IAM (env: AWS_ACCESS_KEY_ID / _SECRET_ACCESS_KEY)
+    ◦ skip: bootstrap stack created out-of-band — `clusterawsadm bootstrap iam create-cloudformation-stack`
+
+▸ Workload Cluster — AWS (mode: unmanaged)
+    • Cluster: workload/legion-1, k8s v1.32.0, region us-east-1
+    • control plane: 3 × t3.large, 30 GB gp3 root, ssh-key=my-laptop, ami=ami-0123…
+    • workers: 3 × t3.medium, 40 GB gp3 root
+    • overhead tier: prod (1 NAT GW, 1 ALB, 100 GB egress, 10 GB CW logs)
+    ◦ skip: Proxmox CSI (AWS uses aws-ebs-csi-driver via Helm + IRSA — out of scope)
+
+▸ Pivot to mgmt
+    ◦ skip: AWS provider has no PivotTarget yet (kind remains the mgmt cluster)
+```
+
+AWS gets a real dry-run as a side effect of Phase B — see the open
+question below for the scope decision.
+
+### Open question — AWS dry-run scope
+
+Phase B requires AWS to ship *some* `DescribeWorkload`. Two bars:
+
+- **Minimum bar** (~80 LOC): print the cluster shape + sizing + skips.
+  The example above is at this bar.
+- **Real value** (~250 LOC): also surface the live cost components
+  (NAT/ALB counts, instance prices) — same numbers the cost section
+  already pulls.
+
+**Recommendation:** minimum bar in Phase B; the cost section already
+lives in the central cross-cutting block, no need to duplicate it
+inside the AWS workload description.
+
+(Note: this differs from R.5's recommendation of the full bar. The
+trade-off is "stop AWS from lying" vs "AWS dry-run is a planning
+tool". Minimum bar covers the former at one-third the cost; full bar
+can land later as a follow-up without re-shaping the interface.)
+
+---
+
+## 9. Phase C — config tree shape
+
+This section answers which fields are common, which are per-provider,
+what happens to flat-top-level peers like `AWSMode` / `AzureLocation`,
+and whether CLI flags get namespaced.
+
+### Bucketing rule
+
+Three buckets, applied field-by-field to the 1134-line
+`internal/config/config.go`:
+
+| Bucket | Lives at | Examples |
+|---|---|---|
+| **Universal** (cluster-shape, every provider needs them) | `cfg.*` (top-level — unchanged) | `ClusterName`, `KindClusterName`, `WorkloadKubernetesVersion`, `ControlPlaneMachineCount`, `WorkerMachineCount`, `BootstrapMode`, `InfraProvider`, `IPAMProvider`, `ControlPlaneEndpointIP/Port`, `NodeIPRanges`, `Gateway`, `IPPrefix`, `DNSServers`, `AllowedNodes`, all add-on flags (`ArgoCD*`, `Cilium*`, `Kyverno*`, `CertManager*`, …), capacity flags (`ResourceBudgetFraction`, `OvercommitTolerancePct`), budget flags (`BudgetUSDMonth`, `CostCompare`, `HardwareCost*`) |
+| **Per-provider** (only meaningful when that provider is active) | `cfg.Providers.<Name>.*` | All 83 `Proxmox*` fields → `cfg.Providers.Proxmox.*`; `AWSRegion`, `AWSMode`, `AWSControlPlaneMachineType`, `AWSNodeMachineType`, `AWSSSHKeyName`, `AWSAMIID`, `AWSFargate*`, `AWSOverheadTier`, `AWSNATGatewayCount`, `AWSALBCount`, `AWSNLBCount`, `AWSDataTransferGB`, `AWSCloudWatchLogsGB`, `AWSRoute53HostedZones` → `cfg.Providers.AWS.*`; same pattern for `Azure*`, `GCP*`, `Hetzner*`, `DigitalOcean*`, `Linode*`, `OCI*`, `IBMCloud*` |
+| **Per-cluster sizing** (today named `ControlPlaneNumSockets`/`Cores`/`MemoryMiB`, `WorkerNumSockets`/…, `*BootVolumeDevice`/`Size`) | `cfg.Providers.Proxmox.*` (only Proxmox uses these) | The `NumSockets` field is a Proxmox VM concept; AWS uses an instance-type string; Hetzner uses a server-type string. These fields belong in the Proxmox sub-config. Capacity preflight math (`cores × replicas`) keeps reading them — by then via `cfg.Providers.Proxmox.WorkerNumCores`. Other providers' equivalents (`AWSNodeMachineType`, etc.) are already per-provider. |
+
+### Mgmt fields
+
+Same rule applied to `Mgmt*`:
+
+- `MgmtClusterName`, `MgmtClusterNamespace`, `MgmtKubernetesVersion`,
+  `MgmtControlPlaneMachineCount`, `MgmtWorkerMachineCount`,
+  `MgmtControlPlaneEndpointIP/Port`, `MgmtNodeIPRanges`,
+  `MgmtCiliumHubble`, `MgmtCiliumLBIPAM` → `cfg.Mgmt.*`
+  (universal-mgmt)
+- `MgmtControlPlaneNumSockets/Cores/MemoryMiB`,
+  `MgmtControlPlaneBootVolume*`, `MgmtControlPlaneTemplateID`,
+  `MgmtWorkerTemplateID`, `MgmtProxmoxPool`, `MgmtProxmoxCSIEnabled`
+  → `cfg.Providers.Proxmox.Mgmt.*` (Proxmox-only)
+
+### CLI flag back-compat: keep flat
+
+Keep the existing flat flags as the user contract. **No
+`--provider.proxmox.token`.** The internal struct path changes from
+`cfg.ProxmoxToken` to `cfg.Providers.Proxmox.Token`; the flag→field
+wiring in `internal/cli/parse.go` updates accordingly. Reasons:
+
+1. Flat flags are documented across every README and the operator's
+   muscle memory.
+2. Namespaced flags would double the surface without removing
+   anything.
+3. Bash users who set `PROXMOX_TOKEN=…` and pipe to `--proxmox-token
+   "$PROXMOX_TOKEN"` keep working unchanged.
+
+### One additive CLI change
+
+Add `--infra-provider <name>` (today the active provider can ONLY be
+set via `INFRA_PROVIDER` env, which is surprising — `usage.txt:62`
+already references `--infrastructure-provider` as if it existed). Wire
+it straight to `cfg.InfraProvider`. Tiny — fold it into Phase C.
+
+### Env-var back-compat
+
+Already automatic — `Load()` keeps reading `PROXMOX_*`, `AWS_*`, etc.
+unchanged; only the struct field path written to changes.
+
+### Sequence of edits inside Phase C
+
+One commit each, all mechanical:
+
+```
+C.1  Introduce cfg.Providers.Proxmox struct, move all Proxmox* fields
+     (~83 fields, ~600 LOC of access-site rewrites). Run `go build`
+     after each move; field-by-field is fine.
+C.2  Move ControlPlane/Worker NumSockets/Cores/MemoryMiB/BootVolume*
+     into cfg.Providers.Proxmox.* (Proxmox-only sizing).
+C.3  Move Mgmt* — universal Mgmt → cfg.Mgmt.*; Proxmox-Mgmt →
+     cfg.Providers.Proxmox.Mgmt.*.
+C.4  Move AWS* → cfg.Providers.AWS.*.
+C.5  Repeat C.4 for Azure, GCP, Hetzner, DigitalOcean, Linode, OCI,
+     IBMCloud.
+C.6  Add --infra-provider CLI flag.
+```
+
+Each step is `gofmt`-mechanical (find-and-replace + build) and ships
+on its own. Total churn: still ~1500 LOC as in the parent doc, just
+ordered for reviewability.
+

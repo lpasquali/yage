@@ -3179,58 +3179,123 @@ refinements: app-template granularity, tier split into Environment
 × Resilience, headroom enforcement, egress as a required input,
 existing-creds detection, free-tier surfacing.
 
-### 22.1 The eight-step flow
+### 22.1 Step 0 — fork at "on-prem vs cloud"
+
+The first decision splits the rest of the flow into two
+materially-different branches. Asking budget upfront on the on-prem
+branch is meaningless — the hardware is already paid for and the
+ongoing cost is a derived TCO line (capex amortization +
+electricity + support per §16's `--hardware-*` flags), not a knob
+the user trades workload size against.
+
+**Auto-detection saves a click for most users:**
+
+| Signal | Suggested fork |
+|---|---|
+| `PROXMOX_URL` set, no cloud creds | on-prem (pre-select, allow override) |
+| `AWS_ACCESS_KEY_ID` / `AZURE_*` / `GCP_*` set, no Proxmox URL | cloud (pre-select) |
+| Both | ask explicitly |
+| `cfg.Airgapped == true` | on-prem (the cloud fork is forbidden anyway) |
+
+### 22.2 ON-PREM FORK — capacity-bound, no budget
 
 ```
-0  Setup mode        airgapped on-prem only?  → fork to Proxmox / vSphere /
-                                                  OpenStack-only path
-                     otherwise → multi-cloud flow
+0  Mode pick        on-prem (auto-detected or chosen)
 
-1  Environment       dev / staging / prod
-                     drives: Argo CD on/off, Hubble UI on/off,
-                              monitoring stack on/off, default replica counts
+1  Environment      dev / staging / prod
+                    drives: Argo CD on/off, Hubble UI on/off,
+                             monitoring stack on/off, replica counts
 
-2  Resilience        single-AZ / HA / HA-multi-region
-                     drives: cp_nodes ∈ {1, 3, 3-5},
-                              backup cadence, NAT-GW count
+2  Resilience       single-host / HA-across-hosts
+                    drives: cp_nodes ∈ {1, 3}, anti-affinity rules
+                    (no "multi-region" tier — on-prem is one site)
 
-3  Workload shape    apps × {light | medium | heavy} (count override)
-                       light  = 100m / 128 MB  (sidecars, tiny CRUD)
-                       medium = 200m / 256 MB  (typical microservice)
-                       heavy  = 500m / 1 GB    (gateway, search, ML)
-                     database GB
-                     egress GB/month  (REQUIRED — see §23 sandbag defense)
-                     queues / object-storage / cache (optional add-ons)
+3  Workload shape   apps × {light | medium | heavy} (with count override)
+                    database GB
+                    NO egress prompt (intra-cluster traffic; no vendor bill)
+                    queues / object-storage / cache (optional add-ons)
 
-4  Budget            currency-of-choice / month
-                     headroom % (default 20%)
-                     "your sizing target after headroom: $X"
+4  Provider pick    pick from on-prem-compatible set
+                    {proxmox, vsphere, openstack, capd}
+                    (only providers registered with AirgapCompatible=true
+                     per internal/provider/airgap.go)
 
-5  Cost compare      §23 feasibility-gated table per provider
-                     (compute + storage + egress + addons),
-                     ordered by total ascending,
-                     annotated with: free-tier coverage,
+5  Capacity         §23 feasibility against host inventory
+                    uses Provider.Inventory (Phase A) — "do my apps fit
+                    in this Proxmox cluster's available cores/memory/disk?"
+                    Verdict per host pool: ✓ Comfortable / ⚠ Tight / ✗ Infeasible
+
+6  Provider details region / node / template / pool / network /
+                    identity-bootstrap toggles (Phase G)
+
+7  Review + TCO     full plan: provider, host(s), cluster shape,
+                                what gets created on the host side
+                                  (Proxmox pool + Tofu identity tree;
+                                   vSphere folder + Resource Pool; …),
+                                what gets created in kind
+                                  (yage-system Secret + Argo CD).
+                    TCO line (DERIVED, not user-typed):
+                      $X/mo amortization (--hardware-cost-usd / years)
+                      + $Y/mo electricity (--hardware-watts × kWh × 720)
+                      + $Z/mo support (--hardware-support-usd-month)
+                    When --hardware-* flags are unset: "TCO not configured"
+                    (informational; not blocking).
+
+8  Save + decide    save to Secret/yage-system/bootstrap-config
+                    "deploy now?" — yes runs the orchestrator;
+                    no exits.
+```
+
+### 22.3 CLOUD FORK — budget-bound, cost-compared
+
+```
+0  Mode pick        cloud (auto-detected or chosen)
+
+1  Environment      dev / staging / prod
+
+2  Resilience       single-AZ / HA / HA-multi-region
+                    drives: cp_nodes ∈ {1, 3, 3-5},
+                             backup cadence, NAT-GW count
+
+3  Workload shape   apps × {light | medium | heavy}
+                    database GB
+                    egress GB/month  (REQUIRED — see §23 sandbag defense)
+                    queues / object-storage / cache
+
+4  Budget           currency-of-choice / month
+                    headroom % (default 20%)
+                    "your sizing target after headroom: $X"
+
+5  Cost compare     §23 feasibility-gated table per cloud provider
+                    (compute + storage + egress + addons),
+                    ordered by total ascending,
+                    annotated with: free-tier coverage,
                                      credentials-detected highlight,
                                      ✓ / ⚠ / ✗ feasibility verdict per row
 
-6  Provider pick     user chooses; provider-specific details prompted
-                     next (region, identity model for Azure / GCP,
-                     AMI/template, …)
+6  Provider pick    user chooses from feasible set;
+                    provider-specific details prompted next
+                    (region, identity model for Azure / GCP, AMI/template, …)
 
-7  Review            full plan: provider, region, cluster shape, monthly cost,
-                       what gets created on the vendor side
-                         (IAM role / SP / SA — see §21 secrets matrix),
-                       what gets created in kind
-                         (yage-system Secret + Argo CD)
-                     §23 final feasibility check
+7  Review           full plan: provider, region, cluster shape,
+                                monthly cost,
+                                what gets created on the vendor side
+                                  (IAM role / SP / SA — see §21 secrets matrix),
+                                what gets created in kind.
+                    §23 final feasibility check.
 
-8  Persist + decide  save to Secret/yage-system/bootstrap-config (always)
-                     "deploy now?" — yes runs the orchestrator;
-                     no exits with "next non-xapiri yage run will deploy."
-                     For on-prem providers, "deploy" runs the orchestrator
-                     directly (no monthly bill — capex amortization model
-                     per §16).
+8  Save + decide    save to Secret/yage-system/bootstrap-config
+                    "deploy now?" — yes runs the orchestrator;
+                    no exits with "next non-xapiri yage run will deploy."
 ```
+
+### 22.4 What stays shared between forks
+
+Steps 1, 2, 3 (in shape), 7's "what gets created in kind", and
+step 8's persistence path are identical in code (just different
+prompts at steps 2 and 3). Steps 4 and 5 differ materially per
+fork. Step 7's cost line is fork-specific: TCO-amortization on
+on-prem, monthly-bill-prediction on cloud.
 
 ### 22.2 App-template defaults
 

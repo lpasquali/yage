@@ -38,11 +38,13 @@ import (
 
 	// CSI driver registrations: importing each driver package runs
 	// its init() which calls csi.Register. Phase F (scoped) ships
-	// AWS-EBS, Azure-Disk, GCP-PD; the rest of the §20.1 matrix
+	// AWS-EBS, Azure-Disk, GCP-PD, plus Proxmox-CSI (migrated onto
+	// the §20 registry in Wave 3). The rest of the §20.1 matrix
 	// lands in follow-ups.
 	_ "github.com/lpasquali/yage/internal/csi/awsebs"
 	_ "github.com/lpasquali/yage/internal/csi/azuredisk"
 	_ "github.com/lpasquali/yage/internal/csi/gcppd"
+	_ "github.com/lpasquali/yage/internal/csi/proxmoxcsi"
 )
 
 func main() {

@@ -155,11 +155,6 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 	return nil
 }
 
-// EnsureCSISecret — CAPD has no CSI shipped with yage.
-func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
-	return provider.ErrNotApplicable
-}
-
 // EstimateMonthlyCostUSD — provider doesn't track variable usage
 // pricing in the same shape as AWS on-demand instances. Self-hosted
 // (Proxmox), private (vSphere), or pricing-too-variable (OpenStack)

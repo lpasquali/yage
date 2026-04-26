@@ -15,7 +15,6 @@ package proxmox
 import (
 	"github.com/lpasquali/yage/internal/capi/manifest"
 	"github.com/lpasquali/yage/internal/config"
-	"github.com/lpasquali/yage/internal/capi/csi"
 	"github.com/lpasquali/yage/internal/platform/opentofux"
 	"github.com/lpasquali/yage/internal/provider"
 	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
@@ -88,16 +87,6 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 	// Workload patches: ApplyRoleResourceOverrides covers the four
 	// patches the kubeadm path currently runs in sequence.
 	return capimanifest.ApplyRoleResourceOverrides(cfg)
-}
-
-// EnsureCSISecret pushes the Proxmox CSI credentials Secret to the
-// workload cluster. Caller supplies the workload kubeconfig path;
-// this provider's csix package handles the Secret apply +
-// cluster-name aliasing (mirrors under <cluster>-proxmox-csi-config
-// and the short proxmox-csi-config name).
-func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
-	csi.ApplyConfigSecretToWorkload(cfg, func() (string, error) { return workloadKubeconfigPath, nil })
-	return nil
 }
 
 // EstimateMonthlyCostUSD — Proxmox is self-hosted, so there's no

@@ -229,10 +229,3 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 	return nil
 }
 
-// EnsureCSISecret is unimplemented for Azure: azuredisk-csi-driver
-// ships via Helm + a Workload Identity (or Service Principal)
-// binding rather than a credentials Secret in the yage
-// shape.
-func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
-	return provider.ErrNotApplicable
-}

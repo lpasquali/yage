@@ -32,9 +32,11 @@
 //   - EnsureGroup: Hetzner has Projects (billing buckets) but those
 //     pre-exist when the user creates the API token. No CAPI-side
 //     group concept beyond that.
-//   - EnsureCSISecret: hcloud-cloud-controller-manager and
-//     hcloud-csi-driver ship via Helm with the same HCLOUD_TOKEN as
-//     the CAPI provider; no separate Secret apply path here.
+//   - CSI: hcloud-cloud-controller-manager and hcloud-csi-driver
+//     ship via Helm with the same HCLOUD_TOKEN as the CAPI provider;
+//     when the hcloud-csi driver lands under internal/csi/ it'll
+//     register itself there. No separate Secret apply on the
+//     provider seam (which no longer carries a CSI hook anyway).
 //
 // Pricing currency note: Hetzner publishes prices in EUR (their
 // home market). The cost.go price table converts to USD at a fixed
@@ -234,10 +236,3 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 	return nil
 }
 
-// EnsureCSISecret is unimplemented for Hetzner: hcloud-csi-driver +
-// hcloud-cloud-controller-manager ship via Helm with the same
-// HCLOUD_TOKEN secret CAPHV uses. No yage-managed Secret
-// apply path.
-func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
-	return provider.ErrNotApplicable
-}

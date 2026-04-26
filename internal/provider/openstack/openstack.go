@@ -29,9 +29,9 @@
 // bootstrap-creatable ones, so EnsureGroup also returns
 // ErrNotApplicable; the orchestrator skips silently.
 //
-// CSI: cinder-csi-plugin is the canonical OpenStack CSI; we don't
-// ship a Secret apply for it yet, so EnsureCSISecret is
-// ErrNotApplicable. Future work parallels internal/csi.
+// CSI: cinder-csi-plugin is the canonical OpenStack CSI; lands as
+// a Driver under internal/csi/openstackcinder/ in a follow-up. The
+// provider seam no longer carries a CSI hook (Wave 3 removed it).
 package openstack
 
 import (
@@ -239,13 +239,6 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 // rewrite the spec.template.spec.flavor field here.
 func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {
 	return nil
-}
-
-// EnsureCSISecret — cinder-csi-plugin is the OpenStack CSI; we
-// don't currently ship a Secret apply for it. Future work mirrors
-// internal/csix (clouds.yaml → cloud-config Secret on the workload).
-func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
-	return provider.ErrNotApplicable
 }
 
 // EstimateMonthlyCostUSD — provider doesn't track variable usage

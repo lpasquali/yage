@@ -8,10 +8,10 @@ import (
 // has when yage only wires it for cost estimation +
 // clusterctl init. Concrete cloud packages embed MinStub, override
 // Name() / InfraProviderName() / EstimateMonthlyCostUSD(), and get
-// the rest (EnsureIdentity / EnsureGroup / EnsureCSISecret return
-// ErrNotApplicable; Inventory returns ErrNotApplicable;
-// PatchManifest no-op; K3sTemplate ErrNotApplicable until the
-// per-cloud K3s flavor is wired).
+// the rest (EnsureIdentity / EnsureGroup return ErrNotApplicable;
+// Inventory returns ErrNotApplicable; PatchManifest no-op;
+// K3sTemplate ErrNotApplicable until the per-cloud K3s flavor is
+// wired). CSI lives on its own registry now — see internal/csi.
 //
 // New clouds can be added in <100 LOC — Name + InfraProviderName +
 // ClusterctlInitArgs + EstimateMonthlyCostUSD live in the cloud's
@@ -28,9 +28,6 @@ func (MinStub) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 }
 func (MinStub) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {
 	return nil
-}
-func (MinStub) EnsureCSISecret(cfg *config.Config, kubeconfigPath string) error {
-	return ErrNotApplicable
 }
 
 // PlanDescriber defaults: no-op. Providers that want plan output

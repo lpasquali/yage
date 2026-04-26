@@ -120,11 +120,11 @@ type Provider interface {
 	// doesn't emit by default).
 	PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error
 
-	// EnsureCSISecret pushes the CSI credentials Secret to the
-	// workload kubeconfig when the provider has a CSI integration
-	// we ship. Return ErrNotApplicable when the provider's CSI is
-	// install-as-helm-only (or doesn't exist).
-	EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error
+	// (EnsureCSISecret was removed in Wave 3. CSI now flows through
+	// internal/csi as a registered Driver — see internal/csi/driver.go
+	// and the per-driver packages under internal/csi/<name>/. Drivers
+	// that need a Secret implement Driver.EnsureSecret; those that
+	// authenticate via cloud-native identity return ErrNotApplicable.)
 
 	// EstimateMonthlyCostUSD returns a monthly billing estimate in
 	// USD for the planned cluster. Implementations fetch every price

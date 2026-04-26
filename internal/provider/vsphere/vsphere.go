@@ -259,14 +259,6 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 	return nil
 }
 
-// EnsureCSISecret is unimplemented. CAPV's CSI story is
-// vsphere-cpi + vsphere-csi-driver, both shipped as Helm charts; the
-// install path will live alongside CAAPH in a future iteration. Until
-// then yage leaves CSI to the operator.
-func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
-	return provider.ErrNotApplicable
-}
-
 // EstimateMonthlyCostUSD — vSphere is self-hosted; vendor licensing
 // is enterprise-quote-only, so there's no public pricing API. The
 // operator opts into a TCO estimate by passing --hardware-cost-usd

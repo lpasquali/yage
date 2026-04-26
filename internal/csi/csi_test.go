@@ -124,17 +124,19 @@ func TestRegisteredContainsScopedDrivers(t *testing.T) {
 }
 
 // TestDefaultsForOnlyImplementedProviders: DefaultsFor returns
-// non-nil only for providers this commit ships drivers for.
+// non-nil only for providers we ship drivers for. Phase F scoped
+// shipped AWS/Azure/GCP; Wave 3 added Proxmox (migrated off
+// Provider.EnsureCSISecret onto the registry).
 func TestDefaultsForOnlyImplementedProviders(t *testing.T) {
-	for _, p := range []string{"aws", "azure", "gcp"} {
+	for _, p := range []string{"aws", "azure", "gcp", "proxmox"} {
 		if got := csi.DefaultsFor(p); len(got) == 0 {
 			t.Errorf("DefaultsFor(%q) = empty, expected at least one driver", p)
 		}
 	}
-	// Unimplemented-this-commit providers get nil.
-	for _, p := range []string{"hetzner", "linode", "oci", "digitalocean", "ibmcloud", "openstack", "vsphere", "proxmox"} {
+	// Unimplemented-yet providers get nil.
+	for _, p := range []string{"hetzner", "linode", "oci", "digitalocean", "ibmcloud", "openstack", "vsphere"} {
 		if got := csi.DefaultsFor(p); got != nil {
-			t.Errorf("DefaultsFor(%q) = %v, expected nil (driver not yet shipped in Phase F scoped)", p, got)
+			t.Errorf("DefaultsFor(%q) = %v, expected nil (driver not yet shipped)", p, got)
 		}
 	}
 }

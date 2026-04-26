@@ -217,9 +217,3 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 	return nil
 }
 
-// EnsureCSISecret is unimplemented for GCP: the gcp-pd-csi-driver
-// authenticates via Workload Identity (or a Workload-Identity-bound
-// service account on the node), not a credentials Secret.
-func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
-	return provider.ErrNotApplicable
-}

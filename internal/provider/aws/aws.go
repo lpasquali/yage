@@ -212,8 +212,3 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 	return nil
 }
 
-// EnsureCSISecret is unimplemented for AWS: aws-ebs-csi-driver ships
-// via Helm + an IRSA-bound IAM role rather than a credentials Secret.
-func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
-	return provider.ErrNotApplicable
-}

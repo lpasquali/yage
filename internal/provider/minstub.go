@@ -32,3 +32,12 @@ func (MinStub) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool)
 func (MinStub) EnsureCSISecret(cfg *config.Config, kubeconfigPath string) error {
 	return ErrNotApplicable
 }
+
+// PlanDescriber defaults: no-op. Providers that want plan output
+// override these to call w.Section / w.Bullet / w.Skip. Cost-only
+// providers leave them as no-ops and the dry-run plan simply omits
+// their sections (acceptable per §8 — section absence == not
+// applicable to this provider).
+func (MinStub) DescribeIdentity(w PlanWriter, cfg *config.Config) {}
+func (MinStub) DescribeWorkload(w PlanWriter, cfg *config.Config) {}
+func (MinStub) DescribePivot(w PlanWriter, cfg *config.Config)    {}

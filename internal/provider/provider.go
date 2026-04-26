@@ -136,6 +136,47 @@ type Provider interface {
 	// when a live API is unreachable so callers can surface "estimate
 	// unavailable" instead of fabricating a number.
 	EstimateMonthlyCostUSD(cfg *config.Config) (CostEstimate, error)
+
+	// PlanDescriber emits the provider-specific dry-run plan
+	// sections via plan.Writer (Phase B / §8). Three hooks because
+	// the orchestrator inserts other phases between them; one big
+	// DescribePlan would force every provider to know the
+	// orchestrator's section ordering.
+	PlanDescriber
+}
+
+// PlanDescriber is composed into Provider so callers can depend on
+// just the plan-output capability when that's all they need (e.g.
+// the dry-run plan code path). Per §8 / §10:
+//
+//   - DescribeIdentity prints the provider's identity-bootstrap
+//     section ("Identity bootstrap — <provider>"). Skip when not
+//     applicable to this provider.
+//   - DescribeWorkload prints the workload-cluster section
+//     (cluster shape, sizing, networking, CSI). Always implemented
+//     by every provider — this is the headline section.
+//   - DescribePivot prints the pivot section. For providers without
+//     a pivot story today, call w.Skip("...") with a reason.
+//
+// All three return nothing: rendering errors are not actionable
+// from inside a Describe* hook.
+type PlanDescriber interface {
+	DescribeIdentity(w PlanWriter, cfg *config.Config)
+	DescribeWorkload(w PlanWriter, cfg *config.Config)
+	DescribePivot(w PlanWriter, cfg *config.Config)
+}
+
+// PlanWriter is provider's view of the plan-output seam. It's the
+// same interface as plan.Writer in internal/ui/plan; we declare it
+// here to avoid a provider→ui import (the ui package imports config
+// through main; provider sits below ui in the dependency graph).
+//
+// internal/ui/plan.Writer satisfies PlanWriter automatically by
+// having the same methods.
+type PlanWriter interface {
+	Section(title string)
+	Bullet(format string, args ...any)
+	Skip(format string, args ...any)
 }
 
 // CostEstimate is the breakdown returned by EstimateMonthlyCostUSD.

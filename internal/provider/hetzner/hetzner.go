@@ -53,7 +53,7 @@ func init() {
 }
 
 // Provider implements provider.Provider for CAPHV.
-type Provider struct{}
+type Provider struct{ provider.MinStub }
 
 func (p *Provider) Name() string              { return "hetzner" }
 func (p *Provider) InfraProviderName() string { return "hetzner" }

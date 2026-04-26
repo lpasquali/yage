@@ -26,7 +26,7 @@ func init() {
 }
 
 // Provider implements provider.Provider for CAPMOX.
-type Provider struct{}
+type Provider struct{ provider.MinStub }
 
 func (p *Provider) Name() string              { return "proxmox" }
 func (p *Provider) InfraProviderName() string { return "proxmox" }

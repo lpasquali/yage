@@ -45,7 +45,7 @@ func init() {
 }
 
 // Provider implements provider.Provider for CAPA.
-type Provider struct{}
+type Provider struct{ provider.MinStub }
 
 func (p *Provider) Name() string              { return "aws" }
 func (p *Provider) InfraProviderName() string { return "aws" }

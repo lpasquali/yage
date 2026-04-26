@@ -29,7 +29,7 @@ func init() {
 }
 
 // Provider implements provider.Provider for CAPD.
-type Provider struct{}
+type Provider struct{ provider.MinStub }
 
 func (p *Provider) Name() string              { return "docker" }
 func (p *Provider) InfraProviderName() string { return "docker" }

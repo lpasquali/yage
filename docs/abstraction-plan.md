@@ -3166,3 +3166,363 @@ except Proxmox; Phase G makes 7 of 12 providers actually mint
 their identity through yage instead of expecting the operator to
 do it manually.
 
+---
+
+## 22. xapiri TUI flow — budget-first, product-shape-first
+
+User proposed a flow: tell budget → state product (DB + apps) →
+pick from per-provider cost-compare → confirm → save to kind →
+preview cost before deploy. Strong frame because most cluster-
+bootstrap tools start from machine types; xapiri starts from
+constraints. This section locks the eight-step flow plus
+refinements: app-template granularity, tier split into Environment
+× Resilience, headroom enforcement, egress as a required input,
+existing-creds detection, free-tier surfacing.
+
+### 22.1 The eight-step flow
+
+```
+0  Setup mode        airgapped on-prem only?  → fork to Proxmox / vSphere /
+                                                  OpenStack-only path
+                     otherwise → multi-cloud flow
+
+1  Environment       dev / staging / prod
+                     drives: Argo CD on/off, Hubble UI on/off,
+                              monitoring stack on/off, default replica counts
+
+2  Resilience        single-AZ / HA / HA-multi-region
+                     drives: cp_nodes ∈ {1, 3, 3-5},
+                              backup cadence, NAT-GW count
+
+3  Workload shape    apps × {light | medium | heavy} (count override)
+                       light  = 100m / 128 MB  (sidecars, tiny CRUD)
+                       medium = 200m / 256 MB  (typical microservice)
+                       heavy  = 500m / 1 GB    (gateway, search, ML)
+                     database GB
+                     egress GB/month  (REQUIRED — see §23 sandbag defense)
+                     queues / object-storage / cache (optional add-ons)
+
+4  Budget            currency-of-choice / month
+                     headroom % (default 20%)
+                     "your sizing target after headroom: $X"
+
+5  Cost compare      §23 feasibility-gated table per provider
+                     (compute + storage + egress + addons),
+                     ordered by total ascending,
+                     annotated with: free-tier coverage,
+                                     credentials-detected highlight,
+                                     ✓ / ⚠ / ✗ feasibility verdict per row
+
+6  Provider pick     user chooses; provider-specific details prompted
+                     next (region, identity model for Azure / GCP,
+                     AMI/template, …)
+
+7  Review            full plan: provider, region, cluster shape, monthly cost,
+                       what gets created on the vendor side
+                         (IAM role / SP / SA — see §21 secrets matrix),
+                       what gets created in kind
+                         (yage-system Secret + Argo CD)
+                     §23 final feasibility check
+
+8  Persist + decide  save to Secret/yage-system/bootstrap-config (always)
+                     "deploy now?" — yes runs the orchestrator;
+                     no exits with "next non-xapiri yage run will deploy."
+                     For on-prem providers, "deploy" runs the orchestrator
+                     directly (no monthly bill — capex amortization model
+                     per §16).
+```
+
+### 22.2 App-template defaults
+
+Three named templates the user can pick from a list, plus an
+"override" path that sets cores/mem manually:
+
+| Template | CPU request | Memory request | Typical use |
+|---|---|---|---|
+| `light` | 100m | 128 MB | controllers, sidecars, small CRUD services |
+| `medium` (default) | 200m | 256 MB | typical microservice, REST API |
+| `heavy` | 500m | 1 GB | gateway, search, ML inference, video processing |
+
+User input shape: `count × template`. e.g., `6 medium + 2 heavy`
+means `8 apps total, 2200m / 3.5 GB workload-side`.
+
+### 22.3 Why split tier into Environment × Resilience
+
+Current dev/prod/enterprise vocabulary smashes two orthogonal axes
+together. Pulling them apart makes cost-compare honest:
+
+| | Environment dev | Environment staging | Environment prod |
+|---|---|---|---|
+| **Resilience single-AZ** | minimal cluster, no Argo, no monitoring | ditto + Argo | ditto + monitoring + backups |
+| **Resilience HA** | 3-CP single-AZ | + Argo HA | + monitoring + backups + HA |
+| **Resilience HA-multi-region** | rare for dev | rare | full prod with multi-region replicas |
+
+Drives `cp_nodes`, addon list, replica counts, backup cadence, NAT
+GW count. The product of (env × resilience) maps to a concrete
+cluster shape; before this split, "enterprise" meant whatever the
+operator thought it meant.
+
+### 22.4 Existing-creds detection
+
+When xapiri reaches step 5 (cost compare), it inspects env for
+detected credentials and annotates each provider:
+
+```
+✓ 1) hetzner    €34/mo   feasibility: comfortable   creds: HCLOUD_TOKEN ✓
+✓ 2) digitalocean €38/mo  feasibility: comfortable   creds: not detected
+⚠ 3) aws        €52/mo   feasibility: tight (90%)   creds: AWS_PROFILE=default ✓
+✗ 4) gcp        $189/mo  feasibility: infeasible    creds: not detected
+- 5) proxmox    on-prem  (capex only — see hardware-cost flags)
+```
+
+Highlighting "creds detected" reduces the "now go set up an
+account" friction for users who already have AWS/Azure/GCP
+credentials.
+
+### 22.5 Free-tier surfacing
+
+Cost-compare annotates rows where the result fits in the vendor's
+free tier:
+
+```
+✓ 1) oci        $0/mo    feasibility: comfortable   (Always Free — falls off at +1 worker / +20 GB DB)
+```
+
+Falls-off triggers shown so the user understands the cliff. See
+§23 for the cliff-detection logic.
+
+### 22.6 Implementation seam
+
+xapiri's `Run(w io.Writer, cfg *config.Config) int` (today's
+function, commit `8e44424`) is replaced by an eight-step
+state machine. Each step calls into existing yage internals:
+
+| Step | Calls into |
+|---|---|
+| 0 (setup mode) | reads `cfg.Airgapped` |
+| 1, 2 (tier) | sets cfg fields on `cfg.Mgmt`, `cfg.WorkloadArgoCDEnabled`, etc. |
+| 3 (workload shape) | sets cfg sizing fields; aggregates into a `workloadShape` struct |
+| 4 (budget) | sets `cfg.BudgetUSDMonth` (today already exists) |
+| 5 (cost compare) | calls `cost.CompareClouds(cfg)` (existing) + the new `feasibility.Check(cfg)` (§23) |
+| 6 (provider pick) | sets `cfg.InfraProvider`; reflection over `cfg.Providers.<active>` to prompt for provider-specific fields |
+| 7 (review) | renders cfg via the same `plan.Writer` machinery as `--dry-run` |
+| 8 (persist + decide) | calls `kindsync.WriteBootstrapConfigSecret(cfg)` (existing, commit `0655951`) + optionally `orchestrator.Run(cfg)` |
+
+Total new code: ~600 LOC across `internal/ui/xapiri/` (the
+state-machine logic + per-step prompts + the cost-compare-aware
+display).
+
+---
+
+## 23. Feasibility gate — preventing "scrooge" bugs
+
+User flagged: yage shouldn't let a user provision a cluster for
+$12/month that physically can't run their stated workload. Three
+shapes of the bug, plus a feasibility gate that catches all of
+them.
+
+### 23.1 Scrooge bug taxonomy
+
+1. **Compute starvation** — user states "8 medium apps + Postgres,
+   $12/mo." Some provider WILL sell a 1-GB single-node cluster for
+   $12. Deploys, can't schedule pods, fails opaquely.
+2. **Resilience violation** — user picks "prod" tier (HA: ≥3 CP
+   nodes) but budget covers only 1. Tier promise silently broken.
+3. **Egress sandbag** — workload fits in $30/mo compute on AWS;
+   user picks "I'll set egress later"; misconfigured loop hits
+   $200 in egress on a $30/mo budget. Bill-shock before the
+   cluster works.
+4. **Free-tier cliff** — workload fits in OCI Always Free today
+   with 1.2 GB DB; user adds an app, breaks 2 GB threshold, falls
+   off the cliff to $40/mo. No warning.
+5. **IOPS / throughput floor** — user picks the cheapest storage
+   class (AWS `sc1` cold HDD) for a Postgres workload. Cluster
+   boots; DB latency unusable.
+
+### 23.2 The feasibility check
+
+Lives in new package `internal/feasibility/`. Single entry point
+called from xapiri step 4 → 5 transition AND from `--dry-run`
+output as a sanity-check section.
+
+```go
+func Check(cfg *config.Config) (Verdict, error)
+
+type Verdict struct {
+    // PerProvider[providerName] = ✓ / ⚠ / ✗ + reason.
+    PerProvider     map[string]ProviderVerdict
+    // Recommended is the cheapest-comfortable provider, or ""
+    // when none.
+    Recommended     string
+    // AbsoluteFloor is the min cost across all providers given the
+    // workload shape. When budget < AbsoluteFloor, no provider can
+    // host this workload.
+    AbsoluteFloor   float64
+    // BlockingReasons lists resilience / IOPS / etc. violations
+    // that apply across providers (e.g. "HA tier requires 3 CP
+    // nodes but instance budget allows 1").
+    BlockingReasons []string
+}
+
+type ProviderVerdict struct {
+    Verdict         FeasibilityVerdict  // Comfortable / Tight / Infeasible
+    MinCost         float64             // floor cost for THIS provider
+    Reason          string              // human-readable explanation
+    FreeTierFit     bool                // workload fits the free tier
+    FreeTierCliff   string              // "+1 worker / +20 GB DB" (when applicable)
+}
+
+type FeasibilityVerdict int
+const (
+    Comfortable FeasibilityVerdict = iota  // min ≤ 60% of budget
+    Tight                                   // min ≤ 90% of budget
+    Infeasible                              // min > 90% (warn) or > 100% (block)
+)
+```
+
+### 23.3 Computing the minimum viable cluster
+
+```
+INPUTS:
+  workload_apps   = [{count, template}]  e.g. [{6, medium}, {2, heavy}]
+  workload_db_GB
+  workload_egress_GB
+  resilience      ∈ {single, HA, HA-mr}
+  budget
+  headroom_pct    (default 0.20)
+
+WORKLOAD COMPUTE:
+  app_cores  = Σ count × template.cores
+  app_mem    = Σ count × template.memMiB
+  db_cores   = max(2, db_GB / 50)              # heuristic
+  db_mem     = max(2048, db_GB × 100)
+
+SYSTEM RESERVE:
+  system_cores  = 2000m   (cilium + argo + coredns + cert-mgr + …)
+  system_mem    = 4096 MiB
+
+K8S OVERHEAD:
+  raw_cores     = app_cores + db_cores + system_cores
+  raw_mem       = app_mem  + db_mem  + system_mem
+  required_cores = raw_cores × 1.33    # scheduling fragmentation
+  required_mem   = raw_mem  × 1.33
+
+CONTROL PLANE:
+  cp_nodes     = {single:1, HA:3, HA-mr:3}
+  cp_overhead  = cp_nodes × (2000m / 4096 MiB)
+
+TOTAL MIN:
+  min_cores    = required_cores + cp_overhead.cores
+  min_mem      = required_mem  + cp_overhead.mem
+
+PER PROVIDER:
+  pick cheapest viable instance type whose
+       (cores, mem) ≥ min-per-node
+       (where min-per-node respects k8s minimum 2-core node)
+  worker_count = ceil( required_cores / instance.cores )
+                 ∧ ceil( required_mem / instance.mem )
+
+  min_cost = (cp_nodes + worker_count) × instance.price_per_month
+           + db_GB × storage_$/GB
+           + workload_egress_GB × egress_tier_$/GB
+           + addons_per_resilience_tier (NAT GW, ALB, …)
+```
+
+Pricing data comes from existing `internal/pricing/*` (live FinOps
+APIs). Instance-type catalog comes from each provider's existing
+cost.go (today the cost-compare iterates known instance types per
+tier). Storage class IOPS/throughput hints come from a new map in
+`internal/csi/<driver>/<driver>.go` (Phase F drivers extended).
+
+### 23.4 Verdicts
+
+```
+budget_after_headroom = budget × (1 - headroom_pct)
+
+per provider:
+    min_cost ≤ budget_after_headroom × 0.60   →  Comfortable
+    min_cost ≤ budget_after_headroom × 0.90   →  Tight       (warn)
+    min_cost ≤ budget_after_headroom × 1.10   →  Infeasible  (block)
+    min_cost >  budget_after_headroom × 1.10   →  Infeasible  (loud block)
+
+across providers:
+    min(min_cost) > budget                    →  AbsoluteFloor exceeded
+                                                  (loop back to step 3 or 4)
+```
+
+### 23.5 Resilience-aware minimums
+
+Orthogonal block of checks added to `Check`:
+
+- HA tier: reject if `cp_nodes < 3` for the chosen instance type
+- HA-multi-region: reject if provider doesn't support multi-region
+  (Hetzner today)
+- prod env: require backup-capable storage class; reject `cold HDD`
+  for DB
+- prod env: require `cilium.kubeProxyReplacement=true` (already on
+  by default; surfaced as a verdict bullet so user sees what they
+  get)
+
+### 23.6 Egress sandbag defense
+
+- Step 3's `egress GB/month` becomes REQUIRED (no skip).
+- Default suggestion = `db_GB × 2` (the lazy default that catches
+  most "I serve my DB to users" patterns).
+- The cost-compare table shows egress as its own column, not lumped
+  into "total."
+- If `egress_cost > 0.30 × total_cost` on the picked provider,
+  xapiri shows: *"⚠ network egress dominates this estimate (X% of
+  bill). On <provider> the rate is $Y/GB above tier. Consider a
+  CDN or caching layer."*
+
+### 23.7 Free-tier cliff defense
+
+- Cost-compare annotates rows where the result fits the free tier
+  with the cliff trigger: `(Always Free — falls off at +1 worker
+  or +20 GB DB)`.
+- Step 7 (review) repeats the warning if applicable.
+- Per-provider `freeTier(cfg)` hint table (Linode/DO/Hetzner/OCI
+  have meaningful free quotas; AWS/Azure/GCP have one-time credits
+  that don't count for "ongoing free").
+
+### 23.8 IOPS floor defense
+
+Each CSI driver in the §20 Phase F registry gains a `IOPSHint()`:
+
+```go
+// In Driver interface (extended):
+type Driver interface {
+    // … existing methods …
+    // IOPSHint returns the (min, expected) IOPS this driver's
+    // default StorageClass delivers. Feasibility gate compares
+    // against the workload's estimated IOPS. (db_GB * 100) is a
+    // rough Postgres rule of thumb — feasibility uses this when
+    // workload is "DB-shaped."
+    IOPSHint() (minIOPS, expectedIOPS int)
+}
+```
+
+`aws-ebs-sc1` returns `(0, 80)`; `aws-ebs-gp3` returns `(3000,
+3000+)`; etc. Feasibility rejects when expected < `(db_GB × 100)`
+for workloads marked as DB-bearing.
+
+### 23.9 Integration into existing yage code paths
+
+| Code path | Behavior change |
+|---|---|
+| `bin/yage --xapiri` | step 4→5 transition calls `feasibility.Check`; step 7 final-check before `WriteBootstrapConfigSecret` |
+| `bin/yage --dry-run` | new bottom-of-plan section "Feasibility verdict" rendering the per-provider table |
+| `bin/yage` (real run) | preflight `feasibility.Check`; abort with `--allow-resource-overcommit`-style flag (`--ignore-feasibility`) escape hatch for power users |
+| `bin/yage --cost-compare` | rows annotated with feasibility verdicts |
+
+### 23.10 Definition of Done
+
+- `internal/feasibility/` package with `Check(cfg) (Verdict, error)`
+- xapiri integrates the gate at steps 4→5 and 7
+- `--dry-run` renders the verdict
+- Real-run preflight blocks unless `--ignore-feasibility`
+- Five tests covering each scrooge bug shape: compute starvation,
+  resilience violation, egress sandbag, free-tier cliff, IOPS floor
+- The "AbsoluteFloor exceeded" loop-back path actually loops back
+  in the xapiri state machine (don't drop the user back at step 0)
+

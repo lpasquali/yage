@@ -1108,3 +1108,331 @@ Each step is `gofmt`-mechanical (find-and-replace + build) and ships
 on its own. Total churn: still ~1500 LOC as in the parent doc, just
 ordered for reviewability.
 
+---
+
+## 10. The final Provider interface (consolidated)
+
+§2 lists today's interface; §8 adds three Describe* hooks; §3 and
+R.6 sketch the rest. This section pulls everything together so the
+end-state can be reviewed as a single artifact.
+
+### Composed shape
+
+```go
+package provider
+
+// Provider is the seam between the orchestrator and a target cloud.
+// All methods take *config.Config; any may return ErrNotApplicable
+// to mean "this operation is meaningless for this provider — skip
+// it." Errors other than ErrNotApplicable abort the run.
+//
+// Implementations live in internal/provider/<name>/. Cost-only
+// providers embed MinStub for safe defaults on every method except
+// Identifier and CostEstimator.
+type Provider interface {
+    Identifier         // Name, InfraProviderName
+    PlanDescriber      // DescribeIdentity, DescribeWorkload, DescribePivot   (Phase B)
+    CapacityProvider   // Capacity, ExistingUsage                             (Phase A)
+    IdentityProvider   // EnsureIdentity, EnsureScope, EnsureCSISecret
+    ClusterAPIPlumbing // ClusterctlInitArgs, TemplateVars, K3sTemplate, PatchManifest
+    KindSyncer         // KindSyncFields                                      (Phase D)
+    Pivoter            // PivotTarget                                         (Phase E)
+    Purger             // Purge                                               (Phase D)
+    CostEstimator      // EstimateMonthlyCostUSD
+}
+```
+
+Sub-interfaces:
+
+```go
+type Identifier interface {
+    Name() string                  // "proxmox", "aws", "hetzner"
+    InfraProviderName() string     // CAPI infra-provider id passed to clusterctl init
+}
+
+type PlanDescriber interface {
+    DescribeIdentity(w PlanWriter, cfg *config.Config)
+    DescribeWorkload(w PlanWriter, cfg *config.Config)
+    DescribePivot(w PlanWriter, cfg *config.Config)
+}
+
+type CapacityProvider interface {
+    Capacity(cfg *config.Config) (*HostCapacity, error)
+    ExistingUsage(cfg *config.Config) (*ExistingUsage, error)
+}
+
+type IdentityProvider interface {
+    EnsureIdentity(cfg *config.Config) error
+    EnsureScope(cfg *config.Config) error                            // pool / IAM group / folder / project
+    EnsureCSISecret(cfg *config.Config, kubeconfigPath string) error
+}
+
+type ClusterAPIPlumbing interface {
+    ClusterctlInitArgs(cfg *config.Config) []string
+    TemplateVars(cfg *config.Config) map[string]string              // env-style substitution
+    K3sTemplate(cfg *config.Config, mgmt bool) (string, error)
+    PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error
+}
+
+type KindSyncer interface {
+    KindSyncFields(cfg *config.Config) map[string]string            // see §11
+}
+
+type Pivoter interface {
+    PivotTarget(cfg *config.Config) (PivotTarget, error)            // see §12
+}
+
+type Purger interface {
+    Purge(cfg *config.Config) error                                 // see §11
+}
+
+type CostEstimator interface {
+    EstimateMonthlyCostUSD(cfg *config.Config) (CostEstimate, error)
+}
+```
+
+**Sixteen methods, eight sub-interfaces.** Sub-interfaces let
+narrow consumers depend only on what they use: `cost-compare` only
+needs `CostEstimator`; the dry-run plan only needs `PlanDescriber +
+CapacityProvider + CostEstimator`.
+
+### Two renames vs today
+
+| Today | After consolidation | Why |
+|---|---|---|
+| `EnsureGroup(cfg, name string)` | `EnsureScope(cfg)` | "Group" collides with k8s/RBAC Groups; most clouds don't call this concept a group. The `name` param was always `cfg.ClusterSetID` — read from cfg, drop the parameter. |
+| (no method) | `TemplateVars(cfg) map[string]string` | New in Phase D — flat env-substitution map for clusterctl-template-time injection. Sits alongside `PatchManifest`, which handles structural YAML edits. |
+
+### Error convention: a single sentinel
+
+```go
+var ErrNotApplicable = errors.New("provider: operation not applicable")
+```
+
+Every method may return it. The orchestrator advances silently:
+
+```go
+if errors.Is(err, provider.ErrNotApplicable) { return nil }
+```
+
+Anti-pattern (do not do this): returning `nil` + empty result to
+mean "skipped." The caller can't distinguish "successfully returned
+nothing" from "this operation doesn't apply here."
+
+### Idempotency contract
+
+| Mutating | Read-only | Output |
+|---|---|---|
+| `EnsureIdentity`, `EnsureScope`, `EnsureCSISecret`, `PatchManifest`, `Purge` | `Capacity`, `ExistingUsage`, `EstimateMonthlyCostUSD`, `K3sTemplate`, `TemplateVars`, `ClusterctlInitArgs`, `KindSyncFields`, `PivotTarget` | `DescribeIdentity`, `DescribeWorkload`, `DescribePivot` |
+| **MUST** be safe to re-run. Re-running is the orchestrator's primary recovery mechanism on partial failure. | Re-running is by definition safe; provider may cache. | Caller controls re-write semantics; provider just emits. |
+
+### MinStub coverage after consolidation
+
+`MinStub` ships safe defaults for **14 of 16 methods**. The two not
+covered: `Name()` and `InfraProviderName()` — every provider
+identifies itself, no sane default. Cost-only providers
+(DigitalOcean, Linode, OCI, IBM Cloud) override only `Name`,
+`InfraProviderName`, and `EstimateMonthlyCostUSD`. Healthy ratio.
+
+### Open design tensions
+
+1. **TemplateVars vs PatchManifest overlap.** Both inject
+   provider-specific values. TemplateVars is a flat
+   `map[string]string` substituted at clusterctl-template time;
+   PatchManifest mutates the rendered YAML post-template (delete
+   fields, add CRDs, rewrite `kind:` lines). They live at
+   different layers — keep both, document the boundary.
+   *Recommendation: keep both; PatchManifest is for structural
+   edits TemplateVars can't express.*
+
+2. **No `context.Context`.** Every method ignores cancellation.
+   This is a wart but not a blocker — current cloud SDK calls all
+   pass `context.Background()`. Adding `ctx context.Context` is a
+   separate mechanical refactor (one PR, threaded through every
+   site). *Recommendation: defer to its own phase F after the
+   abstraction lands.*
+
+3. **`Capacity` + `ExistingUsage` could be one method.** They
+   query the same cloud control plane. Splitting is convenient at
+   call sites (preflight vs allocation summary) but adds one
+   round-trip per dry-run. *Recommendation: keep split — the
+   orchestrator does need them separately, and each provider can
+   internally share a cached client between the two calls.*
+
+4. **No lifecycle hooks.** No `Init(cfg) error`, no `io.Closer`.
+   The current code has providers that lazily create clients on
+   first use; that pattern is fine. *Recommendation: don't add
+   lifecycle hooks until a provider concretely needs them.*
+
+---
+
+## 11. Phase D — kindsync + Purge interface
+
+### `KindSyncFields(cfg) map[string]string`
+
+Returns the provider-specific fields the orchestrator persists in
+the kind-side handoff Secret. The orchestrator wraps these under a
+`provider:` discriminator and merges with the universal-mgmt
+fields it owns:
+
+```yaml
+# Secret/bootstrap-config-system/bootstrap-config (after Phase D)
+data:
+  # Universal fields (orchestrator-owned)
+  provider:           "proxmox"
+  cluster_name:       "legion-1"
+  cluster_id:         "capi-aws-prod"
+  kubernetes_version: "1.32.0"
+
+  # Provider-specific fields (KindSyncFields return value, prefixed)
+  proxmox.url:                 "https://pve:8006/api2/json"
+  proxmox.admin_username:      "root@pam"
+  proxmox.identity_suffix:     "capi-"
+  ...
+```
+
+### Why `map[string]string` and not a typed struct?
+
+Kubernetes Secret data is `map[string][]byte` on the wire. A flat
+string map mirrors the destination schema 1:1 — no JSON-inside-a-
+Secret-value indirection, debug-friendly with `kubectl get secret
+-o yaml`. A typed struct would add a marshalling step that buys
+nothing.
+
+### Conventions
+
+| Aspect | Rule |
+|---|---|
+| Key naming | lowercase snake_case; `<provider>.<field>` namespacing handled by orchestrator (provider returns bare keys) |
+| Sensitive fields | returned same as non-sensitive — at-rest encryption is k8s's job |
+| Empty values | omit from map; do not return `""` |
+| Booleans | stringify as `"true"` / `"false"` |
+| Schema versioning | reserved key `_schema_version` (orchestrator-owned, providers must not return it) |
+
+### `Purge(cfg) error`
+
+Reverses `EnsureIdentity` + `EnsureScope` + any other
+provider-managed state outside the workload cluster.
+
+| Provider | What Purge does |
+|---|---|
+| Proxmox | Delete BPG Terraform tree, the CAPI user/token, the CSI user/token, the pool |
+| AWS | Delete the IAM role + inline policies created by `EnsureIdentity` (the operator-created CloudFormation stack stays — out of scope) |
+| Cost-only providers | `ErrNotApplicable` |
+
+**Idempotent.** Calling twice is safe. Required pattern:
+
+```go
+func (p *Provider) Purge(cfg *config.Config) error {
+    for _, target := range p.purgeTargets(cfg) {
+        if err := target.Delete(); err != nil && !target.NotFound(err) {
+            return fmt.Errorf("purge %s: %w", target.Name, err)
+        }
+    }
+    return nil
+}
+```
+
+NotFound errors get swallowed; other errors propagate. Partial
+failure leaves the cloud in whatever state the last successful
+delete reached — that's acceptable because re-running Purge picks
+up from there.
+
+### Open question — does Purge dry-run?
+
+Plumb a `dryRun bool` arg, or rely on the orchestrator's existing
+`--dry-run` global? *Recommendation: rely on global. Purge is
+called from `--purge`, which is itself a destructive flag; mixing
+in a per-method dry-run adds combinatorial surface for marginal
+value.*
+
+### Migration window for kindsync
+
+§3's Phase D plan is to dual-read/dual-write the Secret namespace
+for two releases. In prototype phase this collapses to a single
+release — backward compatibility is irrelevant when there are no
+external users yet. Revisit the dual-write window when the project
+ships externally.
+
+---
+
+## 12. Phase E — Pivot interface
+
+### `PivotTarget` struct
+
+```go
+type PivotTarget struct {
+    KubeconfigPath string        // local path to the destination cluster's kubeconfig
+    Namespaces     []string      // CAPI namespaces to move; nil = "all CAPI namespaces"
+    ReadyTimeout   time.Duration // how long to wait for the destination to accept the move
+}
+
+PivotTarget(cfg *config.Config) (PivotTarget, error)
+```
+
+`(PivotTarget{}, ErrNotApplicable)` means "this provider has no
+pivot target — kind stays as the management cluster forever."
+
+### What the orchestrator does with it
+
+```go
+func runPivot(cfg *config.Config) error {
+    target, err := provider.For(cfg).PivotTarget(cfg)
+    if errors.Is(err, provider.ErrNotApplicable) {
+        return nil // no pivot for this provider
+    }
+    if err != nil {
+        return err
+    }
+    return clusterctlMove(
+        kindKubeconfigPath(cfg),
+        target.KubeconfigPath,
+        target.Namespaces,
+        target.ReadyTimeout,
+    )
+}
+```
+
+`clusterctl move` is now provider-agnostic: it sees two
+kubeconfigs and a list of namespaces. The destination could be
+Proxmox-hosted, AWS-hosted, or even another kind cluster (CAPD as
+a cheap test target).
+
+### Why a struct, not three return values?
+
+Future-proof. Adding a fourth field (`ServiceAccount` for
+impersonation, `BackoffSchedule` for slow destinations) is
+non-breaking. Three return values force signature churn every
+time. `PivotTarget` is a value type — zero-value is the "skip"
+signal.
+
+### Provider readiness
+
+Today only Proxmox returns a real `PivotTarget`. The other 11
+providers return `ErrNotApplicable` until they ship:
+
+1. A working `K3sTemplate` (or kubeadm equivalent) for the mgmt
+   cluster.
+2. A strategy for hosting the mgmt cluster on this provider —
+   bootstrap-on-bootstrap is non-trivial.
+
+This is fine. The interface accepts opt-in; pivot is a
+power-user feature.
+
+### Open question — `Namespaces []string` defaults
+
+`nil` means "all CAPI namespaces" (today's behavior). Should the
+orchestrator define a constant `AllCAPINamespaces []string` so
+providers can return it explicitly? *Recommendation: keep `nil` as
+the sentinel. Explicit "all" is more code for no clarity gain;
+`nil` is idiomatic Go for "unset."*
+
+### Open question — pivot rollback
+
+If `clusterctl move` fails halfway (some objects moved, some
+not), what's the recovery path? Today: manual intervention. After
+Phase E: still manual — the orchestrator doesn't try to roll
+back. *Recommendation: ship without rollback. Pivot rollback is a
+separate operational feature; the abstraction doesn't make it
+harder OR easier to add later.*
+

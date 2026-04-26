@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/orchestrator"
 	"github.com/lpasquali/yage/internal/ui/cli"
 	"github.com/lpasquali/yage/internal/config"
@@ -39,6 +40,16 @@ import (
 func main() {
 	cfg := config.Load()
 	cli.Parse(cfg, os.Args[1:])
+
+	// §16 c2: read cfg.Cost.Credentials + per-provider state from
+	// Secret/yage-system/bootstrap-config when the kind cluster is
+	// reachable. Best-effort: if the Secret doesn't exist (first
+	// run) or the kind cluster isn't up yet, the call is a silent
+	// no-op and cfg keeps what config.Load got from env.
+	//
+	// Fill-empty-only semantics: env values that were explicitly
+	// set survive the merge.
+	_ = kindsync.MergeBootstrapConfigFromKind(cfg)
 
 	// Hand cost-estimation credentials + currency preferences to the
 	// pricing package once at startup. After Phase D ships, these

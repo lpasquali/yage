@@ -88,10 +88,59 @@ type Providers struct {
 	Azure         AzureConfig
 	GCP           GCPConfig
 	Hetzner       HetznerConfig
+	OpenStack     OpenStackConfig
+	Vsphere       VsphereConfig
 	DigitalOcean  DigitalOceanConfig
 	Linode        LinodeConfig
 	OCI           OCIConfig
 	IBMCloud      IBMCloudConfig
+}
+
+// OpenStackConfig is the per-provider OpenStack (CAPO) configuration.
+// OpenStack is the second flat-quota cloud after Proxmox (§13's
+// OpenStack validation), so it's a candidate for a future real
+// Inventory implementation. Today's surface covers the fields CAPO
+// reads via clouds.yaml + the ones xapiri prompts for.
+type OpenStackConfig struct {
+	// Cloud is the named cloud entry in clouds.yaml (e.g. "devstack").
+	Cloud string
+	// ProjectName is the Keystone project / tenant.
+	ProjectName string
+	// Region scopes resource queries (e.g. "RegionOne").
+	Region string
+	// FailureDomain hints CAPO where to place control-plane VMs
+	// (typically an availability zone).
+	FailureDomain string
+	// ImageName names the Glance image used for VM boot.
+	ImageName string
+	// ControlPlaneFlavor / WorkerFlavor are Nova flavor names
+	// (e.g. "m1.large").
+	ControlPlaneFlavor string
+	WorkerFlavor       string
+	// DNSNameservers is a comma-separated list pushed to subnet
+	// resources.
+	DNSNameservers string
+	// SSHKeyName is the Nova keypair name CAPO injects via cloud-init.
+	SSHKeyName string
+}
+
+// VsphereConfig is the per-provider vSphere (CAPV) configuration.
+// Sketch from §13's vSphere validation report — these are the
+// fields CAPV's manifest expects.
+type VsphereConfig struct {
+	Server         string // vCenter URL/host
+	Datacenter     string
+	Folder         string // VM folder under the datacenter
+	ResourcePool   string // soft-quota tree
+	Datastore      string
+	Network        string // vSphere network name
+	Template       string // VM template (governor) used for VM clones
+	TLSThumbprint  string // vCenter cert thumbprint when self-signed
+	// Username / Password — operator-supplied via env (VSPHERE_USERNAME /
+	// VSPHERE_PASSWORD); kept on cfg so xapiri can prompt and kindsync
+	// can round-trip.
+	Username string
+	Password string
 }
 
 // AzureConfig is the per-provider Azure (CAPZ) configuration.
@@ -113,6 +162,26 @@ type AzureConfig struct {
 	// OverheadTier picks the bundled cost estimate (NAT, LB, public IPs,
 	// Log Analytics, DNS, egress).
 	OverheadTier string
+	// SubscriptionID / TenantID / ResourceGroup / VNetName / SubnetName /
+	// ClientID — Azure-side state the workload manifest needs. CAPZ
+	// reads these as env vars; yage surfaces them on cfg so xapiri /
+	// kindsync can round-trip them. ClientID is part of the Service-
+	// Principal / Managed-Identity identity model (see IdentityModel).
+	SubscriptionID string
+	TenantID       string
+	ResourceGroup  string
+	VNetName       string
+	SubnetName     string
+	ClientID       string
+	// IdentityModel selects which Azure identity flavor yage / CAPZ uses
+	// (§13.4 #4). One of:
+	//   - "service-principal" (default; AZURE_CLIENT_ID + secret)
+	//   - "managed-identity"  (User-Assigned MI on the bootstrap host)
+	//   - "workload-identity" (AAD Workload Identity federation)
+	// EnsureIdentity branches on this. Today's no-op
+	// EnsureIdentity ignores it; lands when CAPZ identity bootstrap
+	// is wired.
+	IdentityModel string
 }
 
 // GCPConfig is the per-provider GCP (CAPG) configuration.
@@ -131,6 +200,20 @@ type GCPConfig struct {
 	// OverheadTier picks the bundled cost estimate (Cloud NAT, LBs,
 	// Cloud Logging, Cloud DNS, internet egress).
 	OverheadTier string
+	// Network names the VPC the workload cluster's nodes live in.
+	// Empty = "default" (CAPG's auto-mode VPC). Surfaced for
+	// TemplateVars (GCP_NETWORK_NAME).
+	Network string
+	// ImageFamily picks the GCE image family for node OS (debian-12,
+	// ubuntu-2204-lts, etc.). Empty = CAPG default.
+	ImageFamily string
+	// IdentityModel selects which GCP identity flavor (§13.4 #4):
+	//   - "service-account" (default; GOOGLE_APPLICATION_CREDENTIALS JSON)
+	//   - "adc"             (Application Default Credentials)
+	//   - "workload-identity" (GKE Workload Identity federation)
+	// Same shape as Azure.IdentityModel; lands when CAPG identity
+	// bootstrap is wired.
+	IdentityModel string
 }
 
 // HetznerConfig is the per-provider Hetzner (CAPHV) configuration.

@@ -352,9 +352,12 @@ func registered() []string {
 	return out
 }
 
-// For is a convenience: reads cfg.InfraProvider, falls back to
-// "proxmox" when empty (current default), and returns the matching
-// implementation. Errors when the named provider isn't registered.
+// For is a convenience: reads cfg.InfraProvider and returns the
+// matching implementation. Errors when the named provider isn't
+// registered or cfg.InfraProvider is empty (the §18 legacy
+// "" → "proxmox" fallback was dropped — config.Load() already
+// defaults to "proxmox" with a one-line stderr notice; reaching
+// For() with an empty name now means a programming error).
 //
 // When cfg.Airgapped is true and the resolved provider needs the
 // internet (any cloud provider — see AirgapCompatible), For()
@@ -363,7 +366,7 @@ func registered() []string {
 func For(cfg *config.Config) (Provider, error) {
 	name := cfg.InfraProvider
 	if name == "" {
-		name = "proxmox"
+		return nil, fmt.Errorf("provider.For: cfg.InfraProvider is empty (set INFRA_PROVIDER or --infra-provider)")
 	}
 	return AirgapAwareForName(name, cfg.Airgapped)
 }

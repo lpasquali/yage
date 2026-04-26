@@ -6,17 +6,17 @@
 // internal/csix, internal/capimanifest). The plugin foundation in
 // internal/provider lets future code dispatch through the Provider
 // interface; until every call site in internal/bootstrap is moved,
-// the existing direct-call paths in bootstrap.Run() continue to work
+// the existing direct-call paths in orchestrator.Run() continue to work
 // unchanged. The two coexist by design: this package adds the
-// indirection point, the extraction of bootstrap.Run() onto it is a
+// indirection point, the extraction of orchestrator.Run() onto it is a
 // follow-up.
 package proxmox
 
 import (
-	"github.com/lpasquali/yage/internal/capimanifest"
+	"github.com/lpasquali/yage/internal/capi/manifest"
 	"github.com/lpasquali/yage/internal/config"
-	"github.com/lpasquali/yage/internal/csix"
-	"github.com/lpasquali/yage/internal/opentofux"
+	"github.com/lpasquali/yage/internal/capi/csi"
+	"github.com/lpasquali/yage/internal/platform/opentofux"
 	"github.com/lpasquali/yage/internal/provider"
 	"github.com/lpasquali/yage/internal/pveapi"
 )
@@ -96,7 +96,7 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 // cluster-name aliasing (mirrors under <cluster>-proxmox-csi-config
 // and the short proxmox-csi-config name).
 func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
-	csix.ApplyConfigSecretToWorkload(cfg, func() (string, error) { return workloadKubeconfigPath, nil })
+	csi.ApplyConfigSecretToWorkload(cfg, func() (string, error) { return workloadKubeconfigPath, nil })
 	return nil
 }
 

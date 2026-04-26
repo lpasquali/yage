@@ -11,11 +11,11 @@ package main
 import (
 	"os"
 
-	"github.com/lpasquali/yage/internal/bootstrap"
-	"github.com/lpasquali/yage/internal/cli"
+	"github.com/lpasquali/yage/internal/orchestrator"
+	"github.com/lpasquali/yage/internal/ui/cli"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/pricing"
-	"github.com/lpasquali/yage/internal/xapiri"
+	"github.com/lpasquali/yage/internal/ui/xapiri"
 
 	// Provider registrations: importing each provider package runs
 	// its init() which calls provider.Register. Add a new provider
@@ -53,5 +53,5 @@ func main() {
 		}
 		return
 	}
-	os.Exit(bootstrap.Run(cfg))
+	os.Exit(orchestrator.Run(cfg))
 }

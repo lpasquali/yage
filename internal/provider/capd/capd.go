@@ -115,7 +115,7 @@ spec:
       version: ${KUBERNETES_VERSION}+k3s1
       bootstrap:
         configRef:
-          apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+          apiVersion: orchestrator.cluster.x-k8s.io/v1beta2
           kind: KThreesConfigTemplate
           name: ${CLUSTER_NAME}-md-0
       infrastructureRef:
@@ -123,7 +123,7 @@ spec:
         kind: DockerMachineTemplate
         name: ${CLUSTER_NAME}-md-0
 ---
-apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+apiVersion: orchestrator.cluster.x-k8s.io/v1beta2
 kind: KThreesConfigTemplate
 metadata:
   name: ${CLUSTER_NAME}-md-0

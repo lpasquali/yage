@@ -110,9 +110,9 @@ per-provider phase.
    `internal/config/config.go` plus `Load()` defaults.
 7. Add a blank import to `cmd/yage/main.go`.
 8. If you ship a CSI integration: model your CSI Secret apply on
-   `internal/csix.ApplyConfigSecretToWorkload`.
+   `internal/capi/csi.ApplyConfigSecretToWorkload`.
 9. If your provider has an identity-bootstrap concept: model your
-   `EnsureIdentity` on `internal/opentofux.ApplyIdentity`.
+   `EnsureIdentity` on `internal/platform/opentofux.ApplyIdentity`.
 10. If your provider has a capacity API: implement `Capacity`
     returning the same `HostCapacity` shape; the orchestrator
     compares it against the user's plan automatically (and now

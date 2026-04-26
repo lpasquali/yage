@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/lpasquali/yage/internal/config"
-	"github.com/lpasquali/yage/internal/logx"
-	"github.com/lpasquali/yage/internal/sysinfo"
+	"github.com/lpasquali/yage/internal/ui/logx"
+	"github.com/lpasquali/yage/internal/platform/sysinfo"
 )
 
 // httpClient returns a client honouring PROXMOX_ADMIN_INSECURE: when
@@ -182,13 +182,13 @@ func ResolveRegionAndNodeFromClusterctlAPI(cfg *config.Config) error {
 // Dies on any non-200 (matches bash `die` on 401/000/other).
 func CheckAdminAPIConnectivity(cfg *config.Config) {
 	if cfg.Providers.Proxmox.URL == "" {
-		logx.Die("PROXMOX_URL is required for OpenTofu identity bootstrap.")
+		logx.Die("PROXMOX_URL is required for OpenTofu identity orchestrator.")
 	}
 	if cfg.Providers.Proxmox.AdminUsername == "" {
-		logx.Die("PROXMOX_ADMIN_USERNAME is required for OpenTofu identity bootstrap.")
+		logx.Die("PROXMOX_ADMIN_USERNAME is required for OpenTofu identity orchestrator.")
 	}
 	if cfg.Providers.Proxmox.AdminToken == "" {
-		logx.Die("PROXMOX_ADMIN_TOKEN is required for OpenTofu identity bootstrap.")
+		logx.Die("PROXMOX_ADMIN_TOKEN is required for OpenTofu identity orchestrator.")
 	}
 
 	base := HostBaseURL(cfg)
@@ -213,7 +213,7 @@ func CheckAdminAPIConnectivity(cfg *config.Config) {
 	case 401:
 		logx.Die("Proxmox admin token cannot access /access/roles (401). Token lacks required privileges for OpenTofu role creation.")
 	default:
-		logx.Die("Unexpected HTTP %d while checking /access/roles permissions for OpenTofu bootstrap.", code)
+		logx.Die("Unexpected HTTP %d while checking /access/roles permissions for OpenTofu orchestrator.", code)
 	}
 }
 

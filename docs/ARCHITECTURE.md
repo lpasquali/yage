@@ -3,10 +3,10 @@
 This document describes the Go implementation of `yage`. The Go code
 is the canonical implementation; the original bash port that
 predated it is no longer tracked here, though phase comments
-throughout `internal/bootstrap/bootstrap.go` still cite the
+throughout `internal/orchestrator/bootstrap.go` still cite the
 originating bash line ranges (e.g. `L8133-L8211`) as historical
 provenance. The Go binary lives in `cmd/yage` and dispatches to
-`internal/bootstrap.Run`.
+`internal/orchestrator.Run`.
 
 ## High-level overview
 
@@ -17,50 +17,50 @@ on the workload, fed by CAAPH HelmChartProxy from the management cluster).
 The Go code is organised as one orchestrator package and a dozen-plus
 focused leaf packages:
 
-- `internal/bootstrap` — the orchestrator. `Run()` is a straight port of the
+- `internal/orchestrator` — the orchestrator. `Run()` is a straight port of the
   bash script's phase 1 / phase 2 flow and the standalone modes
   (`--workload-rollout`, `--argocd-print-access`, `--argocd-port-forward`,
   kind backup/restore).
-- `internal/k8sclient` — the foundation. Wraps `client-go` and dynamic clients
+- `internal/platform/k8sclient` — the foundation. Wraps `client-go` and dynamic clients
   keyed by kubecontext / kubeconfig file. Every package that talks to a
   cluster goes through it.
 - `internal/config` — typed `Config` struct (one field per legacy bash var),
   `Load()` from env+CLI, plus `Snapshot`/state for round-tripping into a kind
   Secret.
-- `internal/kindsync` — owns the `proxmox-bootstrap-config/config.yaml` Secret
+- `internal/cluster/kindsync` — owns the `proxmox-bootstrap-config/config.yaml` Secret
   inside the kind cluster: write-out, read-back, and merge-in (skipping CLI-
   locked `*_EXPLICIT` fields).
-- `internal/installer` — installs all client binaries (kubectl, kind,
+- `internal/platform/installer` — installs all client binaries (kubectl, kind,
   clusterctl, cilium-cli, argocd-cli, cmctl, kyverno-cli, opentofu, docker
   upgrade) and conditionally builds arm64 controller images.
-- `internal/kind` — kind cluster lifecycle: create, backup, restore, kubeconfig
+- `internal/cluster/kind` — kind cluster lifecycle: create, backup, restore, kubeconfig
   export.
-- `internal/opentofux` — OpenTofu wrapper. Generates the BPG provider tree,
+- `internal/platform/opentofux` — OpenTofu wrapper. Generates the BPG provider tree,
   applies/recreates the Proxmox identity stack (CAPI + CSI users, tokens,
   ACLs), pulls outputs back into clusterctl + CSI configs.
-- `internal/proxmox` — Proxmox API client (admin + clusterctl tokens),
+- `internal/pveapi` — Proxmox API client (admin + clusterctl tokens),
   identity-suffix derivation, region/node resolution, cluster-set ID
   validation.
-- `internal/capimanifest` — generates the workload `clusterctl generate
+- `internal/capi/manifest` — generates the workload `clusterctl generate
   cluster` manifest, then patches it (CSI topology labels, kube-proxy skip
   for Cilium, ProxmoxMachineTemplate spec rev, CAAPH cluster labels).
-- `internal/caaph` — CAAPH HelmChartProxy authoring and waiters: Cilium HCP
+- `internal/capi/caaph` — CAAPH HelmChartProxy authoring and waiters: Cilium HCP
   for the workload, Cilium L2 announcements / LB IP pool, Argo CD Operator
   install on the workload, ArgoCD CR + CAAPH `argocd-apps` HelmChartProxy
   (root Application of the user's Git app-of-apps).
-- `internal/argocdx` — Argo CD UX: `--argocd-print-access`,
+- `internal/capi/argocd` — Argo CD UX: `--argocd-print-access`,
   `--argocd-port-forward`, kubeconfig discovery for standalone modes,
   pre-installed `argocd-redis` Secret on the workload.
-- `internal/csix` — Proxmox CSI helpers: load vars, push the
+- `internal/capi/csi` — Proxmox CSI helpers: load vars, push the
   `*-proxmox-csi-config` Secret into the workload.
-- `internal/ciliumx` — Cilium values rendering / arch detection.
-- `internal/kubectlx` — typed-client wrappers for the few residual
+- `internal/capi/cilium` — Cilium values rendering / arch detection.
+- `internal/platform/kubectl` — typed-client wrappers for the few residual
   `kubectl`-like operations (apply, wait-for-endpoints, context resolution,
   workload-manifest apply with retries).
-- `internal/wlargocd` / `internal/postsync` — workload Argo CD post-sync
+- `internal/capi/wlargocd` / `internal/capi/postsync` — workload Argo CD post-sync
   helpers (used by `--workload-rollout`).
-- `internal/helmvalues` — typed value-overlay generation.
-- `internal/cli` — flag parsing layer that hands a `*Config` back to
+- `internal/capi/helmvalues` — typed value-overlay generation.
+- `internal/ui/cli` — flag parsing layer that hands a `*Config` back to
   `Run()`.
 - `internal/provider` — pluggable CAPI infrastructure-provider interface +
   registry. 12 providers registered, each cross-checked against the upstream
@@ -90,14 +90,14 @@ focused leaf packages:
   cluster shape and prints a side-by-side table (sorted by total).
   `--budget-usd-month N` adds a per-cloud retention column (how much
   persistent storage your budget buys after compute).
-- `internal/capacity` — host-capacity preflight. Queries Proxmox's
+- `internal/cluster/capacity` — host-capacity preflight. Queries Proxmox's
   `/cluster/resources` for both node totals (CPU/mem/storage) and
   existing-VM census (sum of every qemu VM's declared max{cpu,mem,disk}).
   `CheckCombined(plan, host, existing, soft, tolerance)` returns a
   trichotomy verdict — fits / tight / abort — that drives both the
   dry-run plan and the real-run preflight. See `docs/capacity-preflight.md`.
-- `internal/shell` / `internal/logx` / `internal/promptx` / `internal/sysinfo`
-  / `internal/versionx` / `internal/yamlx` — small support utilities (process
+- `internal/platform/shell` / `internal/ui/logx` / `internal/ui/promptx` / `internal/platform/sysinfo`
+  / `internal/util/versionx` / `internal/util/yamlx` — small support utilities (process
   exec, structured logging, prompts, OS/arch detection, semver parsing, YAML
   field extraction).
 
@@ -130,15 +130,15 @@ flowchart TD
 ```mermaid
 flowchart LR
     subgraph orchestrator[Orchestrator]
-        bootstrap[internal/bootstrap]
+        orchestrator[internal/orchestrator]
     end
 
     subgraph midtier[Mid-tier]
         caaph[internal/caaph]
-        capimanifest[internal/capimanifest]
+        manifest[internal/capi/manifest]
         kindsync[internal/kindsync]
-        argocdx[internal/argocdx]
-        csix[internal/csix]
+        argocd[internal/capi/argocd]
+        csi[internal/capi/csi]
         kindp[internal/kind]
         installer[internal/installer]
         opentofux[internal/opentofux]
@@ -156,8 +156,8 @@ flowchart LR
         helmvalues[internal/helmvalues]
         wlargocd[internal/wlargocd]
         postsync[internal/postsync]
-        ciliumx[internal/ciliumx]
-        kubectlx[internal/kubectlx]
+        cilium[internal/capi/cilium]
+        kubectl[internal/platform/kubectl]
         clip[internal/cli]
     end
 
@@ -377,32 +377,32 @@ the legacy flow is preserved verbatim: kind remains the management plane and
 workload Cluster CRs are applied to it directly.
 
 The eight pivot steps, with their Go entry points in the new
-`internal/pivot/` package:
+`internal/capi/pivot/` package:
 
 1. **EnsureManagementCluster** — provision the single-node mgmt cluster on
-   Proxmox via the existing CAPMOX path on kind (`internal/pivot/pivot.go`).
+   Proxmox via the existing CAPMOX path on kind (`internal/capi/pivot/pivot.go`).
 2. **Wait for the CAPI Cluster to report Available on kind**
-   (`internal/pivot/wait.go`).
+   (`internal/capi/pivot/wait.go`).
 3. **Fetch the mgmt kubeconfig** from the kind-side
    `<mgmt-cluster>-kubeconfig` Secret and persist it locally
-   (`internal/pivot/wait.go`).
+   (`internal/capi/pivot/wait.go`).
 4. **InstallCAPIOnManagement** — `clusterctl init` against the mgmt
    kubeconfig with the same providers (core, kubeadm bootstrap + control
-   plane, CAAPH, in-cluster IPAM, CAPMOX) (`internal/pivot/move.go`).
+   plane, CAAPH, in-cluster IPAM, CAPMOX) (`internal/capi/pivot/move.go`).
 5. **MoveCAPIState** — `clusterctl move --to-kubeconfig <mgmt>` to
    transfer all CAPI CRs and identity Secrets from kind to mgmt
-   (`internal/pivot/move.go`).
+   (`internal/capi/pivot/move.go`).
 6. **HandOffBootstrapSecretsToManagement** — re-create the
    `proxmox-bootstrap-config/config.yaml` Secret (and any sibling literal
    Secrets the bootstrap relies on) inside the new
    `proxmox-bootstrap-system` namespace on the mgmt cluster
-   (`internal/kindsync/handoff.go`).
+   (`internal/cluster/kindsync/handoff.go`).
 7. **VerifyParity** — compare the post-move set of CAPI CRs on mgmt
    against the pre-move snapshot from kind, and assert that controllers
    on mgmt are reconciling the moved Clusters
-   (`internal/pivot/pivot.go`).
+   (`internal/capi/pivot/pivot.go`).
 8. **TeardownKind** — delete the kind cluster (skipped under
-   `--no-delete-kind`) (`internal/pivot/pivot.go`).
+   `--no-delete-kind`) (`internal/capi/pivot/pivot.go`).
 
 ### Diagram 6: bootstrap-and-pivot timeline
 
@@ -495,7 +495,7 @@ flowchart TD
 
 ## In-depth Run() walk-through
 
-The numbered steps reference `internal/bootstrap/bootstrap.go`.
+The numbered steps reference `internal/orchestrator/bootstrap.go`.
 
 1. **Defaults** (L34-L46) — fall back `KindClusterName` to `ClusterName` or
    `capi-provisioner`; default `AllowedNodes` to `ProxmoxNode`.
@@ -582,25 +582,25 @@ The numbered steps reference `internal/bootstrap/bootstrap.go`.
 Counts produced from
 `grep -rE 'shell\.(Run|Capture|Pipe).*"kubectl"|exec\.Command\("kubectl"' internal/ --include='*.go'`:
 
-- `internal/installer/installer.go:494` — `kubectl version -o json` for
+- `internal/platform/installer/installer.go:494` — `kubectl version -o json` for
   client `gitVersion` parsing during version-pin reconciliation; reads the
   on-disk `kubectl` binary the user already runs (cluster connection not
   required), so swapping to client-go would not represent the on-disk
   binary the user expects.
-- `internal/caaph/caaph.go:391` — `kubectl --kubeconfig <wk> apply -k <git
+- `internal/capi/caaph/caaph.go:391` — `kubectl --kubeconfig <wk> apply -k <git
   ref> --server-side` for the Argo CD Operator. Reads a kustomize tree
   from a Git ref; replicating server-side `-k` would pull in
   `sigs.k8s.io/kustomize/api/krusty` (~10MB of deps). Comment in source
   notes the trade-off.
-- `internal/kind/restore.go:294` — `kubectl --context <ctx> apply -f -` to
+- `internal/cluster/kind/restore.go:294` — `kubectl --context <ctx> apply -f -` to
   pipe a re-hydrated namespace doc back during `--restore`. Streaming
   multi-document YAML through dynamic apply with field-management parity
   to `kubectl apply` is non-trivial; backup/restore is rarely run.
-- `internal/kind/backup.go:163,169,188,337` — backup-side `kubectl get`
+- `internal/cluster/kind/backup.go:163,169,188,337` — backup-side `kubectl get`
   and `kubectl api-resources` and `kubectl config get-contexts`, used to
   enumerate every namespaced resource type per namespace and dump them as
   JSON Lines. Equivalent to the bash backup; same trade-off as restore.
-- `internal/argocdx/argocdx.go:314` — long-lived `kubectl port-forward`
+- `internal/capi/argocd/argocdx.go:314` — long-lived `kubectl port-forward`
   for `--argocd-port-forward`. The port-forwarding behaviour with proper
   signal forwarding and re-connect is essentially what the kubectl
   subprocess provides; replacing it with a `client-go` portforwarder
@@ -609,7 +609,7 @@ Counts produced from
 
 Everything else (deploy/Service/Secret/CRD apply, waits, Cluster CR
 patch, kubeconfig discovery, Helm chart proxy authoring) goes through
-`internal/k8sclient` typed + dynamic clients.
+`internal/platform/k8sclient` typed + dynamic clients.
 
 Intentional `clusterctl` shell-outs (the binary is the supported entry
 point for these operations and re-implementing them in-process would
@@ -636,19 +636,19 @@ in-process to replace shell-outs:
 - `k8s.io/apimachinery` v0.36.0 — `metav1`, schema/GVR/GVK, runtime
   serialisers, label selectors.
 - `k8s.io/cli-runtime` v0.36.0 — `genericclioptions` and resource
-  builders used by the apply paths in `internal/kubectlx`.
+  builders used by the apply paths in `internal/platform/kubectl`.
 - `sigs.k8s.io/yaml` v1.6.0 — strict YAML round-trip used by `yamlx`,
   Snapshot, and manifest patching.
 - `sigs.k8s.io/kind` v0.31.0 — pulled in for the kind config types used
-  by `internal/kind` / `EnsureKindConfig`.
+  by `internal/cluster/kind` / `EnsureKindConfig`.
 - `helm.sh/helm/v3` — _not yet a direct dep in go.mod_; CAAPH authoring
-  is currently rendered through `internal/helmvalues` + `sigs.k8s.io/yaml`
+  is currently rendered through `internal/capi/helmvalues` + `sigs.k8s.io/yaml`
   rather than embedding helm. Listed here as a future swap target the
   prompt anticipated.
 - `sigs.k8s.io/cluster-api` — _not yet a direct dep in go.mod_; Cluster
   / KubeadmControlPlane / MachineDeployment are still authored as YAML
   through `clusterctl generate cluster` and patched in
-  `internal/capimanifest`. Direct vendor would let
+  `internal/capi/manifest`. Direct vendor would let
   `EnsureWorkloadClusterLabel` and friends use typed CAPI APIs instead
   of YAML edits.
 - Support indirects worth flagging: `github.com/spf13/cobra` /

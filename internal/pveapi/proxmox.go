@@ -11,10 +11,10 @@
 // Direct importers fall in two camps:
 //   - `internal/provider/proxmox/`: the Provider plugin uses these
 //     helpers to satisfy the Provider interface.
-//   - Orchestrator-side packages (`internal/bootstrap`, `kindsync`,
-//     `caaph`, `capimanifest`, `opentofux`): use the helpers
-//     directly during phases that haven't yet moved behind the
-//     Provider interface.
+//   - Orchestrator-side packages (`internal/orchestrator`,
+//     `cluster/kindsync`, `capi/caaph`, `capi/manifest`,
+//     `platform/opentofux`): use the helpers directly during phases
+//     that haven't yet moved behind the Provider interface.
 //
 // As phases B–E land, the orchestrator-side direct imports should
 // shrink — eventually only the Provider plugin should reach into
@@ -33,7 +33,7 @@ import (
 	"strings"
 
 	"github.com/lpasquali/yage/internal/config"
-	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
 // Default user "bases" used when suffixes are derived from CLUSTER_SET_ID.

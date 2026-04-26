@@ -31,7 +31,7 @@
 //
 // CSI: cinder-csi-plugin is the canonical OpenStack CSI; we don't
 // ship a Secret apply for it yet, so EnsureCSISecret is
-// ErrNotApplicable. Future work parallels internal/csix.
+// ErrNotApplicable. Future work parallels internal/csi.
 package openstack
 
 import (
@@ -184,7 +184,7 @@ spec:
       failureDomain: ${OPENSTACK_FAILURE_DOMAIN}
       bootstrap:
         configRef:
-          apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+          apiVersion: orchestrator.cluster.x-k8s.io/v1beta2
           kind: KThreesConfigTemplate
           name: ${CLUSTER_NAME}-md-0
       infrastructureRef:
@@ -192,7 +192,7 @@ spec:
         kind: OpenStackMachineTemplate
         name: ${CLUSTER_NAME}-md-0
 ---
-apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+apiVersion: orchestrator.cluster.x-k8s.io/v1beta2
 kind: KThreesConfigTemplate
 metadata:
   name: ${CLUSTER_NAME}-md-0

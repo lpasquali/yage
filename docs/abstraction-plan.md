@@ -17,18 +17,18 @@ not authoritative — the analysis is what matters.
 
 | File                                      | Mentions | What it does                                                                 |
 |-------------------------------------------|---------:|------------------------------------------------------------------------------|
-| `internal/bootstrap/bootstrap.go`         | 129      | `Run()` orchestrator: identity, kind→mgmt sync, manifest patching, pivot     |
-| `internal/bootstrap/plan.go`              |  34      | Dry-run plan body: phase 2.0 / 2.9 / 2.95 are written for Proxmox            |
-| `internal/bootstrap/admin.go`             |  35      | Proxmox admin-API helpers (pool create, etc.)                                |
-| `internal/bootstrap/purge.go`             |  12      | `--purge` flow (Terraform state, BPG provider tree, CSI configs)             |
-| `internal/bootstrap/workloadapps.go`      | (some)   | App-of-apps wiring                                                           |
-| `internal/pivot/{pivot,wait,move,manifest}.go` |  44 | clusterctl move: kind → Proxmox mgmt cluster                                 |
-| `internal/kindsync/*`                     | 174      | The `proxmox-bootstrap-config/config.yaml` Secret, BPG cred handoff          |
-| `internal/capacity/capacity.go`           | (whole)  | Hits Proxmox `/api2/json/cluster/resources` directly                         |
-| `internal/capimanifest/{k3s,patches}.go`  | (some)   | ProxmoxMachineTemplate-shaped patches; K3s template embeds Proxmox CRDs      |
-| `internal/wlargocd/render.go`             |  some    | App-of-apps overlay names                                                    |
-| `internal/yamlx/yamlx.go`                 |  some    | YAML extraction helpers used by Proxmox patches                              |
-| `internal/caaph/caaph.go`                 |  some    | Helm values rendering for Proxmox CSI                                        |
+| `internal/orchestrator/bootstrap.go`         | 129      | `Run()` orchestrator: identity, kind→mgmt sync, manifest patching, pivot     |
+| `internal/orchestrator/plan.go`              |  34      | Dry-run plan body: phase 2.0 / 2.9 / 2.95 are written for Proxmox            |
+| `internal/orchestrator/admin.go`             |  35      | Proxmox admin-API helpers (pool create, etc.)                                |
+| `internal/orchestrator/purge.go`             |  12      | `--purge` flow (Terraform state, BPG provider tree, CSI configs)             |
+| `internal/orchestrator/workloadapps.go`      | (some)   | App-of-apps wiring                                                           |
+| `internal/capi/pivot/{pivot,wait,move,manifest}.go` |  44 | clusterctl move: kind → Proxmox mgmt cluster                                 |
+| `internal/cluster/kindsync/*`                     | 174      | The `proxmox-bootstrap-config/config.yaml` Secret, BPG cred handoff          |
+| `internal/cluster/capacity/capacity.go`           | (whole)  | Hits Proxmox `/api2/json/cluster/resources` directly                         |
+| `internal/capi/manifest/{k3s,patches}.go`  | (some)   | ProxmoxMachineTemplate-shaped patches; K3s template embeds Proxmox CRDs      |
+| `internal/capi/wlargocd/render.go`             |  some    | App-of-apps overlay names                                                    |
+| `internal/util/yamlx/yamlx.go`                 |  some    | YAML extraction helpers used by Proxmox patches                              |
+| `internal/capi/caaph/caaph.go`                 |  some    | Helm values rendering for Proxmox CSI                                        |
 
 ### 1b. Config bindings
 
@@ -41,7 +41,7 @@ provider.
 
 ### 1c. CLI bindings
 
-`internal/cli/parse.go` + `usage.txt`: dozens of `--proxmox-*` /
+`internal/ui/cli/parse.go` + `usage.txt`: dozens of `--proxmox-*` /
 `--admin-*` flags presented as if they were universal program
 flags. Other-cloud flags exist (`--aws-mode`, `--azure-location`,
 …) but live alongside as peers. There is no `--infra-provider` /
@@ -50,7 +50,7 @@ via `INFRA_PROVIDER` env, which is itself surprising.
 
 ### 1d. Capacity bindings
 
-`internal/capacity/capacity.go` directly calls Proxmox endpoints:
+`internal/cluster/capacity/capacity.go` directly calls Proxmox endpoints:
 - `/api2/json/cluster/resources?type=node` — host totals
 - `/api2/json/cluster/resources?type=storage` — storage backends
 - `/api2/json/cluster/resources?type=vm` — existing-VM census
@@ -61,7 +61,7 @@ via `INFRA_PROVIDER` env, which is itself surprising.
 
 ### 1e. Identity bindings
 
-`internal/opentofux/` is purely Proxmox: it generates the BPG
+`internal/platform/opentofux/` is purely Proxmox: it generates the BPG
 Terraform tree, applies/recreates the CAPI + CSI users. The
 `Provider.EnsureIdentity` interface method exists and the proxmox
 provider's implementation correctly delegates here. AWS / Azure /
@@ -69,7 +69,7 @@ GCP / etc. would each need their own identity-bootstrap layer.
 
 ### 1f. Pivot bindings
 
-`internal/pivot/` runs `clusterctl move` from kind → a Proxmox-
+`internal/capi/pivot/` runs `clusterctl move` from kind → a Proxmox-
 hosted management cluster. The shape generalizes (kind → any
 managed cluster) but the text and many details are Proxmox-flavored.
 
@@ -110,7 +110,7 @@ actually does:
    admin tree. Needs `Provider.Purge(cfg) error` for cloud-specific
    cleanups (e.g. AWS = delete the IAM stack we created in
    `EnsureIdentity`; Hetzner = no-op).
-5. **Manifest generation**. `internal/capimanifest` currently
+5. **Manifest generation**. `internal/capi/manifest` currently
    emits CAPI manifests assuming Proxmox-flavored variables. The
    per-provider `K3sTemplate` + `PatchManifest` already cover most
    of this; what remains is the *value substitution* (which env
@@ -143,7 +143,7 @@ Steps:
    Define `Inventory`, `ResourceTotals` in `internal/provider/`
    (or a shared sub-package to avoid import cycles).
 2. Move `FetchHostCapacity` + `FetchExistingUsage` out of
-   `internal/capacity` into `internal/provider/proxmox/` as
+   `internal/cluster/capacity` into `internal/provider/proxmox/` as
    private helpers. Combine them inside the proxmox provider's
    `Inventory()` — one outbound batch, returns Total + Used +
    Available (Proxmox computes Available = Total − Used; trivial
@@ -173,7 +173,7 @@ Steps:
    ```
    `PlanWriter` is a small interface (just `Section(title string)` +
    `Bullet(format string, args ...any)` + `Skip(reason string)`)
-   defined in `internal/bootstrap` or a sibling. Keeps the visual
+   defined in `internal/orchestrator` or a sibling. Keeps the visual
    style consistent across providers.
 2. `bootstrap.planForProvider(w, cfg)` calls
    `provider.For(cfg).DescribePlan(w, cfg)`.
@@ -254,7 +254,7 @@ Steps:
 
 1. `Provider.PivotTarget(cfg) (PivotTarget, error)` returns the
    target's kubeconfig path + namespaces to move.
-2. `internal/pivot` becomes provider-agnostic: it executes
+2. `internal/capi/pivot` becomes provider-agnostic: it executes
    `clusterctl move` between two arbitrary kubeconfigs.
 3. The "Proxmox-hosted mgmt cluster" Secret-handoff logic stays
    in the proxmox provider package (it's BPG-specific).
@@ -292,11 +292,11 @@ self-contained, ships independently, can be reverted independently.
 
 Some packages don't need abstracting because they *are* Proxmox:
 
-- `internal/proxmox/` — the Proxmox API client. Stays as-is; it's
+- `internal/pveapi/` — the Proxmox API client. Stays as-is; it's
   the implementation detail behind `provider/proxmox/`.
-- `internal/opentofux/` — the BPG identity stack. Same — lives
+- `internal/platform/opentofux/` — the BPG identity stack. Same — lives
   inside `provider/proxmox/identity.go` after refactor.
-- `internal/capimanifest/k3s_template.yaml` — could split into
+- `internal/capi/manifest/k3s_template.yaml` — could split into
   per-provider templates under `internal/provider/<name>/`. Already
   some providers have inline templates (Hetzner, AWS).
 
@@ -356,7 +356,7 @@ package plan
 // output and per-provider DescribePlan implementations. Three
 // primitives: section header, bullet, skip.
 //
-// Implementations live in internal/bootstrap/plan_writer.go (text
+// Implementations live in internal/orchestrator/plan_writer.go (text
 // renderer) and in tests (capturing renderer). Providers don't
 // need to know which is active.
 type Writer interface {
@@ -368,7 +368,7 @@ type Writer interface {
 
 That's it. Three methods, no extra ceremony. The renderer
 matches the existing `section()` / `bullet()` / `skip()`
-free-functions in `internal/bootstrap/plan.go` byte-for-byte —
+free-functions in `internal/orchestrator/plan.go` byte-for-byte —
 output stays identical for Proxmox.
 
 ### Provider method
@@ -647,7 +647,7 @@ few days; bisectable if anything breaks.
 |--------------|--------------------------------------------------------------------|
 | What breaks  | Capacity preflight on Proxmox if the new wiring drops a code path  |
 | Canary       | Run `--dry-run` against `legion.local` Proxmox before merging      |
-| Detection    | Capacity test suite (`internal/capacity/capacity_test.go`)         |
+| Detection    | Capacity test suite (`internal/cluster/capacity/capacity_test.go`)         |
 | Rollback     | Revert single commit (mechanical, isolated)                        |
 | Blast radius | Proxmox dry-run + real-run preflight (no other provider impacted)  |
 
@@ -712,7 +712,7 @@ is a one-shot migration on first run, but read-from-both is safer.
 
 ### Phase A
 
-- Existing `internal/capacity/capacity_test.go` keeps passing —
+- Existing `internal/cluster/capacity/capacity_test.go` keeps passing —
   rename field accesses from `*HostCapacity` / `*ExistingUsage`
   to `Inventory.Total` / `Inventory.Used`. Math is unchanged.
 - Add an interface-conformance test: `provider.Get("proxmox")
@@ -832,13 +832,13 @@ Phase A above):
    }
    ```
    The legacy `HostCapacity` and `ExistingUsage` structs in
-   `internal/capacity/capacity.go` become provider-internal
+   `internal/cluster/capacity/capacity.go` become provider-internal
    helpers; the orchestrator only sees `Inventory`.
 
 2. **Move the Proxmox calls.** Cut `FetchHostCapacity` /
    `FetchExistingUsage` (and their helpers `authForCfg`,
    `fetchJSON`, `allowedSet`, etc.) from
-   `internal/capacity/capacity.go` to a new
+   `internal/cluster/capacity/capacity.go` to a new
    `internal/provider/proxmox/inventory.go`. These become
    package-private helpers of the proxmox provider.
 
@@ -875,9 +875,9 @@ Phase A above):
 
 5. **Replace direct calls in bootstrap and plan.** 4 sites
    collapse to 4 (same count, but one method instead of two):
-   - `internal/bootstrap/bootstrap.go:971` — `capacity.FetchHostCapacity` + nearby `FetchExistingUsage` → single `prov.Inventory`
-   - `internal/bootstrap/plan.go:289` — same
-   - The preflight math in `internal/capacity/capacity.go` reads
+   - `internal/orchestrator/bootstrap.go:971` — `capacity.FetchHostCapacity` + nearby `FetchExistingUsage` → single `prov.Inventory`
+   - `internal/orchestrator/plan.go:289` — same
+   - The preflight math in `internal/cluster/capacity/capacity.go` reads
      `inv.Available` instead of subtracting at the call site.
 
 6. **Build + vet + test.** Existing capacity tests adapt: rename
@@ -918,7 +918,7 @@ once Phase B lands. It supersedes R.1 above where the two conflict
 
 ### Interface
 
-`PlanWriter` is defined in `internal/bootstrap` and called by every
+`PlanWriter` is defined in `internal/orchestrator` and called by every
 provider:
 
 ```go
@@ -929,7 +929,7 @@ type PlanWriter interface {
 }
 ```
 
-The existing free functions in `internal/bootstrap/plan.go:65-75` move
+The existing free functions in `internal/orchestrator/plan.go:65-75` move
 behind a struct that satisfies this interface. `*os.File` is replaced
 with `io.Writer` everywhere — keeps tests cheap.
 
@@ -1100,7 +1100,7 @@ Same rule applied to `Mgmt*`:
 Keep the existing flat flags as the user contract. **No
 `--provider.proxmox.token`.** The internal struct path changes from
 `cfg.ProxmoxToken` to `cfg.Providers.Proxmox.Token`; the flag→field
-wiring in `internal/cli/parse.go` updates accordingly. Reasons:
+wiring in `internal/ui/cli/parse.go` updates accordingly. Reasons:
 
 1. Flat flags are documented across every README and the operator's
    muscle memory.
@@ -1945,7 +1945,7 @@ Pivot ceases to be Proxmox-specific.
 - `PivotTarget{KubeconfigPath, Namespaces, ReadyTimeout}` struct
 - `cfg.MgmtKubeconfigPath` set by orchestrator after
   `EnsureManagementCluster()`; read by `PivotTarget`
-- `internal/pivot/` becomes provider-agnostic; sees two
+- `internal/capi/pivot/` becomes provider-agnostic; sees two
   kubeconfigs + namespace list, executes `clusterctl move`
 - All non-Proxmox providers return `ErrNotApplicable`
 
@@ -1993,7 +1993,7 @@ alongside the work above so they don't get lost:
 
 After E lands the orchestrator has zero Proxmox-specific text,
 imports, or assumptions outside `internal/provider/proxmox/` and
-`internal/proxmox/`. Multi-cloud is then a question of "implement
+`internal/pveapi/`. Multi-cloud is then a question of "implement
 the methods" per provider, not "rewire the orchestrator."
 
 ---

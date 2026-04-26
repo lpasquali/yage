@@ -21,41 +21,56 @@ yage started life as a Go port of a monolithic bash script; the bash source is n
 
 ```
 yage/
-├── cmd/yage/main.go   # Entry point: config → CLI parse → bootstrap.Run()
-├── Makefile                     # build, test, clean, deps, install, system-deps
+├── cmd/yage/main.go         # Entry point: config → CLI parse → orchestrator.Run()
+├── Makefile                 # build, test, clean, deps, install, system-deps
 ├── go.mod
-├── docs/                        # Documentation (you are here)
+├── scripts/                 # Operator helpers (e.g. migrate-to-yage.sh)
+├── docs/                    # Documentation (you are here)
 └── internal/
-    ├── argocdx/      # Argo CD helpers: admin password, kubeconfig discovery, port-forward, redis Secret
-    ├── bootstrap/    # Top-level orchestrator: phases 1-10, standalone modes (rollout, backup, argocd)
-    ├── caaph/        # CAAPH HelmChartProxy rendering; Argo CD Operator + ArgoCD CR install on workload
-    ├── capimanifest/ # YAML-patch workload manifests (role overrides, CSI labels, kubeadm, PMT revisions)
-    ├── ciliumx/      # Cilium helpers: kube-proxy replacement, LB-IPAM pool, manifest append
-    ├── cli/          # CLI flag parsing (100+ flags, 1:1 match with bash parse_options)
-    ├── config/       # ~120 tunable fields from env vars + CLI flags; snapshot/merge to kind Secrets
-    ├── csix/         # Proxmox CSI config loading + Secret creation on workload cluster
-    ├── helmvalues/   # Helm values YAML generators: metrics-server, observability, SPIRE, Keycloak
-    ├── installer/    # Pinned-version tool installers: kind, kubectl, clusterctl, cilium, argocd, cmctl, tofu
-    ├── kind/         # kind cluster lifecycle: create, delete, backup/restore (tar.gz with optional encryption)
-    ├── kindsync/     # Sync bootstrap state to kind Secrets for persistence across runs
-    ├── kubectlx/     # kubectl wrappers: apply, wait, context resolution, endpoint checks
-    ├── logx/         # Log/warn/die with emoji formatting (✅🎉 / ⚠️🙈 / ❌💩)
-    ├── opentofux/    # OpenTofu-backed Proxmox identity bootstrap: users, tokens, recreate, destroy
-    ├── postsync/     # Argo CD PostSync-hook helpers + Proxmox CSI smoke-test renderers
-    ├── promptx/      # Interactive prompts: yes/no, numeric menu for cluster selection
-    ├── proxmox/      # Proxmox URL/token/region/node parsing + HTTP-backed API resolution
-    ├── shell/        # RUN_PRIVILEGED sudo helper, exec wrappers (capture, pipe, run)
-    ├── sysinfo/      # OS/arch detection, is_true bool parsing
-    ├── versionx/     # Git version normalization and matching
-    ├── wlargocd/     # Workload Argo Application YAML renderers (one per add-on)
-    └── yamlx/        # Flat-YAML reader (top-level scalar key:value from config files)
+    ├── orchestrator/        # Top-level driver: phases 1-10, standalone modes (rollout, backup, argocd)
+    ├── provider/            # Pluggable CAPI infrastructure-provider abstraction (centerpiece)
+    │   ├── proxmox/, aws/, azure/, gcp/, hetzner/, openstack/, vsphere/,
+    │   ├── digitalocean/, linode/, oci/, ibmcloud/, capd/
+    ├── pveapi/              # Low-level Proxmox VE HTTP client (used by provider/proxmox/ + orchestrator)
+    ├── capi/                # Cluster API machinery
+    │   ├── argocd/          # Argo CD helpers: admin password, kubeconfig discovery, port-forward, redis Secret
+    │   ├── caaph/           # CAAPH HelmChartProxy rendering; Argo CD Operator + ArgoCD CR install on workload
+    │   ├── cilium/          # Cilium helpers: kube-proxy replacement, LB-IPAM pool, manifest append
+    │   ├── csi/             # Proxmox CSI config loading + Secret creation on workload cluster
+    │   ├── helmvalues/      # Helm values YAML generators: metrics-server, observability, SPIRE, Keycloak
+    │   ├── manifest/        # YAML-patch workload manifests (role overrides, CSI labels, kubeadm, PMT revisions)
+    │   ├── pivot/           # clusterctl move kind → managed mgmt cluster
+    │   ├── postsync/        # Argo CD PostSync-hook helpers + Proxmox CSI smoke-test renderers
+    │   └── wlargocd/        # Workload Argo Application YAML renderers (one per add-on)
+    ├── cluster/             # Cluster lifecycle (kind + workload)
+    │   ├── capacity/        # Host-capacity preflight: planning + verdicts (fits / tight / abort)
+    │   ├── kind/            # kind cluster lifecycle: create, delete, backup/restore (tar.gz with optional encryption)
+    │   └── kindsync/        # Sync bootstrap state to kind Secrets for persistence across runs
+    ├── cost/                # Multi-cloud cost comparator (--cost-compare)
+    ├── pricing/             # Live FinOps pricing fetchers, per-vendor; taller currency abstraction
+    ├── platform/            # Cross-cutting plumbing
+    │   ├── installer/       # Pinned-version tool installers: kind, kubectl, clusterctl, cilium, argocd, cmctl, tofu
+    │   ├── k8sclient/       # client-go wrapper, dynamic clients keyed by kubecontext / kubeconfig
+    │   ├── kubectl/         # kubectl wrappers: apply, wait, context resolution, endpoint checks
+    │   ├── opentofux/       # OpenTofu-backed Proxmox identity bootstrap: users, tokens, recreate, destroy
+    │   ├── shell/           # RUN_PRIVILEGED sudo helper, exec wrappers (capture, pipe, run)
+    │   └── sysinfo/         # OS/arch detection, is_true bool parsing
+    ├── ui/                  # User-facing surfaces
+    │   ├── cli/             # CLI flag parsing + usage.txt
+    │   ├── logx/            # Log/warn/die with emoji formatting (✅🎉 / ⚠️🙈 / ❌💩)
+    │   ├── promptx/         # Interactive prompts: yes/no, numeric menu for cluster selection
+    │   └── xapiri/          # Interactive configuration TUI (--xapiri, currently a stub)
+    ├── config/              # ~120 tunable fields from env vars + CLI flags; snapshot/merge to kind Secrets
+    └── util/                # Generic utilities
+        ├── versionx/        # Git version normalization and matching
+        └── yamlx/           # Flat-YAML reader (top-level scalar key:value from config files)
 ```
 
 ---
 
 ## Bootstrap phases (bootstrap.Run)
 
-The orchestrator in `internal/bootstrap/bootstrap.go` runs these phases:
+The orchestrator in `internal/orchestrator/bootstrap.go` runs these phases:
 
 | Phase | Description |
 |-------|-------------|
@@ -180,7 +195,7 @@ Multi-document YAML manifests (separated by `\n---\n`) are common. When matching
 - Investigate port-forward or Argo CD connectivity issues
 
 ### User support
-- Explain CLI flags and env vars (reference `internal/cli/usage.txt` and `bin/yage --help`)
+- Explain CLI flags and env vars (reference `internal/ui/cli/usage.txt` and `bin/yage --help`)
 - Help configure Proxmox networking, CSI, Cilium LB-IPAM
 - Explain the bootstrap phases and what each does
 - Troubleshoot kind cluster, CAPI, or workload provisioning issues

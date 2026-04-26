@@ -14,7 +14,7 @@ host before provisioning. The check has two parts:
 The check runs on Proxmox today (the only provider with a working
 `Capacity()` implementation). Future provider implementations
 plug in transparently — the verdict logic is in
-`internal/capacity` and provider-agnostic.
+`internal/cluster/capacity` and provider-agnostic.
 
 ## Existing-VM census
 

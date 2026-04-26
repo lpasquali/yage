@@ -2136,3 +2136,179 @@ This restructure is **orthogonal** to Phases A–E:
   refreshed to the new locations
 - README.md `## Layout` section updated
 
+---
+
+## 16. Cost-estimation credentials — Secret-backed config
+
+Cost-estimation reaches into four vendor APIs that need credentials:
+
+| Vendor | Credential | Today's source | Secret? |
+|---|---|---|---|
+| GCP Cloud Billing Catalog | API key | `os.Getenv("YAGE_GCP_API_KEY")` / `GOOGLE_BILLING_API_KEY` | yes |
+| Hetzner Cloud | project token | `os.Getenv("YAGE_HCLOUD_TOKEN")` / `HCLOUD_TOKEN` | yes (also used by the provider itself) |
+| DigitalOcean | API token | `os.Getenv("YAGE_DO_TOKEN")` / `DIGITALOCEAN_TOKEN` | yes |
+| IBM Cloud | API key | `os.Getenv("YAGE_IBMCLOUD_API_KEY")` / `IBMCLOUD_API_KEY` | yes |
+
+AWS Bulk JSON, Azure Retail Prices, Linode catalog, OCI catalog —
+all anonymous public APIs. No credentials required.
+
+Currency / FX preferences (related but NOT secrets):
+
+| Variable | Purpose |
+|---|---|
+| `YAGE_TALLER_CURRENCY` / `YAGE_CURRENCY` | display currency override |
+| `YAGE_EUR_USD` | manual FX override when open.er-api.com is unreachable |
+
+### Today's problem
+
+Pricing fetchers reach into the environment with `os.Getenv(...)`
+calls scattered across six files in `internal/pricing/`. No central
+catalog, no struct, no validation — and worst: secrets only ever
+live as process env vars, never as managed state. There is no path
+for `xapiri` (the interactive TUI) to capture them, no path for the
+operator to rotate them, and no path for them to ride along when
+the bootstrap state moves through kindsync.
+
+### Target: `cfg.Cost.Credentials`
+
+One named struct, one place to add a new vendor, one path to
+runtime-injection by `xapiri` or future TUIs:
+
+```go
+// internal/config/config.go
+type Config struct {
+    // ...
+    Cost CostConfig
+}
+
+type CostConfig struct {
+    // existing fields (BudgetUSDMonth, CostCompare, HardwareCostUSD, …)
+    Credentials CostCredentials
+    Currency    CostCurrency
+}
+
+type CostCredentials struct {
+    GCPAPIKey         string  // YAGE_GCP_API_KEY / GOOGLE_BILLING_API_KEY
+    HetznerToken      string  // YAGE_HCLOUD_TOKEN / HCLOUD_TOKEN
+    DigitalOceanToken string  // YAGE_DO_TOKEN / DIGITALOCEAN_TOKEN
+    IBMCloudAPIKey    string  // YAGE_IBMCLOUD_API_KEY / IBMCLOUD_API_KEY
+}
+
+type CostCurrency struct {
+    DisplayCurrency string  // YAGE_TALLER_CURRENCY / YAGE_CURRENCY
+    EURUSDOverride  string  // YAGE_EUR_USD
+}
+```
+
+`config.Load()` reads env vars into these. `pricing.*` fetchers no
+longer call `os.Getenv` directly — they read from a package-level
+`Credentials` struct that the orchestrator sets at startup:
+
+```go
+// internal/pricing/credentials.go (new)
+package pricing
+
+type Credentials struct {
+    GCPAPIKey, HetznerToken, DigitalOceanToken, IBMCloudAPIKey string
+}
+
+var creds Credentials
+
+func SetCredentials(c Credentials) { creds = c }
+```
+
+```go
+// cmd/yage/main.go (after cfg = config.Load())
+pricing.SetCredentials(pricing.Credentials{
+    GCPAPIKey:         cfg.Cost.Credentials.GCPAPIKey,
+    HetznerToken:      cfg.Cost.Credentials.HetznerToken,
+    DigitalOceanToken: cfg.Cost.Credentials.DigitalOceanToken,
+    IBMCloudAPIKey:    cfg.Cost.Credentials.IBMCloudAPIKey,
+})
+```
+
+The package-level setter avoids threading `*Config` through every
+pricing function (~12 sites). Pricing fetchers stay pure — they
+read a process-global, set once at boot.
+
+### Phase D wiring: Secret as source of truth
+
+After Phase D's `KindSyncer` interface lands, the credentials live
+in `Secret/yage-system/bootstrap-config` alongside the rest of
+yage's state:
+
+```yaml
+# Secret/yage-system/bootstrap-config (after Phase D)
+data:
+  # universal fields (orchestrator-owned)
+  provider:           "proxmox"
+  cluster_name:       "legion-1"
+  ...
+  # cost credentials (orchestrator-owned, NOT per-provider)
+  cost.gcp_api_key:           "<base64>"
+  cost.hetzner_token:         "<base64>"
+  cost.digitalocean_token:    "<base64>"
+  cost.ibmcloud_api_key:      "<base64>"
+  # provider-specific fields
+  proxmox.url:                "https://pve:8006/api2/json"
+  ...
+```
+
+Read order at `Load()`:
+
+1. **Secret first** (if reachable — `kubectl get secret bootstrap-config
+   -n yage-system`). The default in steady state.
+2. **Env vars** (fallback for first-run, before any Secret exists).
+3. **xapiri TUI** (interactive) writes the Secret directly when the
+   user supplies values through the walkthrough.
+
+The same `cfg.Cost.Credentials` struct is the destination for all
+three sources — only the SOURCE changes, not the consumer code.
+
+### Why orchestrator-owned (not per-provider)
+
+A typical operator runs `yage --cost-compare` once and wants to see
+prices across **every** vendor in one go. The credentials are not
+"AWS uses my AWS key, GCP uses my GCP key" the way provider
+credentials are — they're "this yage installation has these vendor
+keys for cross-cloud comparison." Putting them in a `Cost`
+sub-config (orchestrator-owned, cross-cutting) is honest about
+that. Per-provider buckets (`cfg.Providers.GCP.PricingAPIKey`)
+would be wrong: cost-compare runs every vendor regardless of which
+provider is the active `INFRA_PROVIDER`.
+
+The Hetzner case is a slight exception — `HCLOUD_TOKEN` is also the
+provider's own credential. We keep both fields
+(`cfg.Providers.Hetzner.Token` for provisioning,
+`cfg.Cost.Credentials.HetznerToken` for pricing) but `Load()`
+cross-fills: if either is empty, fill from the other.
+
+### Sequencing
+
+This proposal lands in two commits:
+
+1. **Now (independent of Phase D):** introduce `cfg.Cost.Credentials`
+   and `cfg.Cost.Currency` structs, refactor pricing fetchers to read
+   from a package-level credential set by `pricing.SetCredentials()`.
+   Env-var fallback preserved for first-run. Single source of truth
+   in Go-land.
+2. **With Phase D:** the orchestrator's `LoadFromSecret()` populates
+   `cfg.Cost.Credentials` from `Secret/yage-system/bootstrap-config`
+   when it exists, falling back to env. xapiri TUI gets a section
+   for these.
+
+Commit 1 lands today. Commit 2 lands when Phase D lands.
+
+### Definition of Done (Commit 1)
+
+- `cfg.Cost.Credentials` and `cfg.Cost.Currency` exist with the
+  fields above
+- `config.Load()` populates them from env vars (preserving the
+  YAGE_X / VENDOR_X dual-spelling fallback chain)
+- `internal/pricing/credentials.go` defines `Credentials` struct +
+  package-level global + `SetCredentials()`
+- `cmd/yage/main.go` calls `pricing.SetCredentials()` after `Load()`
+- Every `os.Getenv(...)` call in `internal/pricing/` for a
+  credential or currency override is replaced with the
+  package-level read
+- Existing env-var spellings still work (back-compat: tests pass)

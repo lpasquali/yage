@@ -36,7 +36,12 @@ func init() {
 	Register("ibmcloud", &ibmFetcher{httpClient: &http.Client{Timeout: 30 * time.Second}})
 }
 
+// ibmAPIKey returns the IBM Cloud API key used for pricing.
+// Read order: cfg.Cost.Credentials → env-var fallback. See §16.
 func ibmAPIKey() string {
+	if creds.IBMCloudAPIKey != "" {
+		return creds.IBMCloudAPIKey
+	}
 	if v := os.Getenv("YAGE_IBMCLOUD_API_KEY"); v != "" {
 		return v
 	}

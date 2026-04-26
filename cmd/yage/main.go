@@ -38,6 +38,22 @@ import (
 func main() {
 	cfg := config.Load()
 	cli.Parse(cfg, os.Args[1:])
+
+	// Hand cost-estimation credentials + currency preferences to the
+	// pricing package once at startup. After Phase D ships, these
+	// values come from Secret/yage-system/bootstrap-config; today they
+	// come from env vars via config.Load. See docs/abstraction-plan.md §16.
+	pricing.SetCredentials(pricing.Credentials{
+		GCPAPIKey:         cfg.Cost.Credentials.GCPAPIKey,
+		HetznerToken:      cfg.Cost.Credentials.HetznerToken,
+		DigitalOceanToken: cfg.Cost.Credentials.DigitalOceanToken,
+		IBMCloudAPIKey:    cfg.Cost.Credentials.IBMCloudAPIKey,
+	})
+	pricing.SetCurrency(pricing.Currency{
+		DisplayCurrency: cfg.Cost.Currency.DisplayCurrency,
+		EURUSDOverride:  cfg.Cost.Currency.EURUSDOverride,
+	})
+
 	if cfg.Xapiri {
 		os.Exit(xapiri.Run(os.Stdout, cfg))
 	}

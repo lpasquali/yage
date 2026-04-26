@@ -135,6 +135,11 @@ type GCPConfig struct {
 
 // HetznerConfig is the per-provider Hetzner (CAPHV) configuration.
 type HetznerConfig struct {
+	// Token is the Hetzner Cloud project API token (env: HCLOUD_TOKEN).
+	// CAPHV reads it directly from env; we surface it here for cross-
+	// fill with cfg.Cost.Credentials.HetznerToken (same secret, two
+	// consumers). See §16.
+	Token string
 	// ControlPlaneMachineType / NodeMachineType drive the Hetzner Cloud
 	// server types CAPHV provisions when --infrastructure-provider
 	// hetzner. Defaults to cx22 — the cheapest type that comfortably
@@ -332,12 +337,58 @@ type ProxmoxConfig struct {
 	Mgmt ProxmoxMgmtConfig
 }
 
+// CostConfig groups the cross-cutting cost-estimation configuration:
+// API credentials for vendor pricing endpoints + currency / FX
+// preferences. Per docs/abstraction-plan.md §16, these are
+// orchestrator-owned (NOT per-provider) because --cost-compare runs
+// every vendor regardless of which provider is the active
+// INFRA_PROVIDER. The struct is the single in-process home so
+// pricing/* fetchers stop calling os.Getenv directly and the
+// xapiri TUI / kindsync Secret have one schema to populate.
+type CostConfig struct {
+	Credentials CostCredentials
+	Currency    CostCurrency
+}
+
+// CostCredentials are the per-vendor pricing API tokens / keys.
+// AWS Bulk JSON, Azure Retail Prices, Linode catalog, OCI catalog
+// are anonymous — no entry here. After Phase D ships these get
+// persisted into Secret/yage-system/bootstrap-config under
+// `cost.<key>` keys; env vars become first-run-only fallback.
+type CostCredentials struct {
+	// GCP Cloud Billing Catalog (env: YAGE_GCP_API_KEY / GOOGLE_BILLING_API_KEY).
+	GCPAPIKey string
+	// Hetzner Cloud (env: YAGE_HCLOUD_TOKEN / HCLOUD_TOKEN). Same token also
+	// serves cfg.Providers.Hetzner.Token; Load() cross-fills if either is empty.
+	HetznerToken string
+	// DigitalOcean (env: YAGE_DO_TOKEN / DIGITALOCEAN_TOKEN).
+	DigitalOceanToken string
+	// IBM Cloud (env: YAGE_IBMCLOUD_API_KEY / IBMCLOUD_API_KEY).
+	IBMCloudAPIKey string
+}
+
+// CostCurrency holds locale / FX preferences for cost output. These
+// aren't secrets but they belong with the rest of the cost-display
+// configuration.
+type CostCurrency struct {
+	// DisplayCurrency forces output in a specific ISO currency code
+	// (env: YAGE_TALLER_CURRENCY / YAGE_CURRENCY). Empty = auto-detect
+	// from geo (ip-api.com → ISO country → ISO currency).
+	DisplayCurrency string
+	// EURUSDOverride manually pins the EUR/USD rate when
+	// open.er-api.com is unreachable (env: YAGE_EUR_USD).
+	EURUSDOverride string
+}
+
 // Config holds every runtime tunable. Zero value is not meaningful — always
 // call Load().
 type Config struct {
 	// Providers groups per-cloud configuration. Today only Proxmox lives
 	// here; the AWS/Azure/… buckets land in subsequent commits of Phase C.
 	Providers Providers
+	// Cost groups cross-cutting cost-estimation configuration: vendor
+	// pricing credentials + currency/FX preferences. See §16.
+	Cost CostConfig
 
 
 	// ---- Tool versions ----
@@ -813,6 +864,40 @@ func Load() *Config {
 	c.HardwareWatts = envFloat("HARDWARE_WATTS", 0)
 	c.HardwareKWHRateUSD = envFloat("HARDWARE_KWH_RATE_USD", 0.15)
 	c.HardwareSupportUSDMonth = envFloat("HARDWARE_SUPPORT_USD_MONTH", 0)
+
+	// Cost-estimation credentials and currency preferences (§16).
+	// Each YAGE_X spelling wins over the vendor-native fallback.
+	c.Cost.Credentials.GCPAPIKey = firstNonEmpty(
+		os.Getenv("YAGE_GCP_API_KEY"),
+		os.Getenv("GOOGLE_BILLING_API_KEY"),
+	)
+	c.Cost.Credentials.HetznerToken = firstNonEmpty(
+		os.Getenv("YAGE_HCLOUD_TOKEN"),
+		os.Getenv("HCLOUD_TOKEN"),
+	)
+	c.Cost.Credentials.DigitalOceanToken = firstNonEmpty(
+		os.Getenv("YAGE_DO_TOKEN"),
+		os.Getenv("DIGITALOCEAN_TOKEN"),
+	)
+	c.Cost.Credentials.IBMCloudAPIKey = firstNonEmpty(
+		os.Getenv("YAGE_IBMCLOUD_API_KEY"),
+		os.Getenv("IBMCLOUD_API_KEY"),
+	)
+	c.Cost.Currency.DisplayCurrency = firstNonEmpty(
+		os.Getenv("YAGE_TALLER_CURRENCY"),
+		os.Getenv("YAGE_CURRENCY"),
+	)
+	c.Cost.Currency.EURUSDOverride = os.Getenv("YAGE_EUR_USD")
+
+	// Cross-fill the Hetzner token between the cost-credentials view
+	// and the provider's own view: same secret, two consumers.
+	if c.Cost.Credentials.HetznerToken == "" && c.Providers.Hetzner.Token != "" {
+		c.Cost.Credentials.HetznerToken = c.Providers.Hetzner.Token
+	}
+	if c.Providers.Hetzner.Token == "" && c.Cost.Credentials.HetznerToken != "" {
+		c.Providers.Hetzner.Token = c.Cost.Credentials.HetznerToken
+	}
+
 	c.BootstrapMode = getenv("BOOTSTRAP_MODE", "kubeadm")
 	c.Providers.AWS.ControlPlaneMachineType = getenv("AWS_CONTROL_PLANE_MACHINE_TYPE", "t3.large")
 	c.Providers.AWS.NodeMachineType = getenv("AWS_NODE_MACHINE_TYPE", "t3.medium")
@@ -1175,6 +1260,18 @@ func Load() *Config {
 }
 
 // --- helpers ---
+
+// firstNonEmpty returns the first non-empty argument, or "" if all
+// are empty. Used to express dual-spelling env-var fallback chains
+// (YAGE_X / VENDOR_X) as a single readable expression.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
 
 func getenv(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {

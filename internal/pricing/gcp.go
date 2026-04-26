@@ -38,7 +38,14 @@ func init() {
 	Register("gcp", &gcpFetcher{httpClient: &http.Client{Timeout: 30 * time.Second}})
 }
 
+// gcpAPIKey returns the configured Google Cloud Billing Catalog
+// key. Read order: cfg.Cost.Credentials (set by main from
+// config.Load) → env-var fallback for cases where the orchestrator
+// hasn't called SetCredentials yet (e.g. test setups, --xapiri).
 func gcpAPIKey() string {
+	if creds.GCPAPIKey != "" {
+		return creds.GCPAPIKey
+	}
 	if k := os.Getenv("YAGE_GCP_API_KEY"); k != "" {
 		return k
 	}

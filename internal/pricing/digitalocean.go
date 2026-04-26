@@ -24,7 +24,12 @@ func init() {
 	Register("digitalocean", &doFetcher{httpClient: &http.Client{Timeout: 15 * time.Second}})
 }
 
+// doToken returns the DigitalOcean API token used for pricing.
+// Read order: cfg.Cost.Credentials → env-var fallback. See §16.
 func doToken() string {
+	if creds.DigitalOceanToken != "" {
+		return creds.DigitalOceanToken
+	}
 	if v := os.Getenv("YAGE_DO_TOKEN"); v != "" {
 		return v
 	}

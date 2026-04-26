@@ -94,6 +94,14 @@ var (
 func resolveTallerCurrency() (string, string) {
 	tallerOnce.Do(func() {
 		// Step 1: explicit override.
+		// Order: cfg.Cost.Currency.DisplayCurrency (set by main from
+		// config.Load via pricing.SetCurrency) → env-var fallback
+		// for cases where SetCurrency hasn't run yet. See §16.
+		if v := strings.ToUpper(strings.TrimSpace(prefs.DisplayCurrency)); v != "" {
+			tallerCurrency = v
+			tallerNote = "taller currency: " + v + " (cfg override)"
+			return
+		}
 		if v := strings.ToUpper(strings.TrimSpace(os.Getenv("YAGE_TALLER_CURRENCY"))); v != "" {
 			tallerCurrency = v
 			tallerNote = "taller currency: " + v + " (env override)"

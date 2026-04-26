@@ -28,7 +28,14 @@ import (
 // rate is one knob, easy to override per-run.
 const hetznerServerTypesURL = "https://api.hetzner.cloud/v1/server_types"
 
+// hetznerToken returns the Hetzner Cloud project token used for
+// pricing queries. Read order: cfg.Cost.Credentials (set by main
+// from config.Load — also cross-filled with cfg.Providers.Hetzner.Token)
+// → env-var fallback for cases where SetCredentials hasn't run yet.
 func hetznerToken() string {
+	if creds.HetznerToken != "" {
+		return creds.HetznerToken
+	}
 	if v := os.Getenv("YAGE_HCLOUD_TOKEN"); v != "" {
 		return v
 	}
@@ -61,7 +68,15 @@ type hetznerListResp struct {
 	ServerTypes []hetznerServerType `json:"server_types"`
 }
 
+// eurToUSD returns the EUR→USD conversion rate. Read order:
+// cfg.Cost.Currency.EURUSDOverride (via pricing.SetCurrency) →
+// env-var fallback → hard-coded 1.08 default. See §16.
 func eurToUSD() float64 {
+	if prefs.EURUSDOverride != "" {
+		if f, err := strconv.ParseFloat(prefs.EURUSDOverride, 64); err == nil && f > 0 {
+			return f
+		}
+	}
 	if v := os.Getenv("YAGE_EUR_USD"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			return f

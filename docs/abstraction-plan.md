@@ -2382,3 +2382,78 @@ follow-up could add `--image-registry-mirror <prefix>` or
 `YAGE_IMAGE_REGISTRY_MIRROR` and propagate it to the clusterctl
 init args. Not in scope of this commit; flagged for future work.
 
+---
+
+## 18. The Proxmox-default findings
+
+User asked: "why does yage at bootstrap with no values assume
+proxmox by default as infra?" Audit answer:
+
+### Where the default lives
+
+Two layers, both vestigial from when yage was a Proxmox-only tool:
+
+1. **`internal/config/config.go`** —
+   `c.InfraProvider = getenv("INFRA_PROVIDER", "proxmox")`. The
+   `getenv` helper returns the second arg when the env var is
+   unset.
+2. **`internal/provider/provider.go` `For()`** — when
+   `cfg.InfraProvider == ""`, falls back to `"proxmox"` again.
+   Belt-and-braces: even if Load() didn't default, `provider.For`
+   would.
+
+Both date to the bash-port era when Proxmox was the only provider
+that worked end-to-end. The defaults stuck around through the
+multi-cloud expansion and now produce the surprise the user hit:
+running `bin/yage --dry-run` with nothing set silently picks
+Proxmox, then fails on the capacity preflight ("no Proxmox
+credentials available — set --admin-username/--admin-token or
+--proxmox-token/--proxmox-secret"). New users have no idea why
+their dry-run cared about Proxmox.
+
+### Decision
+
+Keep `"proxmox"` as the resolved default (no breakage for existing
+users; multi-cloud is a work-in-progress and Proxmox is still the
+most-tested path), but **stop being silent about it**. When
+`INFRA_PROVIDER` is unset and `--infra-provider` isn't passed,
+yage prints a one-line stderr notice at startup:
+
+```
+ℹ INFRA_PROVIDER not set — defaulting to 'proxmox'. Pick one
+explicitly with --infra-provider <name> (proxmox, aws, azure,
+gcp, hetzner, openstack, vsphere, capd, …) or set
+INFRA_PROVIDER=<name>.
+```
+
+The notice is silent when the value was explicit (env or flag) —
+no log spam in the steady state.
+
+### Implementation
+
+- New `cfg.InfraProviderDefaulted bool` field tracks whether the
+  user picked or yage defaulted.
+- `config.Load()` sets it to true when `INFRA_PROVIDER` is unset.
+- `internal/ui/cli/parse.go` clears it to false when
+  `--infra-provider` is passed.
+- `cmd/yage/main.go` checks the flag after `config.Load()` +
+  `cli.Parse()` and prints the notice once if still set.
+
+### Future work (out of scope of this commit)
+
+- **xapiri TUI** should prompt for `--infra-provider` as the first
+  step of the walkthrough. The notice is the bootstrap pre-TUI
+  warning; once xapiri ships a real interactive flow the notice
+  becomes redundant for new installs.
+- **Drop the second-layer fallback in `provider.For`?** Today both
+  `Load()` and `For()` default. Once the notice has shipped for a
+  while, the `For()` fallback can move to "return error if
+  `cfg.InfraProvider == ""`" — at that point the only path to
+  empty is a programming error, and surfacing it is correct.
+- **Detect from environment?** `if AWS_ACCESS_KEY_ID is set →
+  default aws` would be clever but probably surprising in the
+  other direction (operator who has both AWS creds and Proxmox
+  creds gets a different default than they expected). Recommend
+  not doing this.
+
+

@@ -9,6 +9,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/lpasquali/yage/internal/orchestrator"
@@ -54,6 +55,15 @@ func main() {
 		EURUSDOverride:  cfg.Cost.Currency.EURUSDOverride,
 	})
 	pricing.SetAirgapped(cfg.Airgapped)
+
+	// One-liner when the active infrastructure provider was
+	// silently defaulted (no INFRA_PROVIDER env, no --infra-provider
+	// flag). yage was Proxmox-only originally; in the multi-cloud
+	// era this default is a vestige that surprises new users. See
+	// docs/abstraction-plan.md §18.
+	if cfg.InfraProviderDefaulted {
+		fmt.Fprintln(os.Stderr, "ℹ INFRA_PROVIDER not set — defaulting to 'proxmox'. Pick one explicitly with --infra-provider <name> (proxmox, aws, azure, gcp, hetzner, openstack, vsphere, capd, …) or set INFRA_PROVIDER=<name>.")
+	}
 
 	if cfg.Xapiri {
 		os.Exit(xapiri.Run(os.Stdout, cfg))

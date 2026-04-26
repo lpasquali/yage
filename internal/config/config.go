@@ -575,6 +575,13 @@ type Config struct {
 	// See docs/abstraction-plan.md §17.
 	Airgapped bool
 
+	// InfraProviderDefaulted is true when the user neither set the
+	// INFRA_PROVIDER env var nor passed --infra-provider — i.e.
+	// the runtime is using the legacy "proxmox" default. main()
+	// surfaces a one-line notice so the user learns to be
+	// explicit. See §18.
+	InfraProviderDefaulted bool
+
 	// ---- CAPI providers ----
 	InfraProvider      string
 	IPAMProvider       string
@@ -989,6 +996,13 @@ func Load() *Config {
 	c.BootstrapKindStatePath = getenv("BOOTSTRAP_KIND_STATE_PATH", "")
 
 	// --- CAPI providers (lines 399-415) ---
+	// Track whether InfraProvider was set explicitly. main() and
+	// the orchestrator use this to surface a one-liner so users
+	// know they're getting the default ("proxmox") rather than a
+	// silently-resolved value. See §18.
+	if _, set := os.LookupEnv("INFRA_PROVIDER"); !set {
+		c.InfraProviderDefaulted = true
+	}
 	c.InfraProvider = getenv("INFRA_PROVIDER", "proxmox")
 	c.IPAMProvider = getenv("IPAM_PROVIDER", "in-cluster")
 	c.CAPMOXRepo = getenv("CAPMOX_REPO", "https://github.com/ionos-cloud/cluster-api-provider-proxmox.git")

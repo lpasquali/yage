@@ -490,6 +490,7 @@ func Parse(c *config.Config, argv []string) {
 			// usage.txt has long referenced --infrastructure-provider as
 			// if it existed — this commit makes it real.
 			c.InfraProvider = strings.ToLower(strings.TrimSpace(shiftVal(a)))
+			c.InfraProviderDefaulted = false // explicit choice — silence the §18 notice
 		case "-h", "--help":
 			PrintUsage(nil)
 			os.Exit(0)

@@ -82,9 +82,10 @@ func Register(vendor string, f Fetcher) {
 // Fetch returns the live (or cache-fresh) price for sku in region
 // from vendor's API. Returns ErrUnavailable when no fetcher is
 // registered, the API is unreachable, the cache is stale and the
-// refresh failed, or the SKU isn't in the catalog.
+// refresh failed, the SKU isn't in the catalog, or the orchestrator
+// is in airgapped mode (cfg.Airgapped → pricing.SetAirgapped(true)).
 func Fetch(vendor, sku, region string) (Item, error) {
-	if disabled {
+	if disabled || airgapped {
 		return Item{}, ErrUnavailable
 	}
 	if cached, ok := readCache(vendor, sku, region); ok {

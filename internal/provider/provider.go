@@ -251,10 +251,15 @@ func registered() []string {
 // For is a convenience: reads cfg.InfraProvider, falls back to
 // "proxmox" when empty (current default), and returns the matching
 // implementation. Errors when the named provider isn't registered.
+//
+// When cfg.Airgapped is true and the resolved provider needs the
+// internet (any cloud provider — see AirgapCompatible), For()
+// returns ErrAirgapped instead of the provider so callers fail
+// fast with a clear reason.
 func For(cfg *config.Config) (Provider, error) {
 	name := cfg.InfraProvider
 	if name == "" {
 		name = "proxmox"
 	}
-	return Get(name)
+	return AirgapAwareForName(name, cfg.Airgapped)
 }

@@ -27,9 +27,23 @@ type Currency struct {
 // creds and prefs are the process-globals the orchestrator sets
 // once after config.Load. Read-only from the fetchers' perspective.
 var (
-	creds Credentials
-	prefs Currency
+	creds     Credentials
+	prefs     Currency
+	airgapped bool
 )
+
+// SetAirgapped toggles the airgapped flag used by every pricing
+// fetcher. When true, fetchers short-circuit with ErrUnavailable
+// (no internet access). Set once at startup from cfg.Airgapped.
+// See docs/abstraction-plan.md §17.
+func SetAirgapped(b bool) {
+	airgapped = b
+}
+
+// IsAirgapped reports the current airgapped state.
+func IsAirgapped() bool {
+	return airgapped
+}
 
 // SetCredentials installs the credential set used by pricing
 // fetchers. Call once at program start, after config.Load.

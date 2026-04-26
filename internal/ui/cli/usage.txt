@@ -39,6 +39,11 @@ OPTIONS
         --xapiri                      Launch the interactive configuration TUI and exit. Walks through
                                       every config knob, validates choices against the active provider,
                                       writes the result to disk for review. Currently a stub.
+        --airgapped                   Disable every internet-requiring path: pricing fetchers, geo +
+                                      FX detection, and the entire cloud-provider surface (AWS, Azure,
+                                      GCP, Hetzner, DigitalOcean, Linode, OCI, IBM Cloud). Only on-prem
+                                      providers (Proxmox, OpenStack, vSphere, CAPD) remain selectable.
+                                      Env: YAGE_AIRGAPPED.
         --hardware-cost-usd N         Self-hosted TCO (Proxmox / vSphere): full cluster capex in USD.
                                       Required to enable the cost estimate for self-hosted providers
                                       — without it they return ErrNotApplicable. Amortized straight-

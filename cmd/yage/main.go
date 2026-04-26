@@ -53,6 +53,7 @@ func main() {
 		DisplayCurrency: cfg.Cost.Currency.DisplayCurrency,
 		EURUSDOverride:  cfg.Cost.Currency.EURUSDOverride,
 	})
+	pricing.SetAirgapped(cfg.Airgapped)
 
 	if cfg.Xapiri {
 		os.Exit(xapiri.Run(os.Stdout, cfg))

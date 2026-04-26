@@ -564,6 +564,17 @@ type Config struct {
 	BootstrapKindStateOp          string
 	BootstrapKindStatePath        string
 
+	// Airgapped, when true, disables every internet-requiring code
+	// path: pricing fetchers (live vendor catalogs), geo detection,
+	// FX rate lookup, and the entire hyperscale/cloud-provider
+	// surface (AWS, Azure, GCP, Hetzner, DigitalOcean, Linode, OCI,
+	// IBM Cloud). Only on-prem providers (Proxmox, OpenStack,
+	// vSphere, CAPD) remain available.
+	//
+	// CLI flag: --airgapped. Env: YAGE_AIRGAPPED.
+	// See docs/abstraction-plan.md §17.
+	Airgapped bool
+
 	// ---- CAPI providers ----
 	InfraProvider      string
 	IPAMProvider       string
@@ -864,6 +875,7 @@ func Load() *Config {
 	c.HardwareWatts = envFloat("HARDWARE_WATTS", 0)
 	c.HardwareKWHRateUSD = envFloat("HARDWARE_KWH_RATE_USD", 0.15)
 	c.HardwareSupportUSDMonth = envFloat("HARDWARE_SUPPORT_USD_MONTH", 0)
+	c.Airgapped = envBool("YAGE_AIRGAPPED", false)
 
 	// Cost-estimation credentials and currency preferences (§16).
 	// Each YAGE_X spelling wins over the vendor-native fallback.

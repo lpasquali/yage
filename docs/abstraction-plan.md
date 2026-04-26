@@ -2312,3 +2312,73 @@ Commit 1 lands today. Commit 2 lands when Phase D lands.
   credential or currency override is replaced with the
   package-level read
 - Existing env-var spellings still work (back-compat: tests pass)
+
+---
+
+## 17. Airgapped mode
+
+`--airgapped` (env: `YAGE_AIRGAPPED`, field: `cfg.Airgapped`)
+disables every code path that requires the public internet. The
+goal: yage runs in a network-isolated datacenter with no outbound
+HTTPS — only the on-prem providers' control planes are reachable.
+
+### What gets disabled
+
+| Path | Behavior when airgapped |
+|---|---|
+| `internal/pricing/*` (Fetch) | Returns `ErrUnavailable` immediately; no API calls |
+| Geo-detection (ip-api.com) | Skipped; falls through to USD default |
+| FX rate (open.er-api.com) | Skipped; uses `cfg.Cost.Currency.EURUSDOverride` or hard-coded 1.08 |
+| Cost-compare (`--cost-compare`) | Cloud providers filtered out via `provider.AirgapFilter` |
+| Provider registry (`provider.For`) | Cloud providers return `ErrAirgapped` instead of resolving |
+| Plan output (`--dry-run`) | Cloud-provider Describe sections never invoked |
+
+### What stays enabled
+
+- **On-prem providers**: Proxmox, OpenStack, vSphere, CAPD. Their
+  control planes live on operator-owned infrastructure; no public
+  internet required.
+- **TCO-based cost estimation** for self-hosted providers
+  (`--hardware-cost-usd`, `--hardware-watts`, etc.) — all
+  arithmetic, no API calls.
+- **clusterctl init** still happens; the CAPI provider images need
+  to be pulled from a registry the operator has mirrored
+  internally. That's an orthogonal deployment concern (registry
+  mirror, IMAGE_REGISTRY override) — `--airgapped` doesn't disable
+  clusterctl, just the parts of yage that ASSUME public internet.
+
+### Helper API
+
+```go
+// internal/provider/airgap.go
+var ErrAirgapped = errors.New("provider not available in airgapped mode")
+
+func AirgapCompatible(name string) bool             // true for proxmox/openstack/vsphere/capd
+func AirgapAwareForName(name string, b bool) (Provider, error)
+func AirgapFilter(names []string, b bool) []string  // filters slice when b is true
+```
+
+The on-prem set is a hardcoded map in `internal/provider/airgap.go`.
+Adding a new on-prem provider means adding it there in addition to
+`provider.Register()`.
+
+### Pricing-side wiring
+
+`pricing.SetAirgapped(true)` is called by `cmd/yage/main.go` after
+`config.Load()`, alongside `pricing.SetCredentials` and
+`pricing.SetCurrency`. The package-global short-circuits every
+`Fetch()` call with `ErrUnavailable`. Existing callers already
+handle `ErrUnavailable` — they surface "estimate unavailable" rather
+than fabricating a number. So airgapped behavior is the same code
+path as "vendor API unreachable," just with a different reason.
+
+### Open question — clusterctl image mirror
+
+When `--airgapped` is set, the orchestrator should also be told
+where to find CAPI provider images (kubeadm-bootstrap, CAPI core,
+the active infra provider) — they're normally pulled from
+`registry.k8s.io` / `ghcr.io`. Today there's no flag for this. A
+follow-up could add `--image-registry-mirror <prefix>` or
+`YAGE_IMAGE_REGISTRY_MIRROR` and propagate it to the clusterctl
+init args. Not in scope of this commit; flagged for future work.
+

@@ -317,6 +317,10 @@ func Parse(c *config.Config, argv []string) {
 			// Launch the interactive configuration TUI and exit.
 			// See package internal/xapiri for the cultural note.
 			c.Xapiri = true
+		case "--airgapped":
+			// Disable every internet-requiring path (cloud providers,
+			// pricing fetchers, geo + FX). On-prem only. See §17.
+			c.Airgapped = true
 		case "--allow-resource-overcommit":
 			c.AllowResourceOvercommit = true
 		case "--overcommit-tolerance-pct":

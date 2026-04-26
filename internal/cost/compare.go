@@ -120,7 +120,12 @@ type CloudCost struct {
 // missing config or unreachable APIs.
 func CompareClouds(cfg *config.Config) []CloudCost {
 	out := []CloudCost{}
-	for _, name := range provider.Registered() {
+	// In airgapped mode (§17), drop cloud providers from the
+	// comparison entirely — they require live vendor APIs that won't
+	// be reachable. On-prem providers (Proxmox, OpenStack, vSphere,
+	// CAPD) stay; their estimates are TCO-based, not API-driven.
+	names := provider.AirgapFilter(provider.Registered(), cfg.Airgapped)
+	for _, name := range names {
 		p, err := provider.Get(name)
 		if err != nil {
 			continue

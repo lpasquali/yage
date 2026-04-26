@@ -110,9 +110,9 @@ func (p *Provider) DescribePivot(w provider.PlanWriter, cfg *config.Config) {
 	if cfg.PivotDryRun {
 		w.Bullet("clusterctl move --dry-run (logs plan, no state moves) — exit here")
 	} else {
-		w.Bullet("clusterctl move kind → mgmt for namespaces: %s, %s, proxmox-bootstrap-system",
+		w.Bullet("clusterctl move kind → mgmt for namespaces: %s, %s, yage-system",
 			cfg.WorkloadClusterNamespace, cfg.Mgmt.ClusterNamespace)
-		w.Bullet("handoff proxmox-bootstrap-system Secrets kind → mgmt")
+		w.Bullet("handoff yage-system Secrets kind → mgmt")
 		w.Bullet("VerifyParity (timeout: %s)", cfg.PivotVerifyTimeout)
 		w.Bullet("rebind kind-%s context to mgmt kubeconfig (subsequent phases target mgmt)",
 			cfg.KindClusterName)

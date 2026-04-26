@@ -766,7 +766,7 @@ type Config struct {
 	// When PivotEnabled is true, the bootstrap follows the standard CAPI
 	// "bootstrap-and-pivot" pattern: kind provisions a management cluster
 	// on Proxmox, clusterctl-moves CAPI state into it, the
-	// proxmox-bootstrap-system Secrets are mirrored, the workload cluster
+	// yage-system Secrets are mirrored, the workload cluster
 	// is created from the management cluster, and the kind cluster is
 	// torn down once the management cluster is verified to carry the
 	// same state.
@@ -972,7 +972,7 @@ func Load() *Config {
 	c.BootstrapSkipImmutableManifestWarning = envBool("BOOTSTRAP_SKIP_IMMUTABLE_MANIFEST_WARNING", false)
 	c.BootstrapClusterctlRegeneratedManifest = envBool("BOOTSTRAP_CLUSTERCTL_REGENERATED_MANIFEST", false)
 	c.Providers.Proxmox.CAPIMachineTemplateSpecRev = envBool("CAPI_PROXMOX_MACHINE_TEMPLATE_SPEC_REV", true)
-	c.CAPIManifestSecretNamespace = getenv("CAPI_MANIFEST_SECRET_NAMESPACE", "proxmox-bootstrap-system")
+	c.CAPIManifestSecretNamespace = getenv("CAPI_MANIFEST_SECRET_NAMESPACE", "yage-system")
 	c.CAPIManifestSecretName = getenv("CAPI_MANIFEST_SECRET_NAME", "proxmox-yage-manifest")
 	c.CAPIManifestSecretKey = getenv("CAPI_MANIFEST_SECRET_KEY", "workload.yaml")
 	c.Providers.Proxmox.BootstrapConfigFile = getenv("PROXMOX_BOOTSTRAP_CONFIG_FILE", "")
@@ -1134,7 +1134,7 @@ func Load() *Config {
 	c.ClusterctlCfg = getenv("CLUSTERCTL_CFG", "")
 	c.Providers.Proxmox.AdminConfig = getenv("PROXMOX_ADMIN_CONFIG", "")
 	c.Providers.Proxmox.CSIConfig = getenv("PROXMOX_CSI_CONFIG", "")
-	c.Providers.Proxmox.BootstrapSecretNamespace = getenv("PROXMOX_BOOTSTRAP_SECRET_NAMESPACE", "proxmox-bootstrap-system")
+	c.Providers.Proxmox.BootstrapSecretNamespace = getenv("PROXMOX_BOOTSTRAP_SECRET_NAMESPACE", "yage-system")
 	c.Providers.Proxmox.BootstrapSecretName = getenv("PROXMOX_BOOTSTRAP_SECRET_NAME", "")
 	c.Providers.Proxmox.BootstrapCAPMOXSecretName = getenv("PROXMOX_BOOTSTRAP_CAPMOX_SECRET_NAME", "proxmox-bootstrap-capmox-credentials")
 	c.Providers.Proxmox.BootstrapCSISecretName = getenv("PROXMOX_BOOTSTRAP_CSI_SECRET_NAME", "proxmox-bootstrap-csi-credentials")

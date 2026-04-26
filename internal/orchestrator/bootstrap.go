@@ -762,7 +762,7 @@ func Run(cfg *config.Config) int {
 	// CAPI bootstrap-and-pivot pattern. When PivotEnabled is true: kind
 	// provisions a single-node management cluster on Proxmox, clusterctl
 	// init runs against it, clusterctl move migrates CAPI inventory from
-	// kind to mgmt, the proxmox-bootstrap-system Secrets are mirrored, the
+	// kind to mgmt, the yage-system Secrets are mirrored, the
 	// kind context is rebound to point at the mgmt cluster, and downstream
 	// phases run against mgmt. The kind cluster is torn down at the end
 	// (unless --pivot-keep-kind / --no-delete-kind).

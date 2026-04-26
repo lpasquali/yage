@@ -15,7 +15,7 @@ package kindsync
 //
 // CAPI inventory (Cluster, Machines, KubeadmConfig, etc.) is *not* this
 // package's concern — clusterctl move handles that. We own the
-// proxmox-bootstrap-system Secrets and the live capmox copy only.
+// yage-system Secrets and the live capmox copy only.
 
 import (
 	"context"
@@ -67,7 +67,7 @@ func expectedHandoffTargets(cfg *config.Config) []handoffTarget {
 	}
 }
 
-// HandOffBootstrapSecretsToManagement copies the proxmox-bootstrap-system
+// HandOffBootstrapSecretsToManagement copies the yage-system
 // namespace and its Secrets from the kind management context to the
 // freshly-provisioned Proxmox management cluster.
 //
@@ -126,7 +126,7 @@ func HandOffBootstrapSecretsToManagement(cfg *config.Config, kindCtx, mgmtKubeco
 
 		// Ensure the destination namespace before applying any Secret
 		// into it — the Proxmox management cluster is freshly
-		// provisioned, so neither proxmox-bootstrap-system nor
+		// provisioned, so neither yage-system nor
 		// capmox-system exist there yet.
 		if !ensuredNS[tgt.Namespace] {
 			if nsErr := dstCli.EnsureNamespace(bg, tgt.Namespace); nsErr != nil {

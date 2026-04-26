@@ -143,6 +143,50 @@ type Provider interface {
 	// DescribePlan would force every provider to know the
 	// orchestrator's section ordering.
 	PlanDescriber
+
+	// KindSyncer returns the provider-specific fields persisted in
+	// the kind-side handoff Secret (Phase D / §11). Empty map = no
+	// state to persist.
+	KindSyncer
+
+	// Purger reverses provider-managed state outside the workload
+	// cluster (Phase D / §11). Idempotent. nil return = nothing to
+	// clean up; ErrNotApplicable when the provider has no cleanup
+	// concept.
+	Purger
+
+	// TemplateVars returns the provider-specific env-style values
+	// substituted into the clusterctl manifest template at render
+	// time (Phase D / §11). Universal vars (CLUSTER_NAME,
+	// KUBERNETES_VERSION, etc.) come from the orchestrator and are
+	// NOT in this map.
+	TemplateVars(cfg *config.Config) map[string]string
+}
+
+// KindSyncer is composed into Provider for callers that only need
+// the kind-Secret handoff capability (e.g. the kindsync rewrite
+// that iterates over the provider's returned map). See §11.
+type KindSyncer interface {
+	// KindSyncFields returns the provider's bare-key map of fields
+	// to persist. The orchestrator wraps them with a "<provider>."
+	// prefix when writing to the Secret so multiple providers'
+	// fields can coexist. Conventions:
+	//   - lowercase snake_case keys
+	//   - empty values omitted
+	//   - bools stringified as "true" / "false"
+	//   - sensitive fields returned same as non-sensitive (k8s
+	//     encrypts at rest)
+	KindSyncFields(cfg *config.Config) map[string]string
+}
+
+// Purger is composed into Provider so cleanup paths (--purge) can
+// depend on just the cleanup capability. See §11.
+type Purger interface {
+	// Purge reverses what EnsureIdentity / EnsureScope created plus
+	// any other provider-managed state outside the workload
+	// cluster. MUST be idempotent: re-running is safe; NotFound
+	// errors get swallowed; other errors propagate.
+	Purge(cfg *config.Config) error
 }
 
 // PlanDescriber is composed into Provider so callers can depend on

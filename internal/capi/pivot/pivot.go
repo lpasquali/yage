@@ -130,7 +130,7 @@ func EnsureManagementCluster(cfg *config.Config) (string, error) {
 //     and the mgmt cluster (the mgmt cluster's own Cluster object is
 //     created during clusterctl init's pivot-back; we rely on the move
 //     to bring the workload Cluster across).
-//  2. proxmox-bootstrap-system namespace exists with the four expected
+//  2. yage-system namespace exists with the four expected
 //     Secrets (proxmox-bootstrap-config, proxmox-bootstrap-capmox-credentials,
 //     proxmox-bootstrap-csi-credentials, proxmox-bootstrap-admin-credentials).
 //     Agent B owns the actual Secret hand-off; we only verify presence.
@@ -160,7 +160,7 @@ func VerifyParity(cfg *config.Config, mgmtKubeconfig string) error {
 	}
 	bsNS := cfg.Providers.Proxmox.BootstrapSecretNamespace
 	if bsNS == "" {
-		bsNS = "proxmox-bootstrap-system"
+		bsNS = "yage-system"
 	}
 
 	logx.Log("Verifying mgmt-vs-kind parity (timeout %s)…", timeout)

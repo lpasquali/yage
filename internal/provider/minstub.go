@@ -41,3 +41,24 @@ func (MinStub) EnsureCSISecret(cfg *config.Config, kubeconfigPath string) error 
 func (MinStub) DescribeIdentity(w PlanWriter, cfg *config.Config) {}
 func (MinStub) DescribeWorkload(w PlanWriter, cfg *config.Config) {}
 func (MinStub) DescribePivot(w PlanWriter, cfg *config.Config)    {}
+
+// KindSyncer default: no fields to persist. Most cost-only and
+// not-yet-implemented providers have nothing to round-trip through
+// kindsync.
+func (MinStub) KindSyncFields(cfg *config.Config) map[string]string {
+	return nil
+}
+
+// Purger default: no cleanup needed. Returns nil (NOT
+// ErrNotApplicable) — the orchestrator's --purge flow can call
+// this safely on every provider.
+func (MinStub) Purge(cfg *config.Config) error {
+	return nil
+}
+
+// TemplateVars default: empty map. Providers that need to inject
+// vendor-specific values into the clusterctl manifest template
+// override this.
+func (MinStub) TemplateVars(cfg *config.Config) map[string]string {
+	return nil
+}

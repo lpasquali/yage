@@ -4,6 +4,7 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -30,6 +31,7 @@ import (
 	"github.com/lpasquali/yage/internal/opentofux"
 	"github.com/lpasquali/yage/internal/pivot"
 	"github.com/lpasquali/yage/internal/promptx"
+	"github.com/lpasquali/yage/internal/provider"
 	"github.com/lpasquali/yage/internal/proxmox"
 	"github.com/lpasquali/yage/internal/shell"
 	"github.com/lpasquali/yage/internal/yamlx"
@@ -961,20 +963,41 @@ func validateMinVCPU(cfg *config.Config) error {
 	return nil
 }
 
-// preflightCapacity queries the Proxmox host capacity and compares it
-// against the configured cluster sizing × replicas. Returns nil when
-// the plan fits inside cfg.ResourceBudgetFraction × capacity. Returns a
-// non-nil error otherwise — unless cfg.AllowResourceOvercommit is set,
-// in which case the error is downgraded to a warning and nil is
-// returned.
+// preflightCapacity queries the active provider's Inventory and
+// compares it against the configured cluster sizing × replicas.
+// Returns nil when the plan fits inside cfg.ResourceBudgetFraction
+// × capacity. Returns a non-nil error otherwise — unless
+// cfg.AllowResourceOvercommit is set, in which case the error is
+// downgraded to a warning and nil is returned.
+//
+// Per Phase A.5: capacity acquisition lives behind the Provider
+// interface (provider.For(cfg).Inventory) instead of the previous
+// direct capacity.FetchHostCapacity + capacity.FetchExistingUsage
+// pair. Providers that don't model capacity as flat
+// Total/Used/Available (AWS, Azure, GCP, Hetzner, vSphere) return
+// ErrNotApplicable and the preflight is skipped silently per
+// §13.4 #1.
 func preflightCapacity(cfg *config.Config) error {
-	hc, err := capacity.FetchHostCapacity(cfg)
+	prov, err := provider.For(cfg)
+	if err != nil {
+		logx.Warn("capacity check skipped: provider lookup failed: %v", err)
+		return nil
+	}
+	inv, err := prov.Inventory(cfg)
+	if errors.Is(err, provider.ErrNotApplicable) {
+		// Provider's quota model doesn't fit flat
+		// Total/Used/Available — skip silently.
+		return nil
+	}
 	if err != nil {
 		// Don't block the run on a capacity-query failure — log and
 		// proceed. The user can still hit a real cap on the API server.
 		logx.Warn("capacity check skipped: %v", err)
 		return nil
 	}
+	hc := hostCapacityFromInventory(inv)
+	used := existingUsageFromInventory(inv)
+
 	plan := capacity.PlanFor(cfg)
 	threshold := cfg.ResourceBudgetFraction
 	if threshold <= 0 || threshold > 1 {
@@ -988,13 +1011,12 @@ func preflightCapacity(cfg *config.Config) error {
 		logx.Warn("Proxmox host is small (%d cores, %d MiB) — full kubeadm CAPI may be tight. Consider --bootstrap-mode k3s for a 1 vCPU / 1 GiB-per-node footprint.",
 			hc.CPUCores, hc.MemoryMiB)
 	}
-	// Existing-VM awareness: read what's already provisioned and
-	// fold it into the verdict alongside the plan. Soft budget +
-	// overcommit tolerance from cfg.
-	used, _ := capacity.FetchExistingUsage(cfg)
-	if used != nil && used.VMCount > 0 {
-		logx.Log("Existing-VM census: %d VMs, %d cores / %d MiB / %d GB already allocated",
-			used.VMCount, used.CPUCores, used.MemoryMiB, used.StorageGB)
+	// Existing-VM awareness: provider.Inventory.Used carries the
+	// structured aggregate; the human-readable census line is
+	// already in inv.Notes (provider-defined). Surface both.
+	if used.CPUCores > 0 || used.MemoryMiB > 0 || used.StorageGB > 0 {
+		logx.Log("Existing-VM census: %d cores / %d MiB / %d GB already allocated",
+			used.CPUCores, used.MemoryMiB, used.StorageGB)
 	}
 	tolerancePct := cfg.OvercommitTolerancePct
 	if tolerancePct <= 0 {
@@ -1032,6 +1054,48 @@ func preflightCapacity(cfg *config.Config) error {
 		return fmt.Errorf("capacity preflight: %s\n  re-run with --allow-resource-overcommit to override, raise --overcommit-tolerance-pct, or shrink the plan.%s", msg, hint)
 	}
 	return nil
+}
+
+// hostCapacityFromInventory translates a provider.Inventory's Total
+// (and any "allowed nodes: …" Notes entry) into the
+// capacity.HostCapacity shape that capacity.CheckCombined /
+// capacity.WouldFitAsK3s consume. Lives here rather than in the
+// capacity package so capacity stays free of the provider import.
+func hostCapacityFromInventory(inv *provider.Inventory) *capacity.HostCapacity {
+	hc := &capacity.HostCapacity{
+		CPUCores:  inv.Total.Cores,
+		MemoryMiB: inv.Total.MemoryMiB,
+		StorageGB: inv.Total.StorageGiB,
+		StorageBy: inv.Total.StorageByClass,
+	}
+	for _, n := range inv.Notes {
+		// Proxmox's Inventory emits "allowed nodes: pve1,pve2,…" as
+		// the first Note so the preflight log can keep its
+		// nodes=[…] field.
+		if strings.HasPrefix(n, "allowed nodes: ") {
+			raw := strings.TrimPrefix(n, "allowed nodes: ")
+			for _, part := range strings.Split(raw, ",") {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					hc.Nodes = append(hc.Nodes, part)
+				}
+			}
+			break
+		}
+	}
+	return hc
+}
+
+// existingUsageFromInventory translates inv.Used into the
+// capacity.ExistingUsage shape. VMCount and ByPool aren't carried
+// in the Inventory's structured fields (they're Proxmox-display-
+// only); CheckCombined doesn't read them so this is fine.
+func existingUsageFromInventory(inv *provider.Inventory) *capacity.ExistingUsage {
+	return &capacity.ExistingUsage{
+		CPUCores:  inv.Used.Cores,
+		MemoryMiB: inv.Used.MemoryMiB,
+		StorageGB: inv.Used.StorageGiB,
+	}
 }
 
 func totalReplicas(p capacity.Plan) int {

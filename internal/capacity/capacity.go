@@ -1,25 +1,29 @@
-// Package capacity computes the aggregate Proxmox host resources
-// available to yage (filtered by AllowedNodes / ProxmoxNode)
-// and compares them against the resources the planned management +
-// workload clusters would consume. Used by the orchestrator to
-// pre-flight a real run, and by --dry-run to print a capacity vs plan
-// summary.
+// Package capacity computes resource budget plans (PlanFor /
+// PlanForK3s / AllocationsFor) and verdicts (Check / CheckCombined
+// / WouldFitAsK3s) used by the orchestrator's preflight and
+// --dry-run to compare planned cluster sizing against host
+// headroom.
 //
-// Default budget threshold is 0.75 — clusters cannot use more than 3/4
-// of available host resources. The rest is reserved for the host OS,
-// the hypervisor, and overhead.
+// Phase A.5 split: cloud-specific inventory acquisition lives
+// behind the Provider interface (provider.For(cfg).Inventory) —
+// the Proxmox-specific HTTP queries that used to live here as
+// FetchHostCapacity / FetchExistingUsage moved to
+// internal/provider/proxmox/inventory.go in Phase A.2. This
+// package now consumes pre-built HostCapacity / ExistingUsage
+// values supplied by the orchestrator (see
+// bootstrap.hostCapacityFromInventory).
+//
+// Default budget threshold is 2/3 — clusters cannot use more than
+// 66% of available host resources. The rest is reserved for the
+// host OS, the hypervisor, and overhead.
 package capacity
 
 import (
-	"crypto/tls"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/lpasquali/yage/internal/config"
-	"github.com/lpasquali/yage/internal/proxmox"
 )
 
 // DefaultThreshold is the fraction of host resources that may be
@@ -84,57 +88,6 @@ type ExistingUsage struct {
 	ByPool map[string]int
 }
 
-// FetchExistingUsage queries every VM on the allowed nodes and
-// aggregates their declared (max*) resources. Returns an empty
-// ExistingUsage on a fresh host. Caller must have valid creds
-// just like FetchHostCapacity.
-func FetchExistingUsage(cfg *config.Config) (*ExistingUsage, error) {
-	auth, insecure, base, err := authForCfg(cfg)
-	if err != nil {
-		return nil, err
-	}
-	url := base + "/api2/json/cluster/resources?type=vm"
-	var resp struct {
-		Data []struct {
-			Node    string `json:"node"`
-			VMID    int    `json:"vmid"`
-			Name    string `json:"name"`
-			Type    string `json:"type"`
-			Status  string `json:"status"`
-			Pool    string `json:"pool"`
-			MaxCPU  int    `json:"maxcpu"`
-			MaxMem  int64  `json:"maxmem"`
-			MaxDisk int64  `json:"maxdisk"`
-		} `json:"data"`
-	}
-	if err := fetchJSON(url, auth, insecure, &resp); err != nil {
-		return nil, fmt.Errorf("query Proxmox /cluster/resources?type=vm: %w", err)
-	}
-	allowed := allowedSet(cfg)
-	out := &ExistingUsage{ByPool: map[string]int{}}
-	for _, v := range resp.Data {
-		// Only count actual VMs (containers/lxc are reported here too).
-		if v.Type != "qemu" {
-			continue
-		}
-		if len(allowed) > 0 {
-			if _, ok := allowed[v.Node]; !ok {
-				continue
-			}
-		}
-		out.VMCount++
-		out.CPUCores += v.MaxCPU
-		out.MemoryMiB += v.MaxMem / (1024 * 1024)
-		out.StorageGB += v.MaxDisk / (1024 * 1024 * 1024)
-		if v.Pool != "" {
-			out.ByPool[v.Pool]++
-		} else {
-			out.ByPool["(no pool)"]++
-		}
-	}
-	return out, nil
-}
-
 // Plan is the aggregate of CPU + memory + storage that the configured
 // workload + (optional) management clusters would consume.
 type Plan struct {
@@ -158,98 +111,6 @@ type PlanItem struct {
 // item.
 func (p PlanItem) Total() (cpu int, mem, disk int64) {
 	return p.CPUCores * p.Replicas, p.MemoryMiB * int64(p.Replicas), p.DiskGB * int64(p.Replicas)
-}
-
-// FetchHostCapacity calls Proxmox /api2/json/cluster/resources?type=node
-// and aggregates CPU + memory across allowed nodes. Storage is fetched
-// from /api2/json/storage and filtered to the configured CSI/cloudinit
-// backend names. Caller must have valid admin or clusterctl creds set
-// on cfg.
-func FetchHostCapacity(cfg *config.Config) (*HostCapacity, error) {
-	auth, insecure, base, err := authForCfg(cfg)
-	if err != nil {
-		return nil, err
-	}
-	nodesURL := base + "/api2/json/cluster/resources?type=node"
-
-	var nodesEnv struct {
-		Data []struct {
-			Node    string `json:"node"`
-			MaxCPU  int    `json:"maxcpu"`
-			MaxMem  int64  `json:"maxmem"`
-			MaxDisk int64  `json:"maxdisk"`
-			Status  string `json:"status"`
-		} `json:"data"`
-	}
-	if err := fetchJSON(nodesURL, auth, insecure, &nodesEnv); err != nil {
-		return nil, fmt.Errorf("query Proxmox /cluster/resources: %w", err)
-	}
-
-	allowed := allowedSet(cfg)
-	hc := &HostCapacity{StorageBy: map[string]int64{}}
-	for _, n := range nodesEnv.Data {
-		if n.Status != "online" {
-			continue
-		}
-		if len(allowed) > 0 {
-			if _, ok := allowed[n.Node]; !ok {
-				continue
-			}
-		}
-		hc.Nodes = append(hc.Nodes, n.Node)
-		hc.CPUCores += n.MaxCPU
-		hc.MemoryMiB += n.MaxMem / (1024 * 1024)
-	}
-
-	// Storage: aggregate the configured Proxmox storage backend (the
-	// VM disk store). cloudinit-storage and other shared backends are
-	// reported but we only sum the data store the CSI / VMs actually
-	// consume.
-	storageURL := base + "/api2/json/cluster/resources?type=storage"
-	var storageEnv struct {
-		Data []struct {
-			Storage string `json:"storage"`
-			Node    string `json:"node"`
-			Type    string `json:"type"`
-			MaxDisk int64  `json:"maxdisk"`
-			Shared  int    `json:"shared"`
-			Status  string `json:"status"`
-		} `json:"data"`
-	}
-	if err := fetchJSON(storageURL, auth, insecure, &storageEnv); err == nil {
-		want := strings.TrimSpace(cfg.ProxmoxCSIStorage)
-		// Avoid double-counting shared storage across nodes.
-		seen := map[string]bool{}
-		for _, s := range storageEnv.Data {
-			if s.Status != "available" && s.Status != "" {
-				continue
-			}
-			if want != "" && s.Storage != want {
-				continue
-			}
-			if len(allowed) > 0 {
-				if _, ok := allowed[s.Node]; !ok {
-					continue
-				}
-			}
-			key := s.Storage
-			if s.Shared == 0 {
-				key = s.Node + ":" + s.Storage
-			}
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			gb := s.MaxDisk / (1024 * 1024 * 1024)
-			hc.StorageGB += gb
-			hc.StorageBy[s.Storage] += gb
-		}
-	}
-
-	if len(hc.Nodes) == 0 {
-		return nil, fmt.Errorf("no eligible Proxmox nodes (allowed=%v); check PROXMOX_NODE / ALLOWED_NODES + node status", strings.Join(allowedSlice(allowed), ","))
-	}
-	return hc, nil
 }
 
 // PlanFor builds the resource plan from cfg. Includes the workload
@@ -485,70 +346,6 @@ func Check(plan Plan, host *HostCapacity, threshold float64) error {
 }
 
 // --- helpers ---
-
-func authForCfg(cfg *config.Config) (auth string, insecure bool, base string, err error) {
-	switch {
-	case cfg.ProxmoxAdminToken != "" && cfg.ProxmoxAdminUsername != "":
-		auth = "PVEAPIToken=" + cfg.ProxmoxAdminUsername + "=" + cfg.ProxmoxAdminToken
-	case cfg.ProxmoxToken != "" && cfg.ProxmoxSecret != "":
-		auth = "PVEAPIToken=" + cfg.ProxmoxToken + "=" + cfg.ProxmoxSecret
-	default:
-		return "", false, "", fmt.Errorf("no Proxmox credentials available (set --admin-username/--admin-token or --proxmox-token/--proxmox-secret)")
-	}
-	switch strings.ToLower(strings.TrimSpace(cfg.ProxmoxAdminInsecure)) {
-	case "true", "1", "yes", "y", "on":
-		insecure = true
-	}
-	base = strings.TrimRight(proxmox.HostBaseURL(cfg), "/")
-	if base == "" {
-		return "", false, "", fmt.Errorf("PROXMOX_URL is empty")
-	}
-	return
-}
-
-func fetchJSON(url, auth string, insecure bool, out any) error {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", auth)
-	tr := &http.Transport{}
-	if insecure {
-		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	c := &http.Client{Transport: tr}
-	resp, err := c.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
-}
-
-func allowedSet(cfg *config.Config) map[string]struct{} {
-	m := map[string]struct{}{}
-	for _, raw := range strings.Split(cfg.AllowedNodes, ",") {
-		raw = strings.TrimSpace(raw)
-		if raw != "" {
-			m[raw] = struct{}{}
-		}
-	}
-	if len(m) == 0 && cfg.ProxmoxNode != "" {
-		m[cfg.ProxmoxNode] = struct{}{}
-	}
-	return m
-}
-
-func allowedSlice(m map[string]struct{}) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
 
 func atoiOr(s string, def int) int {
 	s = strings.TrimSpace(s)

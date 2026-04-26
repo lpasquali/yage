@@ -12,12 +12,10 @@
 package bootstrap
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
-
-	"errors"
 
 	"github.com/lpasquali/yage/internal/capacity"
 	"github.com/lpasquali/yage/internal/config"
@@ -267,8 +265,14 @@ func planFinal(w *os.File, cfg *config.Config) {
 }
 
 // planCapacity prints the resource budget summary: requested vs
-// available host capacity. When Proxmox creds are present we query the
-// live host; otherwise we print only the requested side.
+// available host capacity. The active provider's Inventory drives
+// the live-host side; providers that return ErrNotApplicable
+// (per §13.4 #1: AWS/Azure/GCP/Hetzner/vSphere) skip the section.
+//
+// Phase A.5: capacity acquisition went through provider.Inventory
+// instead of the direct capacity.FetchHostCapacity +
+// capacity.FetchExistingUsage pair. Same math, same verdict — only
+// the plumbing moved.
 func planCapacity(w *os.File, cfg *config.Config) {
 	section(w, "Capacity budget")
 	plan := capacity.PlanFor(cfg)
@@ -276,7 +280,7 @@ func planCapacity(w *os.File, cfg *config.Config) {
 	if threshold <= 0 || threshold > 1 {
 		threshold = capacity.DefaultThreshold
 	}
-	bullet(w, "budget: %.0f%% of available Proxmox host CPU/memory/storage",
+	bullet(w, "budget: %.0f%% of available host CPU/memory/storage",
 		threshold*100)
 	for _, it := range plan.Items {
 		bullet(w, "  %-26s %d × (%d cores, %d MiB, %d GB) = %d cores, %d MiB, %d GB",
@@ -286,43 +290,53 @@ func planCapacity(w *os.File, cfg *config.Config) {
 	bullet(w, "TOTAL requested:  %d cores, %d MiB (%d GiB), %d GB disk",
 		plan.CPUCores, plan.MemoryMiB, plan.MemoryMiB/1024, plan.StorageGB)
 
-	hc, err := capacity.FetchHostCapacity(cfg)
+	prov, err := provider.For(cfg)
 	if err != nil {
-		skip(w, "host-capacity query: %v (run with valid Proxmox creds for live numbers)", err)
+		skip(w, "provider lookup: %v", err)
 		return
 	}
+	inv, err := prov.Inventory(cfg)
+	if errors.Is(err, provider.ErrNotApplicable) {
+		skip(w, "provider %q has no flat-pool inventory model — preflight skipped (§13.4 #1)", prov.Name())
+		return
+	}
+	if err != nil {
+		skip(w, "host-capacity query: %v (run with valid provider creds for live numbers)", err)
+		return
+	}
+	hc := hostCapacityFromInventory(inv)
+	used := existingUsageFromInventory(inv)
+
 	bullet(w, "host (allowed nodes %v): %d cores, %d MiB (%d GiB), %d GB disk",
 		hc.Nodes, hc.CPUCores, hc.MemoryMiB, hc.MemoryMiB/1024, hc.StorageGB)
 	if hc.IsSmallEnv() && cfg.BootstrapMode != "k3s" {
 		bullet(w, "💡 host is small — consider --bootstrap-mode k3s for a 1 vCPU / 1 GiB-per-node footprint")
 	}
 
-	// Existing-VM awareness: query what's already provisioned and
-	// fold it into the verdict alongside the plan. Soft budget
-	// (threshold) lets the user proceed silently; tight (between
-	// threshold and 1+tolerance) warns; abort (>1+tolerance) fails
-	// the real run unless --allow-resource-overcommit.
-	used, uerr := capacity.FetchExistingUsage(cfg)
+	// Existing-VM awareness: provider.Inventory.Used carries the
+	// structured aggregate (cores/mem/disk); the human-readable
+	// "existing VMs: N" + "VMs by pool: …" lines come from
+	// inv.Notes (provider-defined, Proxmox-shaped). Render both.
+	if used.CPUCores > 0 || used.MemoryMiB > 0 || used.StorageGB > 0 {
+		bullet(w, "existing usage on host: CPU %d cores, mem %d MiB, disk %d GB",
+			used.CPUCores, used.MemoryMiB, used.StorageGB)
+	} else {
+		bullet(w, "existing usage on host: none (fresh host)")
+	}
+	for _, n := range inv.Notes {
+		// The "allowed nodes" Note is already reflected in the
+		// host bullet above; skip duplicate output. Surface the
+		// rest verbatim (existing VMs / by-pool / advisories).
+		if strings.HasPrefix(n, "allowed nodes:") {
+			continue
+		}
+		bullet(w, "  %s", n)
+	}
+
 	tolerancePct := cfg.OvercommitTolerancePct
 	if tolerancePct <= 0 {
 		tolerancePct = capacity.DefaultOvercommitTolerancePct
 	}
-	if uerr == nil && used != nil && used.VMCount > 0 {
-		bullet(w, "existing VMs on host: %d (CPU %d cores, mem %d MiB, disk %d GB)",
-			used.VMCount, used.CPUCores, used.MemoryMiB, used.StorageGB)
-		// Show pool breakdown when there's more than one
-		if len(used.ByPool) > 1 {
-			parts := []string{}
-			for pool, n := range used.ByPool {
-				parts = append(parts, fmt.Sprintf("%s=%d", pool, n))
-			}
-			sort.Strings(parts)
-			bullet(w, "  by pool: %s", strings.Join(parts, ", "))
-		}
-	} else if uerr == nil {
-		bullet(w, "existing VMs on host: 0 (fresh host)")
-	}
-
 	verdict, msg := capacity.CheckCombined(plan, hc, used, threshold, tolerancePct)
 	switch verdict {
 	case capacity.VerdictFits:

@@ -69,7 +69,7 @@ OPTIONS
                                                       --aws-fargate-pod-cpu / --aws-fargate-pod-memory-gib.
                                       EKS modes require --bootstrap-mode kubeadm (EKS is upstream
                                       Kubernetes managed by AWS; K3s isn't compatible).
-                                      See docs/aws-cost-tiers.md for tier examples.
+                                      See docs/cost-and-pricing.md for tier examples.
         --aws-overhead-tier TIER      AWS service overhead bundle for the cost estimator:
                                         dev        — 0 NAT GWs, 1 ALB, 20 GB egress, 2 GB CloudWatch
                                         prod       — 1 NAT GW, 1 ALB, 100 GB egress, 10 GB CloudWatch (default)

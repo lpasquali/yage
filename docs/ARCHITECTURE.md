@@ -61,6 +61,38 @@ focused leaf packages:
 - `internal/helmvalues` — typed value-overlay generation.
 - `internal/cli` — flag parsing layer that hands a `*Config` back to
   `Run()`.
+- `internal/provider` — pluggable CAPI infrastructure-provider interface +
+  registry. 13 providers registered: aws, azure, gcp, hetzner, proxmox,
+  vsphere, openstack, docker (capd), digitalocean, linode, oci, ibmcloud,
+  equinix. Each provider package self-registers in `init()` and supplies the
+  per-cloud bits (clusterctl init args, K3s template, identity bootstrap, CSI
+  Secret, cost estimator). `provider.MinStub` is the embed-helper for
+  cost-only providers: defaults Capacity / EnsureIdentity / EnsureGroup /
+  EnsureCSISecret to ErrNotApplicable, K3sTemplate to ErrNotApplicable,
+  PatchManifest to a no-op. See `docs/providers.md`.
+- `internal/pricing` — live FinOps pricing fetchers, one per vendor with a
+  public catalog API (AWS Bulk JSON, Azure Retail Prices, GCP Cloud Billing
+  Catalog, Hetzner, DigitalOcean, Linode, OCI, IBM Cloud Global Catalog,
+  Equinix Metal). File-backed 24h cache at
+  `~/.cache/bootstrap-capi/pricing/`. No hardcoded $/hour or $/GB-month
+  numbers anywhere — when a vendor API is unreachable, callers receive
+  `ErrUnavailable` and the cost path surfaces "estimate unavailable" rather
+  than a stale figure. Also hosts the **taller** currency abstraction:
+  geo-detect via ip-api.com → ISO country → currency, override via
+  `BOOTSTRAP_CAPI_TALLER_CURRENCY`, FX from open.er-api.com (24h disk
+  cache). And per-vendor IAM/token onboarding hints with sentinel-based
+  first-run-only display. See `docs/cost-and-pricing.md`.
+- `internal/cost` — multi-cloud comparator. `--cost-compare` runs every
+  registered provider's `EstimateMonthlyCostUSD` against the same logical
+  cluster shape and prints a side-by-side table (sorted by total).
+  `--budget-usd-month N` adds a per-cloud retention column (how much
+  persistent storage your budget buys after compute).
+- `internal/capacity` — host-capacity preflight. Queries Proxmox's
+  `/cluster/resources` for both node totals (CPU/mem/storage) and
+  existing-VM census (sum of every qemu VM's declared max{cpu,mem,disk}).
+  `CheckCombined(plan, host, existing, soft, tolerance)` returns a
+  trichotomy verdict — fits / tight / abort — that drives both the
+  dry-run plan and the real-run preflight. See `docs/capacity-preflight.md`.
 - `internal/shell` / `internal/logx` / `internal/promptx` / `internal/sysinfo`
   / `internal/versionx` / `internal/yamlx` — small support utilities (process
   exec, structured logging, prompts, OS/arch detection, semver parsing, YAML
@@ -277,6 +309,45 @@ flowchart TD
     KCR --> KCR_SRC[kustomize manifest]
     SSO --> SSO_SRC[kustomize manifest]
 ```
+
+## Cost / pricing / capacity subsystem
+
+Three cooperating packages turn `--dry-run` and `--cost-compare` into
+useful planning signals without provisioning anything:
+
+```mermaid
+flowchart LR
+    cli[--dry-run / --cost-compare<br/>--budget-usd-month] --> plan[bootstrap.planMonthlyCost<br/>bootstrap.planCostCompare<br/>bootstrap.planCapacity]
+    plan --> prov[provider.For cfg<br/>EstimateMonthlyCostUSD]
+    prov --> pricing[internal/pricing.Fetch<br/>vendor, sku, region]
+    pricing --> live[(vendor catalog<br/>HTTP GET, free APIs)]
+    pricing --> cache[(~/.cache/bootstrap-capi/<br/>pricing/*.json)]
+    pricing --> taller[ToTaller<br/>FormatTaller]
+    taller --> fx[(open.er-api.com<br/>FX rates, 24h cache)]
+    taller --> geo[(ip-api.com<br/>country → currency)]
+    plan --> cap[capacity.FetchHostCapacity<br/>capacity.FetchExistingUsage<br/>capacity.CheckCombined]
+    cap --> pmx[(Proxmox /cluster/resources<br/>node + vm aggregate)]
+    plan --> onboard[pricing.MaybePrintOnboarding<br/>shows IAM/token setup once]
+    onboard --> sentinel[(~/.cache/.../.onboarded-vendor)]
+```
+
+Three independent invariants:
+
+- **No hardcoded money numbers.** Every `$/hour`, `$/month`, `$/GB-mo`
+  comes from a live API call. When the API is unreachable, the cost
+  path returns `ErrUnavailable` (wrapped in `ErrNotApplicable`) and
+  the dry-run shows "estimate unavailable: <specific reason>"
+  instead of fabricating a number.
+- **No hardcoded display currency.** All amounts pass through
+  `pricing.FormatTaller` which converts via live FX into the
+  geo-detected (or operator-overridden) local currency.
+- **No silent overcommit.** Capacity preflight folds in the existing
+  VMs already on the host, not just the planned cluster. The
+  trichotomy verdict (fits / tight / abort) is honest about both
+  soft-budget and hard-ceiling boundaries.
+
+See `docs/cost-and-pricing.md` and `docs/capacity-preflight.md` for
+the user-facing flag/env reference.
 
 ## Bootstrap-and-pivot pattern
 

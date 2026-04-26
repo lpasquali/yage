@@ -326,3 +326,549 @@ doesn't deliver itself.
 Most of the churn is mechanical (field renames, function-call
 indirection). The real design risk is in Phase B (per-provider
 plan content) and Phase E (pivot semantics across clouds).
+
+---
+
+# Refinement (round 2)
+
+This section nails down the design questions surfaced during plan
+review: PlanWriter shape, Config tree shape, per-phase risk +
+rollback, per-phase test plan, and open decisions to make before
+execution.
+
+## R.1 Phase B — concrete `PlanWriter` design
+
+### Interface
+
+New package `internal/plan` (new — keeps `bootstrap` orchestrator
+and `provider/*` from depending on each other for plan output):
+
+```go
+package plan
+
+// Writer is the seam between the orchestrator's structured plan
+// output and per-provider DescribePlan implementations. Three
+// primitives: section header, bullet, skip.
+//
+// Implementations live in internal/bootstrap/plan_writer.go (text
+// renderer) and in tests (capturing renderer). Providers don't
+// need to know which is active.
+type Writer interface {
+    Section(title string)                       // ▸ <title>
+    Bullet(format string, args ...any)          //     • <text>
+    Skip(format string, args ...any)            //     ◦ skip: <reason>
+}
+```
+
+That's it. Three methods, no extra ceremony. The renderer
+matches the existing `section()` / `bullet()` / `skip()`
+free-functions in `internal/bootstrap/plan.go` byte-for-byte —
+output stays identical for Proxmox.
+
+### Provider method
+
+```go
+// In internal/provider/provider.go
+type Provider interface {
+    // ... existing methods ...
+
+    // DescribePlan emits the provider-specific phases for a
+    // dry-run plan: identity bootstrap, manifest variant, CSI
+    // wiring, pivot specifics. Cross-cutting sections (capacity,
+    // cost, allocations) stay in the orchestrator and are NOT
+    // written here.
+    //
+    // Implementations should call w.Section(...) once per phase
+    // and w.Bullet/Skip for content. Phases this provider doesn't
+    // participate in are simply omitted (no need to call Skip).
+    DescribePlan(w plan.Writer, cfg *config.Config)
+}
+```
+
+### Phase naming — drop the bash numbers
+
+The bash script's `Phase 2.0 / 2.4 / 2.8 / 2.9 / 2.95` numbering
+is cruft. Named phases are clearer and don't pretend the order is
+ordinal-numeric:
+
+| Old (bash-derived)                                          | New (named)                        |
+|-------------------------------------------------------------|------------------------------------|
+| `Phase 2.0 — Proxmox identity bootstrap (OpenTofu)`         | `Identity bootstrap`               |
+| `Phase 2.1 — clusterctl credentials`                        | `clusterctl credentials`           |
+| `Phase 2.4 — kind cluster`                                  | `kind management cluster`          |
+| `Phase 2.8 — clusterctl init on kind`                       | `clusterctl init`                  |
+| `Phase 2.9 — workload Cluster (Proxmox)`                    | `Workload Cluster (<provider>)`    |
+| `Phase 2.95 — Pivot to Proxmox-hosted management cluster`   | `Pivot to managed mgmt cluster`    |
+| `Phase 2.10 — Argo CD on workload`                          | `Argo CD on workload`              |
+| `Final — kind teardown`                                     | `kind teardown`                    |
+
+### Worked AWS dry-run example (post-Phase-B)
+
+Here is what `bootstrap-capi --dry-run` would produce on AWS once
+Phase B lands. Compare with the current output (which wrongly
+prints Proxmox phases):
+
+```
+────────────────────────────────────────────────────────────────────────────
+📝 DRY-RUN PLAN — bootstrap-capi (provider: aws)
+────────────────────────────────────────────────────────────────────────────
+
+▸ Pre-phase
+    • ClusterSetID = capi-aws-prod (auto-derived)
+    • Active provider: aws (region: eu-west-1)
+
+▸ Host dependencies
+    • aws-iam-authenticator v0.6.x   (present)
+    • clusterctl v1.13.0             (present)
+    • kind v0.31.0                   (present)
+
+▸ Identity bootstrap                                          [aws/DescribePlan]
+    • AWS account: 123456789012 (from STS GetCallerIdentity)
+    • IAM role: arn:aws:iam::…:role/bootstrap-capi-controllers (would create)
+    • IAM access key: bootstrap-capi-controllers (would rotate if --recreate-identities)
+
+▸ kind management cluster
+    • create kind cluster 'capi-provisioner' (config: <ephemeral default>)
+
+▸ clusterctl init                                             [aws/DescribePlan]
+    • providers: infrastructure=aws (CAPA v2.x), bootstrap=kubeadm, control-plane=kubeadm
+    • CAPA env: AWS_B64ENCODED_CREDENTIALS (derived from current AWS_PROFILE)
+
+▸ Workload Cluster (aws)                                      [aws/DescribePlan]
+    • Cluster: default/capi-aws-quickstart, k8s v1.30.0
+    • mode: eks (managed control plane)
+    • workers: 3 × m5.xlarge (Managed Node Group)
+    • EBS: 30 GB gp3 per worker
+    • VPC: bootstrap-capi-managed (would create)
+    • overhead tier: prod (1 NAT GW, 1 ALB, 100 GB egress, 10 GB CW logs)
+
+▸ Argo CD on workload
+    • Argo CD Operator + ArgoCD CR (v3.3.8, operator v0.16.0)
+    • app-of-apps: https://github.com/lpasquali/workload-app-of-apps.git @ main, path examples/aws
+
+▸ Pivot to managed mgmt cluster
+    ◦ skip: PIVOT_ENABLED=false (kind remains the management cluster)
+
+▸ kind teardown
+    ◦ skip: PIVOT_ENABLED=false (kind stays — it IS the management cluster)
+
+▸ Capacity budget                                             [orchestrator]
+    • [aws]: capacity query not implemented (Service Quotas API — future work)
+    • plan: 6 cores, 12288 MiB, 120 GB disk
+
+▸ Estimated monthly cost (provider: aws)                      [orchestrator]
+    • taller currency: EUR (geo: IT)
+    • EKS managed control plane           1 × €68.34 = €68.34
+    • workload workers (m5.xlarge × 3)    3 × €189.78 = €569.34
+    • CP boot volumes (30 GB gp3)         3 × €2.81  = €8.43
+    • NAT Gateway                         1 × €33.51 = €33.51
+    • Application Load Balancer           1 × €30.05 = €30.05
+    • Internet egress (~100 GB/mo)        1 × €8.43  = €8.43
+    • TOTAL: ~€717.10 / month (EUR)
+
+▸ Workload allocations                                        [orchestrator]
+    • total worker capacity, system-apps reserve, db/obs/product thirds — unchanged
+
+────────────────────────────────────────────────────────────────────────────
+✅ Dry run complete — NO state was changed.
+────────────────────────────────────────────────────────────────────────────
+```
+
+The `[aws/DescribePlan]` / `[orchestrator]` annotations above are
+internal commentary — wouldn't appear in real output. They show
+*where* each section comes from so you can see the seam clearly.
+
+### Wiring inside `bootstrap/plan.go`
+
+```go
+func planForProvider(w plan.Writer, cfg *config.Config) {
+    p, err := provider.For(cfg)
+    if err != nil {
+        return // unknown provider — fall back to nothing
+    }
+    p.DescribePlan(w, cfg)
+}
+
+func Plan(w *os.File, cfg *config.Config) {
+    pw := plan.NewTextWriter(w)
+    planPrePhase(pw, cfg)              // orchestrator
+    planHostDeps(pw, cfg)              // orchestrator
+    planForProvider(pw, cfg)           // provider — identity/init/cluster/pivot/teardown
+    planArgoCD(pw, cfg)                // orchestrator (Argo is universal)
+    planCapacity(pw, cfg)              // orchestrator + Provider.Capacity / ExistingUsage
+    planMonthlyCost(pw, cfg)           // orchestrator + Provider.EstimateMonthlyCostUSD
+    planAllocations(pw, cfg)           // orchestrator
+    if cfg.CostCompare {
+        planCostCompare(pw, cfg)       // orchestrator
+    }
+    if cfg.BudgetUSDMonth > 0 {
+        planRetention(pw, cfg)         // orchestrator
+    }
+}
+```
+
+Order isn't sacred — Argo could move into the provider when a
+cloud has Argo-installation specifics, but for now it's identical
+across providers (CAAPH HelmChartProxy + ArgoCD CR).
+
+## R.2 Phase C — Config tree shape
+
+### What goes where
+
+```
+type Config struct {
+    // ── Common (universal across providers) ────────────────────
+    ClusterName              string  // CAPI Cluster name
+    KubernetesVersion        string  // 1.30.0, 1.35.0, ...
+    ControlPlaneMachineCount string
+    WorkerMachineCount       string
+    BootstrapMode            string  // kubeadm | k3s
+    InfraProvider            string  // proxmox | aws | ...
+
+    // ── Common sizing (universal; per-role) ────────────────────
+    ControlPlaneNumSockets   string
+    ControlPlaneNumCores     string
+    ControlPlaneMemoryMiB    string
+    ControlPlaneBootVolumeSize string
+    WorkerNumSockets         string
+    WorkerNumCores           string
+    WorkerMemoryMiB          string
+    WorkerBootVolumeSize     string
+
+    // ── Cross-cutting subsystems ───────────────────────────────
+    Capacity   CapacityConfig    // ResourceBudgetFraction, OvercommitTolerancePct, …
+    Cost       CostConfig        // CostCompare, BudgetUSDMonth, Hardware* (TCO)
+    Pricing    PricingConfig     // PrintPricingSetup
+    Pivot      PivotConfig       // PivotEnabled, MgmtClusterName, MgmtKubernetesVersion, …
+    ArgoCD     ArgoCDConfig      // ArgoCDVersion, ArgoCDOperatorVersion, AppOfAppsRepo, …
+
+    // ── Per-provider sub-configs ───────────────────────────────
+    Providers struct {
+        Proxmox      ProxmoxConfig      // 83 fields today
+        AWS          AWSConfig          // ~30 fields
+        Azure        AzureConfig        // ~10 fields
+        GCP          GCPConfig          // ~10 fields
+        Hetzner      HetznerConfig      // ~6 fields
+        DigitalOcean DigitalOceanConfig // 3 fields
+        Linode       LinodeConfig       // 3 fields
+        OCI          OCIConfig          // 3 fields
+        IBMCloud     IBMCloudConfig     // 3 fields
+    }
+}
+```
+
+### Decision matrix — what's "common" vs "per-provider"
+
+The discriminator is *whether the field's meaning is universal or
+not*. Examples:
+
+| Field                     | Lives in           | Why                                                   |
+|---------------------------|--------------------|-------------------------------------------------------|
+| `ClusterName`             | top-level          | Every provider has a CAPI Cluster name                |
+| `KubernetesVersion`       | top-level          | Universal                                             |
+| `ControlPlaneMachineCount`| top-level          | Universal                                             |
+| `BootstrapMode`           | top-level          | Universal kubeadm/k3s discriminator                   |
+| `WorkerMemoryMiB`         | top-level          | Per-role sizing (universal request)                   |
+| `ProxmoxURL`              | Providers.Proxmox  | Proxmox-specific                                      |
+| `AWSMode`                 | Providers.AWS      | CAPA-specific (unmanaged/eks/eks-fargate)             |
+| `HetznerLocation`         | Providers.Hetzner  | Hetzner-specific datacenter code                      |
+| `ResourceBudgetFraction`  | Capacity           | Cross-cutting subsystem, not per-provider             |
+| `BudgetUSDMonth`          | Cost               | Cross-cutting subsystem                               |
+| `PrintPricingSetup`       | Pricing            | Cross-cutting subsystem                               |
+| `PivotEnabled`            | Pivot              | Cross-cutting subsystem                               |
+| `MgmtClusterName`         | Pivot              | Pivot-specific (orthogonal to which provider hosts mgmt) |
+| `ArgoCDVersion`           | ArgoCD             | Universal Argo CD wiring                              |
+
+### Back-compat — env vars
+
+ENV var names are the program's *external* contract. They MUST
+NOT change. Internal struct paths are free to move:
+
+```go
+// internal/config/config.go — Load()
+c.Providers.Proxmox.URL          = getenv("PROXMOX_URL", "")
+c.Providers.Proxmox.AdminUsername = getenv("PROXMOX_ADMIN_USERNAME", "")
+c.Capacity.ResourceBudgetFraction = envFloat("RESOURCE_BUDGET_FRACTION", 2.0/3.0)
+c.Capacity.OvercommitTolerancePct = envFloat("OVERCOMMIT_TOLERANCE_PCT", 15.0)
+c.Cost.BudgetUSDMonth             = envFloat("BUDGET_USD_MONTH", 0)
+// ...
+```
+
+### Back-compat — CLI flags
+
+Two options, pick one and document:
+
+| Option   | Today's flag       | After Phase C                       |
+|----------|--------------------|-------------------------------------|
+| **Flat** (recommended) | `--proxmox-token` | `--proxmox-token` (unchanged) |
+| **Nested** | `--proxmox-token` | `--provider.proxmox.token` (new alias; old form deprecated) |
+
+**Recommendation: Flat.** CLI flags are user-facing; the struct
+namespacing is internal. Don't make users type `--provider.proxmox.token`.
+
+The CLI parser knows the prefix → field mapping:
+
+```go
+case "--proxmox-token":
+    c.Providers.Proxmox.Token = shiftVal(a)
+case "--aws-mode":
+    c.Providers.AWS.Mode = shiftVal(a)
+```
+
+Mechanical; no UX change.
+
+### Migration approach
+
+One commit per provider sub-config. Order:
+
+1. Create `internal/config/proxmox.go` with `ProxmoxConfig` struct
+2. Move 83 fields out of top-level `Config` into
+   `Config.Providers.Proxmox`
+3. Update every reader (`grep -r 'cfg\.Proxmox' --include='*.go'`)
+4. Build + test + commit
+5. Repeat for AWS / Azure / GCP / Hetzner / DO / Linode / OCI / IBM
+6. Final commit: introduce `Capacity` / `Cost` / `Pricing` / `Pivot`
+   / `ArgoCD` sub-structs
+
+Each commit is reviewable independently. Total ~10 commits over a
+few days; bisectable if anything breaks.
+
+## R.3 Risk + rollback per phase
+
+### Phase A — Capacity behind interface
+
+| Aspect       | Detail                                                             |
+|--------------|--------------------------------------------------------------------|
+| What breaks  | Capacity preflight on Proxmox if the new wiring drops a code path  |
+| Canary       | Run `--dry-run` against `legion.local` Proxmox before merging      |
+| Detection    | Capacity test suite (`internal/capacity/capacity_test.go`)         |
+| Rollback     | Revert single commit (mechanical, isolated)                        |
+| Blast radius | Proxmox dry-run + real-run preflight (no other provider impacted)  |
+
+### Phase B — Plan body delegation
+
+| Aspect       | Detail                                                             |
+|--------------|--------------------------------------------------------------------|
+| What breaks  | Dry-run output regression — wrong text, missing sections, panic    |
+| Canary       | Snapshot tests of dry-run output for proxmox/aws/hetzner pre+post  |
+| Detection    | Snapshot diff in CI                                                |
+| Rollback     | Revert. Snapshot tests catch regressions automatically.            |
+| Blast radius | Dry-run plan output only. No real-run impact.                      |
+
+### Phase C — Config namespacing
+
+| Aspect       | Detail                                                             |
+|--------------|--------------------------------------------------------------------|
+| What breaks  | Compile errors during the migration; runtime errors if a field     |
+|              | reference is missed. Env var contract unchanged.                   |
+| Canary       | `go build ./...` is the canary — won't compile until consistent.   |
+| Detection    | Build fails. Tests fail.                                           |
+| Rollback     | Revert per-provider commit (each is self-contained).               |
+| Blast radius | Whole binary; but `go build` won't complete until refactor is      |
+|              | locally consistent, so partial failure isn't a release risk.       |
+
+### Phase D — Generic kindsync + Purge
+
+| Aspect       | Detail                                                             |
+|--------------|--------------------------------------------------------------------|
+| What breaks  | Existing kind clusters with the OLD `proxmox-bootstrap-system`     |
+|              | namespace. After D, the orchestrator looks for a new namespace.    |
+| Canary       | Spin up a kind cluster with the OLD namespace (use a previous      |
+|              | bootstrap-capi version) and verify the new code can read+migrate.  |
+| Detection    | End-to-end test on a stale kind cluster                            |
+| Rollback     | Tricky — if a user upgraded and the rename ran, downgrading will   |
+|              | look at the old namespace and not find anything. Mitigation:       |
+|              | bootstrap-capi reads BOTH old and new namespace for one release    |
+|              | cycle, only writes the new one.                                    |
+| Blast radius | All Proxmox users on bootstrap-capi. Highest user-visible risk.    |
+
+**Mitigation plan for D:**
+
+1. v1: read `proxmox-bootstrap-system` (old) AND `bootstrap-config-system`
+   (new); write to BOTH.
+2. v2 (one release later): write only to new; still read old.
+3. v3: drop old read.
+
+This gives users two release windows to upgrade through. Alternative
+is a one-shot migration on first run, but read-from-both is safer.
+
+### Phase E — Pivot generalization
+
+| Aspect       | Detail                                                             |
+|--------------|--------------------------------------------------------------------|
+| What breaks  | Pivot regression — `clusterctl move` fails or moves wrong objects  |
+| Canary       | Real pivot run against a CAPD test mgmt cluster + Proxmox real run |
+| Detection    | E2E test in CI (or operator-driven before merge)                   |
+| Rollback     | Revert. Pivot is opt-in (`--pivot`) so non-pivot flows unaffected. |
+| Blast radius | Only users running with `--pivot`. Smaller than D.                 |
+
+## R.4 Test plan per phase
+
+### Phase A
+
+- Existing `internal/capacity/capacity_test.go` keeps passing
+  unchanged (capacity math is independent of where the data comes from).
+- Add an interface-conformance test: `provider.Get("proxmox")
+  .ExistingUsage(cfg)` returns the same struct as
+  `capacity.FetchExistingUsage(cfg)` did before.
+- Manual: dry-run against `legion.local` (the user's Proxmox).
+  Expect identical output.
+
+### Phase B
+
+- Snapshot test per provider: `bootstrap.Plan(buf, cfg)` against
+  a fixture cfg, compare against a checked-in golden file.
+- Goldens for: proxmox (default), aws (default), hetzner
+  (default), aws (eks-fargate), proxmox (k3s mode), proxmox (with
+  pivot enabled).
+- Run with `BOOTSTRAP_CAPI_PRICING_DISABLED=true` so live API
+  flakiness doesn't affect snapshots.
+
+### Phase C
+
+- `go build ./... && go vet ./...` is the floor.
+- All existing tests keep passing — no behavior change, only
+  field-path changes.
+- Add a `TestEnvVarBackcompat` that loads with each old env var
+  name and asserts the new field path receives the value.
+
+### Phase D
+
+- New test: `TestKindSyncBackcompatRead` spins up an in-memory
+  kind cluster with the OLD `proxmox-bootstrap-system` Secret,
+  runs the new orchestrator's read path, asserts data is recovered.
+- `TestKindSyncDualWrite` asserts that after Phase D the
+  orchestrator writes to BOTH namespaces.
+- E2E test that runs the full bootstrap on a fresh kind cluster
+  with the new namespace and verifies all subsequent flows work.
+
+### Phase E
+
+- E2E test: bootstrap on Proxmox with `--pivot`; verify
+  `clusterctl move` succeeds and the workload remains operational
+  on the pivoted mgmt cluster.
+- Negative test: `Provider.PivotTarget` for AWS returns
+  `ErrNotApplicable` — orchestrator skips pivot cleanly.
+
+## R.5 Open decisions — answer before starting
+
+These are choices that affect the plan but I'm not entitled to
+make alone. Pre-execution decision list:
+
+1. **Drop the bash-derived phase numbers** (`2.0`, `2.4`, `2.8`,
+   `2.9`, `2.95`) in favor of named phases?
+   - **Recommendation:** yes (clearer; numbers were never
+     meaningful, they're bash artifacts).
+   - **Cost of "yes":** users who scripted around the old phase
+     names see different output. No automated breakage (the
+     dry-run is human-readable, not machine-parseable today).
+
+2. **CLI flag namespacing**: keep flat (`--proxmox-token`) or add
+   nested forms (`--provider.proxmox.token`)?
+   - **Recommendation:** flat. Internal struct namespacing is
+     enough — users don't benefit from CLI churn.
+
+3. **AWS dry-run quality bar in Phase B**: minimum (don't lie —
+   show the right phase names) or full (real value — show
+   IAM/VPC/EKS specifics like the example above)?
+   - **Recommendation:** full. The current "AWS dry-run shows
+     Proxmox content" is bad enough that the minimum bar is
+     embarrassing. Investing in real AWS dry-run pays off
+     immediately for users who want to plan AWS bootstraps.
+
+4. **Pivot scope in Phase E**: every provider, or only those
+   that ship a working K3s template (proxmox, hetzner, plus
+   anyone who builds one)?
+   - **Recommendation:** every provider, with `Provider.PivotTarget`
+     returning `ErrNotApplicable` for those without K3s today.
+     Keeps the interface clean; providers opt in by implementing
+     the K3s template.
+
+5. **Kind-Secret namespace migration timeline (Phase D)**: how
+   many releases of dual-read-dual-write?
+   - **Recommendation:** 2 releases. Long enough for users to
+     upgrade through; short enough to keep the back-compat code
+     out of the codebase indefinitely.
+
+6. **Should `--purge` be Phase D or split**: do `Provider.Purge`
+   alongside the kindsync rename, or separate phase?
+   - **Recommendation:** alongside D. Both involve cleaning
+     state-tracking artifacts; one commit covers both.
+
+7. **K3s template per new provider**: in scope of Phase E, or
+   defer to a separate effort?
+   - **Recommendation:** defer. Phase E is about the *pivot
+     mechanism* working with any provider that *has* a K3s
+     template, not about building K3s templates for the 10
+     providers that don't have one today.
+
+## R.6 Phase A — concrete execution recipe
+
+To kick off Phase A immediately, here's the exact sequence:
+
+1. **Move the types.** Move `HostCapacity` and `ExistingUsage`
+   structs from `internal/capacity/capacity.go` into a new
+   `internal/capacity/types.go` (no behavior change; just makes
+   the types importable without dragging in the Proxmox HTTP code).
+
+2. **Move the Proxmox calls.** Cut `FetchHostCapacity` /
+   `FetchExistingUsage` (and their helpers `authForCfg`,
+   `fetchJSON`, `allowedSet`, etc.) from
+   `internal/capacity/capacity.go` to a new
+   `internal/provider/proxmox/capacity.go`. These become package-
+   private helpers of the proxmox provider.
+
+3. **Wire the provider methods.**
+   ```go
+   // internal/provider/proxmox/proxmox.go
+   func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) {
+       return fetchHostCapacity(cfg) // package-private now
+   }
+   func (p *Provider) ExistingUsage(cfg *config.Config) (*provider.ExistingUsage, error) {
+       return fetchExistingUsage(cfg)
+   }
+   ```
+
+4. **Add `ExistingUsage` to the interface.**
+   ```go
+   // internal/provider/provider.go
+   type Provider interface {
+       // ... existing ...
+       ExistingUsage(cfg *config.Config) (*ExistingUsage, error)
+   }
+   ```
+   And update `MinStub` to default it to `ErrNotApplicable`.
+
+5. **Replace direct calls in bootstrap and plan.** 4 sites:
+   - `internal/bootstrap/bootstrap.go:971` — `capacity.FetchHostCapacity` → `prov.Capacity`
+   - `internal/bootstrap/bootstrap.go:994` — `capacity.FetchExistingUsage` → `prov.ExistingUsage`
+   - `internal/bootstrap/plan.go:289` — same
+   - `internal/bootstrap/plan.go:305` — same
+   - `internal/provider/proxmox/proxmox.go:46` — same (was self-calling)
+
+6. **Build + vet + test.**
+
+7. **Commit.** One focused commit with the message
+   "refactor(capacity): move Proxmox host/usage queries behind
+   Provider interface".
+
+Estimated time: 1 evening's work for a focused dev. No new tests
+strictly required (existing capacity tests still cover the math),
+though an interface-conformance test would be nice.
+
+---
+
+## Decision summary
+
+If we go with the recommendations above:
+
+- ✅ Phase B uses a 3-method `plan.Writer` interface, drops bash phase numbers
+- ✅ Phase C uses sub-struct namespacing in Go, keeps env vars + CLI flags flat
+- ✅ Phase D dual-reads/dual-writes for 2 releases for safe migration
+- ✅ AWS dry-run gets a full real treatment in Phase B (not just a name fix)
+- ✅ Every phase has a defined canary + rollback path
+- ✅ Snapshot tests gate Phase B, env-var backcompat tests gate Phase C
+
+With these refinements the plan is executable end-to-end without
+revisiting design decisions mid-flight.
+

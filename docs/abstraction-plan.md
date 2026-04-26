@@ -1746,3 +1746,247 @@ Go for every interface method, flagging awkwardness with file:line
 citations. ~800–1200 words per report. The agents did not modify
 code. This section is the synthesis.
 
+---
+
+## 14. Phase clusters — actionable execution plan
+
+§3 sketched the five phases. §4 sequenced them. §10–§13 refined
+the spec. This section pulls everything into one place per phase:
+**what lands, in which commits, gated by what test, depending on
+what.** Implementer reference; ready to start at the top.
+
+### Sequencing
+
+```
+        A   ───┐
+               ├──►  B   ───┐
+        C   ───┘            ├──►  E
+                            │
+                D   ────────┘
+```
+
+- **A** is foundational (Inventory) — go first.
+- **C** is mechanical (config tree) — run in parallel with A; both
+  unblock the others.
+- **B** (plan delegation) needs A's interface + C's config tree.
+- **D** (kindsync + Purge + TemplateVars) needs A + C. Can land
+  alongside B.
+- **E** (pivot) needs A + C + D, and benefits from B for plan output.
+
+Each phase's commits are individually shippable. No merge windows,
+no "release candidates" — prototype phase, momentum over ceremony.
+
+### 14.A — Inventory behind the interface
+
+**Goal.** `Provider.Inventory` replaces `capacity.FetchHostCapacity`
++ `capacity.FetchExistingUsage`. Provider is the single source of
+truth for "what's there + what's free."
+
+**Locked deliverables** (per §10, §13.4 #1, #2; recipe in R.6):
+
+- New types: `Inventory{Total, Used, Available, Notes}`,
+  `ResourceTotals{Cores, MemoryMiB, StorageGiB, StorageByClass}`
+- `Provider.Inventory(cfg) (*Inventory, error)` — replaces
+  `Provider.Capacity`; sub-interface name stays `CapacityProvider`
+- Move `FetchHostCapacity` + `FetchExistingUsage` →
+  `internal/provider/proxmox/inventory.go` as private helpers
+- All non-Proxmox providers (incl. OpenStack initially): return
+  `ErrNotApplicable`
+- Replace 4 call sites in `bootstrap.go` + `plan.go`
+- Update `MinStub` default
+
+**Commit sequence.**
+
+```
+A.1  feat(provider): introduce Inventory + ResourceTotals types
+A.2  refactor(capacity): move host/usage helpers into provider/proxmox/
+A.3  feat(provider/proxmox): implement Inventory; merge two-call into one
+A.4  feat(provider): add Inventory to interface; drop Capacity; MinStub default
+A.5  refactor(bootstrap,plan): collapse capacity.Fetch* → provider.Inventory
+```
+
+**Dependencies.** None. Pure refactor; no behavior change for
+Proxmox.
+
+**Gate.** `go test ./...` passes. Dry-run against `legion.local`
+produces byte-identical plan output to today (the math doesn't
+change, only where it lives).
+
+### 14.C — Config tree namespacing
+
+**Goal.** 83 `Proxmox*` fields, plus per-cloud `AWS*` / `Azure*` /
+…, all move under `cfg.Providers.<Name>.*`. CLI flags stay flat for
+back-compat.
+
+**Locked deliverables** (per §9, §13.4 #5):
+
+- `cfg.Providers.{Proxmox, AWS, Azure, GCP, Hetzner, OpenStack,
+  vSphere, DigitalOcean, Linode, OCI, IBMCloud}`
+- Per-cluster sizing fields → `cfg.Providers.Proxmox.*`
+  (Proxmox-only concept)
+- Mgmt fields split: universal → `cfg.Mgmt.*`; Proxmox-only →
+  `cfg.Providers.Proxmox.Mgmt.*`
+- `cfg.MgmtKubeconfigPath` (new field for §12 pivot threading)
+- New CLI flag `--infra-provider <name>` (today only env-settable)
+
+**Commit sequence** (mirrors §9 C.1–C.6):
+
+```
+C.1  refactor(config): introduce cfg.Providers.Proxmox.* (83 fields)
+C.2  refactor(config): move CP/Worker sizing into Proxmox sub-config
+C.3  refactor(config): split Mgmt fields → cfg.Mgmt.* and cfg.Providers.Proxmox.Mgmt.*
+C.4  refactor(config): introduce cfg.Providers.AWS.*
+C.5  refactor(config): introduce Azure, GCP, Hetzner, DO, Linode, OCI, IBMCloud sub-configs
+C.6  feat(cli): --infra-provider flag; cfg.MgmtKubeconfigPath field
+```
+
+**Dependencies.** None. Can run in parallel with A; both unblock B
+and D.
+
+**Gate.** `go build ./... && go vet ./...` after every commit. New
+test `TestEnvVarBackcompat` confirms `PROXMOX_*` / `AWS_*` env vars
+still populate the correct (now-namespaced) fields.
+
+### 14.B — Plan body delegation
+
+**Goal.** Each provider prints its own dry-run sections via
+`PlanDescriber`. AWS finally gets a real dry-run instead of
+inheriting Proxmox's text.
+
+**Locked deliverables** (per §8, §10 PlanDescriber):
+
+- New package `internal/plan` with `Writer` interface
+  (`Section(title)`, `Bullet(format, args...)`,
+  `Skip(format, args...)`)
+- `PlanDescriber` sub-interface: `DescribeIdentity`,
+  `DescribeWorkload`, `DescribePivot`
+- Drop bash phase numbers; named phases throughout
+- Proxmox: port existing plan body into the three hooks
+- AWS: minimum-bar `DescribeWorkload` (cluster shape + sizing +
+  skips for not-applicable phases) — see §8's worked example
+- Cross-cutting sections (Capacity, Cost, Allocations, Retention)
+  stay in `bootstrap/plan.go`; call `Provider.Inventory` and
+  `EstimateMonthlyCostUSD` for data
+- Snapshot tests gate the diff (Proxmox + AWS + Hetzner)
+
+**Commit sequence.**
+
+```
+B.1  feat(plan): plan.Writer interface + text-renderer + capturing-renderer
+B.2  feat(provider): PlanDescriber sub-interface; MinStub stubs
+B.3  feat(provider/proxmox): port plan body into DescribeIdentity/Workload/Pivot
+B.4  feat(provider/aws): minimum-bar DescribeWorkload + Skip-only Identity/Pivot
+B.5  refactor(bootstrap): plan.go calls provider.DescribePlan; cross-cutting stays central
+B.6  test(bootstrap): snapshot tests for proxmox/aws/hetzner dry-run output
+```
+
+**Dependencies.** A (interface foundation); C (provider sub-configs
+the Describe hooks read from).
+
+**Gate.** Snapshot tests pass. Manual: `--dry-run` on AWS no longer
+mentions Proxmox.
+
+### 14.D — kindsync + Purge + TemplateVars
+
+**Goal.** Per-provider state persistence (kind handoff Secret),
+cleanup (`--purge`), and template substitution all behind the
+interface. Secret namespace becomes provider-neutral.
+
+**Locked deliverables** (per §11, §13.4 #4):
+
+- `KindSyncer.KindSyncFields(cfg) map[string]string`
+- `Purger.Purge(cfg) error` — idempotent, NotFound swallowed
+- `ClusterAPIPlumbing.TemplateVars(cfg) map[string]string`
+- Secret namespace `proxmox-bootstrap-system` →
+  `bootstrap-config-system` (no dual-write window in prototype
+  phase per §13.4 deferral)
+- Generic Secret schema: `provider`, `cluster_name`, `cluster_id`,
+  `kubernetes_version` + provider-prefixed namespace
+- `kindsync.fillEmptyFromMap()` rewritten to iterate
+  `KindSyncFields` output instead of switching on hardcoded
+  Proxmox keys
+- Move `bootstrap/purge.go` Proxmox cleanup into
+  `provider/proxmox/purge.go`; cross-cutting cleanup
+  (kind cluster, gen dirs) stays central
+
+**Commit sequence.**
+
+```
+D.1  feat(provider): KindSyncer + Purger + TemplateVars sub-interfaces; MinStub stubs
+D.2  feat(provider/proxmox): KindSyncFields, TemplateVars, Purge
+D.3  refactor(kindsync): rename Secret namespace; iterate over KindSyncFields
+D.4  refactor(bootstrap/purge): provider-specific cleanup → Provider.Purge
+D.5  feat(provider/aws): TemplateVars, KindSyncFields, Purge=nil
+D.6  feat(provider/{azure,gcp,hetzner,openstack,vsphere}): TemplateVars + KindSyncFields
+```
+
+**Dependencies.** A (Provider interface accepts new methods); C
+(provider sub-configs the methods read from).
+
+**Gate.** `TestKindSyncRoundTrip` (write fields, read back, match).
+Real-Proxmox `--purge` is idempotent (run twice, second is a
+no-op). Manifest substitution produces working clusterctl
+templates for Proxmox + AWS.
+
+### 14.E — Pivot generalization
+
+**Goal.** `clusterctl move` works between any two kubeconfigs.
+Pivot ceases to be Proxmox-specific.
+
+**Locked deliverables** (per §12, §13.4 #5):
+
+- `Pivoter.PivotTarget(cfg) (PivotTarget, error)`
+- `PivotTarget{KubeconfigPath, Namespaces, ReadyTimeout}` struct
+- `cfg.MgmtKubeconfigPath` set by orchestrator after
+  `EnsureManagementCluster()`; read by `PivotTarget`
+- `internal/pivot/` becomes provider-agnostic; sees two
+  kubeconfigs + namespace list, executes `clusterctl move`
+- All non-Proxmox providers return `ErrNotApplicable`
+
+**Commit sequence.**
+
+```
+E.1  feat(provider): Pivoter sub-interface + PivotTarget struct; MinStub stubs
+E.2  feat(provider/proxmox): PivotTarget reads cfg.MgmtKubeconfigPath
+E.3  refactor(bootstrap): set cfg.MgmtKubeconfigPath after EnsureManagementCluster
+E.4  refactor(pivot): drop Proxmox-specific assumptions; consume PivotTarget
+E.5  test(pivot): CAPD-as-target sanity test (provider-agnostic move)
+```
+
+**Dependencies.** A, C, D (kindsync neutral); B is nice-to-have
+(plan output reflects the new pivot shape).
+
+**Gate.** Real Proxmox pivot still works (E2E run). CAPD test
+target validates that the pivot mechanism doesn't secretly depend
+on Proxmox.
+
+### Out-of-band carry-overs (from §13.5)
+
+These are NOT phases in the abstraction plan but should be tracked
+alongside the work above so they don't get lost:
+
+- **vSphere CSI timing hook** — orchestrator-level "post-cluster-
+  ready" callback, lands when vSphere actually ships a real
+  `EnsureCSISecret`
+- **Config-tree fields for AWS/Azure/GCP/vSphere** — fold into
+  Phase C if any of those providers wants `TemplateVars` to work
+  before D ships
+- **Reflection-based `KindSyncFields` dispatch** — explicit
+  per-provider switch is fine for Phase D; reflection is a
+  follow-up if the switch grows past 4 providers
+
+### Definition of done — phase by phase
+
+| Phase | Done when |
+|---|---|
+| A | Proxmox dry-run identical; one method instead of two; capacity tests pass |
+| C | `go build` clean across all C.1–C.6 commits; env-var back-compat test green |
+| B | Snapshot tests for Proxmox + AWS + Hetzner; AWS dry-run no longer prints Proxmox text |
+| D | kindsync round-trip test; idempotent `--purge` on real Proxmox; manifests render |
+| E | Real-Proxmox pivot works; CAPD test target validates provider-agnostic move |
+
+After E lands the orchestrator has zero Proxmox-specific text,
+imports, or assumptions outside `internal/provider/proxmox/` and
+`internal/proxmox/`. Multi-cloud is then a question of "implement
+the methods" per provider, not "rewire the orchestrator."
+

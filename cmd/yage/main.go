@@ -15,6 +15,7 @@ import (
 	"github.com/lpasquali/yage/internal/cli"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/pricing"
+	"github.com/lpasquali/yage/internal/xapiri"
 
 	// Provider registrations: importing each provider package runs
 	// its init() which calls provider.Register. Add a new provider
@@ -37,6 +38,9 @@ import (
 func main() {
 	cfg := config.Load()
 	cli.Parse(cfg, os.Args[1:])
+	if cfg.Xapiri {
+		os.Exit(xapiri.Run(os.Stdout, cfg))
+	}
 	if cfg.PrintPricingSetup != "" {
 		switch cfg.PrintPricingSetup {
 		case "all":

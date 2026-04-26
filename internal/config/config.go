@@ -100,6 +100,10 @@ type Config struct {
 	// users who dismissed the first-run hint and want to see it
 	// again. Empty string means "no special action".
 	PrintPricingSetup           string
+	// Xapiri, when true, launches the interactive configuration TUI
+	// (--xapiri) and exits. Mutually exclusive with the orchestrator
+	// run; setting it short-circuits main() before bootstrap.Run.
+	Xapiri                      bool
 	// ResourceBudgetFraction caps the share of available Proxmox host
 	// CPU/memory/storage that the configured clusters may consume.
 	// 0.75 by default — the remaining 25 % is reserved for the host

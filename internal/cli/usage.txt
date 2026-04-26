@@ -36,6 +36,9 @@ OPTIONS
         --print-pricing-setup VENDOR  Print the IAM/token setup CLI snippet for VENDOR's pricing API
                                       (aws, azure, gcp, hetzner, or "all") and exit. Same hint shown
                                       on first cost-related run when credentials are missing.
+        --xapiri                      Launch the interactive configuration TUI and exit. Walks through
+                                      every config knob, validates choices against the active provider,
+                                      writes the result to disk for review. Currently a stub.
         --hardware-cost-usd N         Self-hosted TCO (Proxmox / vSphere): full cluster capex in USD.
                                       Required to enable the cost estimate for self-hosted providers
                                       — without it they return ErrNotApplicable. Amortized straight-

@@ -313,6 +313,10 @@ func Parse(c *config.Config, argv []string) {
 			// Print the IAM/token setup snippet for the named
 			// vendor (or all vendors with "all") and exit.
 			c.PrintPricingSetup = strings.ToLower(strings.TrimSpace(shiftVal(a)))
+		case "--xapiri":
+			// Launch the interactive configuration TUI and exit.
+			// See package internal/xapiri for the cultural note.
+			c.Xapiri = true
 		case "--allow-resource-overcommit":
 			c.AllowResourceOvercommit = true
 		case "--overcommit-tolerance-pct":

@@ -17,13 +17,13 @@ import (
 	"sigs.k8s.io/kind/pkg/cluster"
 
 	"github.com/lpasquali/yage/internal/capi/manifest"
+	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
-	"github.com/lpasquali/yage/internal/cluster/kindsync"
-	"github.com/lpasquali/yage/internal/ui/logx"
-	"github.com/lpasquali/yage/internal/platform/opentofux"
-	"github.com/lpasquali/yage/internal/pveapi"
 	"github.com/lpasquali/yage/internal/platform/shell"
+	"github.com/lpasquali/yage/internal/provider"
+	"github.com/lpasquali/yage/internal/pveapi"
+	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
 var capiClusterGVR = schema.GroupVersionResource{
@@ -269,12 +269,15 @@ func waitClusterDeleted(cli *k8sclient.Client, bg context.Context, ns, name stri
 }
 
 // PurgeGeneratedArtifacts ports purge_generated_artifacts (L7584-L7618).
+// Per §14.D, provider-specific cleanup (Proxmox tofu destroy,
+// pool delete, generated files) lives in Provider.Purge; this
+// function still owns the cross-cutting cleanup (kind cluster,
+// CAPI manifest path, CAPMOX build cache, vendored CAPI clones).
 func PurgeGeneratedArtifacts(cfg *config.Config) {
-	stateDir := opentofux.StateDir()
 	logx.Log("Purging generated files and Terraform state...")
 
-	provider := cluster.NewProvider()
-	if names, err := provider.List(); err == nil {
+	kindProv := cluster.NewProvider()
+	if names, err := kindProv.List(); err == nil {
 		found := false
 		for _, n := range names {
 			if n == cfg.KindClusterName {
@@ -296,30 +299,30 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 		}
 	}
 
-	if _, err := os.Stat(stateDir); err == nil {
-		_ = opentofux.DestroyIdentity(cfg)
+	// Provider-specific cleanup (Phase D / §11). For Proxmox this
+	// runs `tofu destroy` on the BPG identity tree and removes the
+	// Proxmox-flavored generated files (CSIConfig, AdminConfig,
+	// IdentityTF). For other providers it's a no-op (MinStub
+	// default returns nil) — they don't currently create state
+	// outside the workload cluster.
+	if prov, perr := provider.For(cfg); perr == nil {
+		if err := prov.Purge(cfg); err != nil {
+			logx.Warn("provider %s Purge: %v (continuing)", prov.Name(), err)
+		}
 	}
 
+	// Cross-cutting cleanup that stays in the orchestrator: the
+	// CAPI manifest path, the operator-supplied clusterctl config,
+	// the CAPMOX build cache, and clones of upstream CAPI repos
+	// that pre-Phase-A code may have left around.
 	if cfg.CAPIManifest != "" {
 		_ = os.Remove(cfg.CAPIManifest)
-	}
-	if cfg.Providers.Proxmox.CSIConfig != "" {
-		_ = os.Remove(cfg.Providers.Proxmox.CSIConfig)
-	}
-	if cfg.Providers.Proxmox.AdminConfig != "" {
-		if _, err := os.Stat(cfg.Providers.Proxmox.AdminConfig); err == nil {
-			_ = os.Remove(cfg.Providers.Proxmox.AdminConfig)
-		}
 	}
 	if cfg.ClusterctlCfg != "" {
 		if _, err := os.Stat(cfg.ClusterctlCfg); err == nil {
 			_ = os.Remove(cfg.ClusterctlCfg)
 		}
 	}
-	if cfg.Providers.Proxmox.IdentityTF != "" {
-		_ = os.Remove(cfg.Providers.Proxmox.IdentityTF)
-	}
-	_ = os.RemoveAll(stateDir)
 	_ = os.RemoveAll(cfg.CAPMOXBuildDir)
 	_ = os.RemoveAll("./cluster-api")
 	_ = os.RemoveAll("./cluster-api-ipam-provider-in-cluster")

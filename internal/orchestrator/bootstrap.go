@@ -776,6 +776,10 @@ func Run(cfg *config.Config) int {
 		if err != nil {
 			logx.Die("pivot: EnsureManagementCluster: %v", err)
 		}
+		// Phase E.3 / §13.4 #5: thread the kubeconfig path through
+		// cfg so Provider.PivotTarget can return it. Provider is
+		// stateless; orchestrator publishes the path here.
+		cfg.MgmtKubeconfigPath = mgmtKubeconfig
 		if err := pivot.InstallCAPIOnManagement(cfg, mgmtKubeconfig); err != nil {
 			logx.Die("pivot: InstallCAPIOnManagement: %v", err)
 		}

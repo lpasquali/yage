@@ -8,9 +8,11 @@ package proxmox
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/opentofux"
 	"github.com/lpasquali/yage/internal/provider"
 )
 
@@ -77,21 +79,35 @@ func (p *Provider) TemplateVars(cfg *config.Config) map[string]string {
 // orchestrator's purge flow handles cross-cutting cleanup (kind
 // cluster, generated dirs, manifest Secrets); this method handles
 // what yage created on the Proxmox side: the BPG OpenTofu state
-// tree, the CAPI/CSI users + tokens (deleted via tofu destroy), and
-// the auto-created pool.
-//
-// Phase D scaffold: today the orchestrator's purge.go still owns
-// the actual Terraform invocation. As the orchestrator's --purge
-// flow migrates to call Provider.Purge per §14.D, this body grows
-// to absorb that logic. For now we return nil so the orchestrator's
-// --purge flow can call this on every provider unconditionally.
+// tree (which destroys the CAPI/CSI users + tokens via tofu
+// destroy) and the local Proxmox-flavored config files. NotFound
+// errors are swallowed for idempotency per §11.
 func (p *Provider) Purge(cfg *config.Config) error {
-	// TODO(D.4): port internal/orchestrator/purge.go's Proxmox-
-	// specific cleanup (opentofux destroy + pool delete +
-	// generated-files removal) here, behind NotFound-swallowing
-	// idempotency per §11. Today's --purge flow still drives
-	// these directly; this method is a no-op until that landing.
-	_ = fmt.Sprintf // keep imports stable as the body grows
+	// 1. Tear down the BPG OpenTofu state if it exists. tofu
+	//    destroy reverses EnsureIdentity (CAPI + CSI users +
+	//    tokens). os.Stat-then-act gives idempotency: re-running
+	//    after the state is gone is a no-op.
+	stateDir := opentofux.StateDir()
+	if _, err := os.Stat(stateDir); err == nil {
+		_ = opentofux.DestroyIdentity(cfg)
+		_ = os.RemoveAll(stateDir)
+	}
+
+	// 2. Remove Proxmox-flavored generated files. The orchestrator
+	//    used to do this directly; ownership now lives with the
+	//    provider that wrote them.
+	for _, path := range []string{
+		cfg.Providers.Proxmox.CSIConfig,
+		cfg.Providers.Proxmox.AdminConfig,
+		cfg.Providers.Proxmox.IdentityTF,
+	} {
+		if path == "" {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("purge proxmox file %s: %w", path, err)
+		}
+	}
 	return nil
 }
 

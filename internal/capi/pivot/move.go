@@ -11,8 +11,9 @@ import (
 
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
-	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/platform/shell"
+	"github.com/lpasquali/yage/internal/provider"
+	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
 // InstallCAPIOnManagement runs `clusterctl init` against the management
@@ -143,15 +144,26 @@ func MoveCAPIState(cfg *config.Config, mgmtKubeconfig string) error {
 		logx.Warn("Could not pause kind-side reconcilers before move: %v (continuing with move; clusterctl pauses Clusters)", err)
 	}
 
-	// Discover namespaces that hold CAPI resources to move. By default
-	// `clusterctl move` operates on a single namespace at a time; we
-	// run it for the workload + mgmt namespaces so both cluster
-	// objects + their dependants land on mgmt.
-	namespaces := dedupe([]string{
-		cfg.WorkloadClusterNamespace,
-		cfg.Mgmt.ClusterNamespace,
-		cfg.Providers.Proxmox.BootstrapSecretNamespace,
-	})
+	// Discover namespaces that hold CAPI resources to move. Per
+	// Phase E.4 / §12, the active provider's PivotTarget owns the
+	// namespace list; nil means "use default" — workload + mgmt +
+	// the provider-managed bootstrap Secret namespace. By default
+	// `clusterctl move` operates on a single namespace at a time;
+	// we run it for each so both cluster objects + their dependants
+	// land on mgmt.
+	var namespaces []string
+	if prov, err := provider.For(cfg); err == nil {
+		if target, terr := prov.PivotTarget(cfg); terr == nil && target.Namespaces != nil {
+			namespaces = dedupe(target.Namespaces)
+		}
+	}
+	if namespaces == nil {
+		namespaces = dedupe([]string{
+			cfg.WorkloadClusterNamespace,
+			cfg.Mgmt.ClusterNamespace,
+			cfg.Providers.Proxmox.BootstrapSecretNamespace,
+		})
+	}
 
 	for _, ns := range namespaces {
 		if ns == "" {

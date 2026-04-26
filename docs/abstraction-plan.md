@@ -3595,3 +3595,68 @@ for workloads marked as DB-bearing.
 - The "AbsoluteFloor exceeded" loop-back path actually loops back
   in the xapiri state machine (don't drop the user back at step 0)
 
+---
+
+## 24. Status as of 2026-04-26
+
+This section is the cheatsheet — what's landed in `main`, what's
+in flight, what's left. It supersedes the more-aspirational wave
+plans in §19 / §20.9 / §21.6, which document the original
+planning rather than the current state.
+
+### 24.1 Landed
+
+| Section | What landed | Where |
+|---|---|---|
+| §1–§13 (Phases A–E) | provider abstraction, Inventory, plan body delegation, config namespacing, kindsync + Purge + TemplateVars, pivot generalization | all of `internal/provider/`, `internal/cluster/kindsync`, `internal/orchestrator` |
+| §15 (reorg) | 30 flat packages → 11 bucketed; `internal/pveapi/` → `internal/provider/proxmox/pveapi/` | tree layout |
+| §16 (cost creds Secret) | `cfg.Cost.Credentials/Currency`, kindsync round-trip, pricing.SetCredentials wired in main | `internal/config/config.go`, `cmd/yage/main.go` |
+| §17 (airgapped — base) | `--airgapped` flag, ErrAirgapped on cloud providers, pricing.SetAirgapped | `internal/config`, `internal/provider/provider.go`, `internal/pricing` |
+| §17 (airgapped — completion) | `--internal-ca-bundle`, `--helm-repo-mirror`, `--node-image` | **in flight (Agent C)** |
+| §18 (no Proxmox default) | hard-error in main when InfraProvider is empty; --xapiri / --print-pricing-setup escape hatches preserved | `cmd/yage/main.go`, `internal/config/config.go` |
+| §19 (license) | Apache 2.0 LICENSE, SPDX-License-Identifier header on every .go file (161 files) | repo root, every `*.go` |
+| §20 (CSI registry — Phase F scoped) | Driver interface + 4 drivers (aws-ebs, azure-disk, gcp-pd, proxmox-csi); Provider.EnsureCSISecret removed | `internal/csi/`, `internal/csi/proxmoxcsi/` |
+| §20 (CSI registry — expansion) | 10 remaining drivers (hcloud, do-bs, linode-bs, oci-bs, ibm-vpc-bs, openstack-cinder, vsphere-csi + longhorn / rook-ceph / openebs cross-provider opt-ins) | **in flight (Agent B)** |
+| §20 (orchestrator wiring) | orchestrator drives Driver.HelmChart / RenderValues / EnsureSecret instead of legacy capi/csi.ApplyConfigSecretToWorkload | **in flight (Agent D1)** |
+| §21.1 (secrets matrix) | design landed in this doc; consumed by §21.2 | docs only |
+| §21.2 (Phase G — universal OpenTofu identity) | per-provider HCL templates for AWS/Azure/GCP/OpenStack/OCI/IBMCloud/Linode | **in flight (Agent A)** |
+| §22 (xapiri) | budget-first / product-shape-first 8-step state machine, on-prem/cloud fork | `internal/ui/xapiri/` |
+| §23 (feasibility gate) | Check(cfg) + CheckOnPrem(cfg, host); 5 scrooge-bug tests; xapiri integration via `feasibility_shim.go` | `internal/feasibility/` |
+| Tests | feasibility/templates pure-helper tests, xapiri pure-helper tests | `*_test.go` files |
+
+### 24.2 In flight (background agents)
+
+Five worktree-isolated agents running as of this writing:
+
+- **Agent A** — Phase G OpenTofu identity HCL templates (§21.2)
+- **Agent B** — 10 remaining CSI drivers (§20.1)
+- **Agent C** — airgap completion flags (§17 / §21.4)
+- **Agent D1** — orchestrator → §20 CSI registry wiring
+- **Agent D4** — CAPD smoke E2E test (§13 / §14.E goal)
+
+When each returns, integrate its worktree branch into `main`.
+
+### 24.3 Queued (await upstream agents)
+
+- **D2 — Pivoter beyond Proxmox.** Minimal `PivotTarget` for
+  AWS/Azure/GCP/Hetzner. Same provider files as Agent A, so
+  dispatched after A integrates.
+- **D3 — Tests for new packages.** Pure-helper tests for
+  feasibility/templates + xapiri are already in main; the
+  remaining D3 surface is tests for the airgap helpers Agent C
+  ships, dispatched after C integrates.
+
+### 24.4 Not yet planned (genuinely later)
+
+- `PatchManifest` substance per provider — today most are no-ops.
+  Real per-role sizing → instance-type mapping for AWS/Azure/GCP/
+  Hetzner/OpenStack.
+- `Inventory` for OpenStack via gophercloud (per-project quotas
+  fit the flat shape per §13.4 #1 cleanly).
+- Real cost estimation for self-hosted providers (Proxmox/vSphere).
+- xapiri ↔ identity-bootstrap step: once Phase G makes
+  `EnsureIdentity` real for clouds, the TUI should walk the user
+  through the OpenTofu apply rather than running it silently.
+- Documentation refresh of `ARCHITECTURE.md` / `providers.md` to
+  match the post-Wave-3 shape.
+

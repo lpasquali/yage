@@ -23,6 +23,7 @@ import (
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/pricing"
 	"github.com/lpasquali/yage/internal/provider"
+	"github.com/lpasquali/yage/internal/ui/plan"
 	"github.com/lpasquali/yage/internal/platform/shell"
 )
 
@@ -31,21 +32,29 @@ import (
 // run's sequence.
 func PrintPlan(cfg *config.Config) {
 	w := os.Stdout
+	pw := plan.NewTextWriter(w)
 	hr := strings.Repeat("─", 76)
 
 	fmt.Fprintln(w, hr)
 	fmt.Fprintln(w, "📝 DRY-RUN PLAN — yage would perform the following actions")
 	fmt.Fprintln(w, hr)
 
+	// Provider-specific Describe* sections live behind the Provider
+	// interface (Phase B / §8). Resolve once; if the provider is
+	// unknown or refused (airgapped + cloud), the three hooks below
+	// become no-op Skip lines. Cross-cutting sections (capacity,
+	// cost, allocations, retention) stay in the orchestrator.
+	prov, perr := provider.For(cfg)
+
 	planStandalone(w, cfg)
 	planPrePhase(w, cfg)
 	planPhase1(w, cfg)
-	planPhase2Identity(w, cfg)
+	describeIdentity(pw, cfg, prov, perr)
 	planPhase2Clusterctl(w, cfg)
 	planPhase2Kind(w, cfg)
 	planPhase2CAPI(w, cfg)
-	planPhase29Workload(w, cfg)
-	planPhase295Pivot(w, cfg)
+	describeWorkload(pw, cfg, prov, perr)
+	describePivot(pw, cfg, prov, perr)
 	planPhase210ArgoCD(w, cfg)
 	planFinal(w, cfg)
 	planCapacity(w, cfg)
@@ -135,16 +144,18 @@ func planPhase1(w *os.File, cfg *config.Config) {
 	}
 }
 
-func planPhase2Identity(w *os.File, cfg *config.Config) {
-	section(w, "Phase 2.0 — Proxmox identity bootstrap (OpenTofu)")
-	if cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
-		bullet(w, "interactive prompt (PROXMOX_ADMIN_USERNAME / PROXMOX_ADMIN_TOKEN unset)")
-	} else {
-		bullet(w, "admin: %s @ %s", cfg.Providers.Proxmox.AdminUsername, cfg.Providers.Proxmox.URL)
+// describeIdentity is the Phase B (§8) replacement for the
+// previous Proxmox-specific planPhase2Identity. The provider's
+// PlanDescriber.DescribeIdentity hook owns the bullets; if no
+// provider resolved (unknown name, airgapped + cloud), we surface
+// a Skip explaining why.
+func describeIdentity(pw plan.Writer, cfg *config.Config, prov provider.Provider, perr error) {
+	if perr != nil {
+		pw.Section("Identity bootstrap")
+		pw.Skip("provider %q: %v", cfg.InfraProvider, perr)
+		return
 	}
-	bullet(w, "tofu apply: create CAPI user '%s' + token prefix '%s'", cfg.Providers.Proxmox.CAPIUserID, cfg.Providers.Proxmox.CAPITokenPrefix)
-	bullet(w, "tofu apply: create CSI user '%s' + token prefix '%s'", cfg.Providers.Proxmox.CSIUserID, cfg.Providers.Proxmox.CSITokenPrefix)
-	bullet(w, "outputs piped into clusterctl + CSI configs")
+	prov.DescribeIdentity(pw, cfg)
 }
 
 func planPhase2Clusterctl(w *os.File, cfg *config.Config) {
@@ -176,63 +187,30 @@ func planPhase2CAPI(w *os.File, cfg *config.Config) {
 	bullet(w, "CAPMOX image: %s (build arm64 if needed)", firstNonEmptyStr(cfg.CAPMOXVersion, "<resolve from CAPMOX_REPO>"))
 }
 
-func planPhase29Workload(w *os.File, cfg *config.Config) {
-	section(w, "Phase 2.9 — workload Cluster (Proxmox)")
-	bullet(w, "Cluster: %s/%s, k8s %s", cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName, cfg.WorkloadKubernetesVersion)
-	bullet(w, "control plane: %s replica(s), VIP %s:%s", cfg.ControlPlaneMachineCount, cfg.ControlPlaneEndpointIP, cfg.ControlPlaneEndpointPort)
-	bullet(w, "workers: %s replica(s)", cfg.WorkerMachineCount)
-	bullet(w, "node IP range: %s, gateway: %s/%s, DNS: %s", cfg.NodeIPRanges, cfg.Gateway, cfg.IPPrefix, cfg.DNSServers)
-	bullet(w, "CP sizing: %s sockets × %s cores, %s MiB, %s %s GB",
-		cfg.Providers.Proxmox.ControlPlaneNumSockets, cfg.Providers.Proxmox.ControlPlaneNumCores, cfg.Providers.Proxmox.ControlPlaneMemoryMiB,
-		cfg.Providers.Proxmox.ControlPlaneBootVolumeDevice, cfg.Providers.Proxmox.ControlPlaneBootVolumeSize)
-	bullet(w, "Worker sizing: %s sockets × %s cores, %s MiB, %s %s GB",
-		cfg.Providers.Proxmox.WorkerNumSockets, cfg.Providers.Proxmox.WorkerNumCores, cfg.Providers.Proxmox.WorkerMemoryMiB,
-		cfg.Providers.Proxmox.WorkerBootVolumeDevice, cfg.Providers.Proxmox.WorkerBootVolumeSize)
-	cpTpl := firstNonEmptyStr(cfg.WorkloadControlPlaneTemplateID, cfg.Providers.Proxmox.TemplateID)
-	wkTpl := firstNonEmptyStr(cfg.WorkloadWorkerTemplateID, cfg.Providers.Proxmox.TemplateID)
-	bullet(w, "Proxmox templates: control-plane=%s, worker=%s (catch-all PROXMOX_TEMPLATE_ID=%s)", cpTpl, wkTpl, cfg.Providers.Proxmox.TemplateID)
-	if cfg.Providers.Proxmox.Pool != "" {
-		bullet(w, "Proxmox pool: %q (auto-created via admin API; tags VMs for ACLs/UI grouping)", cfg.Providers.Proxmox.Pool)
-	}
-	bullet(w, "Cilium HCP: kpr=%s, ingress=%s, hubble=%s, LB-IPAM=%s, GatewayAPI=%s",
-		cfg.CiliumKubeProxyReplacement, cfg.CiliumIngress, cfg.CiliumHubble, cfg.CiliumLBIPAM, cfg.CiliumGatewayAPIEnabled)
-	if cfg.Providers.Proxmox.CSIEnabled {
-		bullet(w, "Proxmox CSI on workload: chart %s/%s, namespace %s, StorageClass %s (default: %s)",
-			cfg.Providers.Proxmox.CSIChartName, cfg.Providers.Proxmox.CSIChartVersion, cfg.Providers.Proxmox.CSINamespace, cfg.Providers.Proxmox.CSIStorageClassName, cfg.Providers.Proxmox.CSIDefaultClass)
-	} else {
-		skip(w, "Proxmox CSI disabled (--disable-proxmox-csi)")
-	}
-}
-
-func planPhase295Pivot(w *os.File, cfg *config.Config) {
-	section(w, "Phase 2.95 — Pivot to Proxmox-hosted management cluster")
-	if !cfg.PivotEnabled {
-		skip(w, "PIVOT_ENABLED=false (kind remains the management cluster)")
+// describeWorkload delegates to the provider's
+// PlanDescriber.DescribeWorkload hook (Phase B / §8). Provider-
+// agnostic; per-cloud bullet text lives in
+// internal/provider/<name>/plan.go.
+func describeWorkload(pw plan.Writer, cfg *config.Config, prov provider.Provider, perr error) {
+	if perr != nil {
+		pw.Section("Workload Cluster")
+		pw.Skip("provider %q: %v", cfg.InfraProvider, perr)
 		return
 	}
-	bullet(w, "provision mgmt Cluster '%s/%s' on Proxmox (k8s %s)", cfg.Mgmt.ClusterNamespace, cfg.Mgmt.ClusterName, cfg.Mgmt.KubernetesVersion)
-	bullet(w, "  CP: %s replica(s), VIP %s:%s, range %s",
-		cfg.Mgmt.ControlPlaneMachineCount, cfg.Mgmt.ControlPlaneEndpointIP, cfg.Mgmt.ControlPlaneEndpointPort, cfg.Mgmt.NodeIPRanges)
-	bullet(w, "  CP sizing: %s sockets × %s cores, %s MiB",
-		cfg.Providers.Proxmox.Mgmt.ControlPlaneNumSockets, cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores, cfg.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB)
-	mgmtCPTpl := firstNonEmptyStr(cfg.Providers.Proxmox.Mgmt.ControlPlaneTemplateID, cfg.Providers.Proxmox.TemplateID)
-	mgmtWkTpl := firstNonEmptyStr(cfg.Providers.Proxmox.Mgmt.WorkerTemplateID, cfg.Providers.Proxmox.TemplateID)
-	bullet(w, "  Proxmox templates: control-plane=%s, worker=%s", mgmtCPTpl, mgmtWkTpl)
-	bullet(w, "  Cilium: hubble=%s, LB-IPAM=%s; CSI: %v",
-		cfg.Mgmt.CiliumHubble, cfg.Mgmt.CiliumLBIPAM, cfg.Providers.Proxmox.Mgmt.CSIEnabled)
-	if cfg.Providers.Proxmox.Mgmt.Pool != "" {
-		bullet(w, "  Proxmox pool: %q (auto-created)", cfg.Providers.Proxmox.Mgmt.Pool)
+	prov.DescribeWorkload(pw, cfg)
+}
+
+// describePivot delegates to the provider's
+// PlanDescriber.DescribePivot hook (Phase B / §8). When pivot isn't
+// applicable the provider emits a Skip; the orchestrator no longer
+// hardcodes Proxmox-specific pivot bullets.
+func describePivot(pw plan.Writer, cfg *config.Config, prov provider.Provider, perr error) {
+	if perr != nil {
+		pw.Section("Pivot to managed mgmt cluster")
+		pw.Skip("provider %q: %v", cfg.InfraProvider, perr)
+		return
 	}
-	bullet(w, "clusterctl init on mgmt (idempotent)")
-	if cfg.PivotDryRun {
-		bullet(w, "clusterctl move --dry-run (logs plan, no state moves) — exit here")
-	} else {
-		bullet(w, "clusterctl move kind → mgmt for namespaces: %s, %s, proxmox-bootstrap-system",
-			cfg.WorkloadClusterNamespace, cfg.Mgmt.ClusterNamespace)
-		bullet(w, "handoff proxmox-bootstrap-system Secrets kind → mgmt")
-		bullet(w, "VerifyParity (timeout: %s)", cfg.PivotVerifyTimeout)
-		bullet(w, "rebind kind-%s context to mgmt kubeconfig (subsequent phases target mgmt)", cfg.KindClusterName)
-	}
+	prov.DescribePivot(pw, cfg)
 }
 
 func planPhase210ArgoCD(w *os.File, cfg *config.Config) {

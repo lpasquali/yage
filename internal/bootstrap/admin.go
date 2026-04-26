@@ -11,7 +11,7 @@ import (
 )
 
 // EnsureProxmoxAdminConfig ports ensure_proxmox_admin_config
-// (L7620-L7701). Populates cfg.ProxmoxURL / Username / Token from:
+// (L7620-L7701). Populates cfg.Providers.Proxmox.URL / Username / Token from:
 //
 //  1. MergeProxmoxBootstrapSecretsFromKind (already run at top of the
 //     bootstrap flow).
@@ -24,41 +24,41 @@ func EnsureProxmoxAdminConfig(cfg *config.Config, merge, syncConfig, syncCreds f
 		merge()
 	}
 	fillFromAdminYAML(cfg)
-	if cfg.ProxmoxURL != "" && cfg.ProxmoxAdminUsername != "" && cfg.ProxmoxAdminToken != "" {
+	if cfg.Providers.Proxmox.URL != "" && cfg.Providers.Proxmox.AdminUsername != "" && cfg.Providers.Proxmox.AdminToken != "" {
 		return
 	}
 	var missing []string
-	if cfg.ProxmoxURL == "" {
+	if cfg.Providers.Proxmox.URL == "" {
 		missing = append(missing, "PROXMOX_URL")
 	}
-	if cfg.ProxmoxAdminUsername == "" {
+	if cfg.Providers.Proxmox.AdminUsername == "" {
 		missing = append(missing, "PROXMOX_ADMIN_USERNAME")
 	}
-	if cfg.ProxmoxAdminToken == "" {
+	if cfg.Providers.Proxmox.AdminToken == "" {
 		missing = append(missing, "PROXMOX_ADMIN_TOKEN")
 	}
 
 	if !promptx.CanPrompt() {
 		logx.Die("Missing admin Proxmox configuration: %v. Set them via environment variables, kind Secret %s/%s (admin API), or PROXMOX_ADMIN_CONFIG to a legacy local YAML (not written by this script by default).",
-			missing, cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapAdminSecretName)
+			missing, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName)
 	}
 	if cfg.ProxmoxAdminCfgFilePresent() {
 		logx.Warn("Using %s to supply missing values only; prefer kind Secrets in %s.",
-			cfg.ProxmoxAdminConfig, cfg.ProxmoxBootstrapSecretNamespace)
+			cfg.Providers.Proxmox.AdminConfig, cfg.Providers.Proxmox.BootstrapSecretNamespace)
 	}
 
 	if promptx.Confirm("Enter Proxmox admin API credentials interactively for OpenTofu bootstrap?") {
-		if cfg.ProxmoxURL == "" {
+		if cfg.Providers.Proxmox.URL == "" {
 			fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox VE URL (e.g. https://pve.example:8006): ")
-			cfg.ProxmoxURL = promptx.ReadLine()
+			cfg.Providers.Proxmox.URL = promptx.ReadLine()
 		}
-		if cfg.ProxmoxAdminUsername == "" {
+		if cfg.Providers.Proxmox.AdminUsername == "" {
 			fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox admin username token ID (e.g. root@pam!capi-bootstrap): ")
-			cfg.ProxmoxAdminUsername = promptx.ReadLine()
+			cfg.Providers.Proxmox.AdminUsername = promptx.ReadLine()
 		}
-		if cfg.ProxmoxAdminToken == "" {
+		if cfg.Providers.Proxmox.AdminToken == "" {
 			fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox admin token secret (UUID): ")
-			cfg.ProxmoxAdminToken = promptx.ReadLine()
+			cfg.Providers.Proxmox.AdminToken = promptx.ReadLine()
 		}
 		if syncConfig != nil {
 			syncConfig()
@@ -73,8 +73,8 @@ func EnsureProxmoxAdminConfig(cfg *config.Config, merge, syncConfig, syncCreds f
 	}
 
 	logx.Warn("Skipping interactive creation. Add admin API identity to kind Secret %s/%s (data key %s, or flat keys for migration), export the variables, or set PROXMOX_ADMIN_CONFIG to a legacy file you maintain (not auto-written here).",
-		cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapAdminSecretName,
-		fallback(cfg.ProxmoxBootstrapAdminSecretKey, "proxmox-admin.yaml"))
+		cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName,
+		fallback(cfg.Providers.Proxmox.BootstrapAdminSecretKey, "proxmox-admin.yaml"))
 	logx.Warn("Expected format:")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, `  PROXMOX_URL: "https://pve.example:8006"`)
@@ -88,9 +88,9 @@ func EnsureProxmoxAdminConfig(cfg *config.Config, merge, syncConfig, syncCreds f
 		merge()
 	}
 	fillFromAdminYAML(cfg)
-	if cfg.ProxmoxURL == "" || cfg.ProxmoxAdminUsername == "" || cfg.ProxmoxAdminToken == "" {
+	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 		logx.Die("Proxmox admin still unset: not in kind Secrets (see %s), not in the environment, and not in PROXMOX_ADMIN_CONFIG. Aborting.",
-			cfg.ProxmoxBootstrapSecretNamespace)
+			cfg.Providers.Proxmox.BootstrapSecretNamespace)
 	}
 	logx.Log("Continuing with admin credentials from kind, environment, or legacy PROXMOX_ADMIN_CONFIG file.")
 }
@@ -101,14 +101,14 @@ func fillFromAdminYAML(cfg *config.Config) {
 	if !cfg.ProxmoxAdminCfgFilePresent() {
 		return
 	}
-	if cfg.ProxmoxURL == "" {
-		cfg.ProxmoxURL = yamlx.GetValue(cfg.ProxmoxAdminConfig, "PROXMOX_URL")
+	if cfg.Providers.Proxmox.URL == "" {
+		cfg.Providers.Proxmox.URL = yamlx.GetValue(cfg.Providers.Proxmox.AdminConfig, "PROXMOX_URL")
 	}
-	if cfg.ProxmoxAdminUsername == "" {
-		cfg.ProxmoxAdminUsername = yamlx.GetValue(cfg.ProxmoxAdminConfig, "PROXMOX_ADMIN_USERNAME")
+	if cfg.Providers.Proxmox.AdminUsername == "" {
+		cfg.Providers.Proxmox.AdminUsername = yamlx.GetValue(cfg.Providers.Proxmox.AdminConfig, "PROXMOX_ADMIN_USERNAME")
 	}
-	if cfg.ProxmoxAdminToken == "" {
-		cfg.ProxmoxAdminToken = yamlx.GetValue(cfg.ProxmoxAdminConfig, "PROXMOX_ADMIN_TOKEN")
+	if cfg.Providers.Proxmox.AdminToken == "" {
+		cfg.Providers.Proxmox.AdminToken = yamlx.GetValue(cfg.Providers.Proxmox.AdminConfig, "PROXMOX_ADMIN_TOKEN")
 	}
 }
 

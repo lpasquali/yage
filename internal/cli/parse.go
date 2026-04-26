@@ -58,46 +58,46 @@ func Parse(c *config.Config, argv []string) {
 		case "--kind-config":
 			c.KindConfig = shiftVal(a)
 		case "--proxmox-bootstrap-admin-secret":
-			c.ProxmoxBootstrapAdminSecretName = shiftVal(a)
+			c.Providers.Proxmox.BootstrapAdminSecretName = shiftVal(a)
 		case "--capi-manifest":
 			c.CAPIManifest = shiftVal(a)
 			c.BootstrapCAPIManifestUserSet = true
 		case "--regenerate-capi-manifest":
 			c.BootstrapRegenerateCAPIManifest = true
 		case "--bootstrap-config-file":
-			c.ProxmoxBootstrapConfigFile = shiftVal(a)
+			c.Providers.Proxmox.BootstrapConfigFile = shiftVal(a)
 		case "-p", "--purge":
 			c.Purge = true
 		case "-u", "--admin-username":
-			c.ProxmoxAdminUsername = shiftVal(a)
+			c.Providers.Proxmox.AdminUsername = shiftVal(a)
 		case "-t", "--admin-token":
-			c.ProxmoxAdminToken = shiftVal(a)
+			c.Providers.Proxmox.AdminToken = shiftVal(a)
 		case "--proxmox-url":
-			c.ProxmoxURL = shiftVal(a)
+			c.Providers.Proxmox.URL = shiftVal(a)
 		case "--proxmox-token":
-			c.ProxmoxToken = shiftVal(a)
+			c.Providers.Proxmox.Token = shiftVal(a)
 		case "--proxmox-secret":
-			c.ProxmoxSecret = shiftVal(a)
+			c.Providers.Proxmox.Secret = shiftVal(a)
 		case "-r", "--region":
-			c.ProxmoxRegion = shiftVal(a)
+			c.Providers.Proxmox.Region = shiftVal(a)
 		case "-n", "--node":
-			c.ProxmoxNode = shiftVal(a)
+			c.Providers.Proxmox.Node = shiftVal(a)
 		case "--template-id", "--template-vmid":
-			c.ProxmoxTemplateID = shiftVal(a)
+			c.Providers.Proxmox.TemplateID = shiftVal(a)
 		case "--workload-control-plane-template-id":
 			c.WorkloadControlPlaneTemplateID = shiftVal(a)
 		case "--workload-worker-template-id":
 			c.WorkloadWorkerTemplateID = shiftVal(a)
 		case "--mgmt-control-plane-template-id":
-			c.MgmtControlPlaneTemplateID = shiftVal(a)
+			c.Providers.Proxmox.Mgmt.ControlPlaneTemplateID = shiftVal(a)
 		case "--mgmt-worker-template-id":
-			c.MgmtWorkerTemplateID = shiftVal(a)
+			c.Providers.Proxmox.Mgmt.WorkerTemplateID = shiftVal(a)
 		case "--bridge":
-			c.ProxmoxBridge = shiftVal(a)
+			c.Providers.Proxmox.Bridge = shiftVal(a)
 		case "--proxmox-pool":
-			c.ProxmoxPool = shiftVal(a)
+			c.Providers.Proxmox.Pool = shiftVal(a)
 		case "--mgmt-proxmox-pool":
-			c.MgmtProxmoxPool = shiftVal(a)
+			c.Providers.Proxmox.Mgmt.Pool = shiftVal(a)
 		case "--control-plane-endpoint-ip":
 			c.ControlPlaneEndpointIP = shiftVal(a)
 		case "--control-plane-endpoint-port":
@@ -118,25 +118,25 @@ func Parse(c *config.Config, argv []string) {
 			c.AllowedNodesExplicit = true
 			c.AllowedNodes = shiftVal(a)
 		case "--csi-url":
-			c.ProxmoxCSIURL = shiftVal(a)
+			c.Providers.Proxmox.CSIURL = shiftVal(a)
 		case "--csi-token-id":
-			c.ProxmoxCSITokenID = shiftVal(a)
+			c.Providers.Proxmox.CSITokenID = shiftVal(a)
 		case "--csi-token-secret":
-			c.ProxmoxCSITokenSecret = shiftVal(a)
+			c.Providers.Proxmox.CSITokenSecret = shiftVal(a)
 		case "--csi-user-id":
-			c.ProxmoxCSIUserID = shiftVal(a)
+			c.Providers.Proxmox.CSIUserID = shiftVal(a)
 		case "--csi-token-prefix":
-			c.ProxmoxCSITokenPrefix = shiftVal(a)
+			c.Providers.Proxmox.CSITokenPrefix = shiftVal(a)
 		case "--csi-insecure":
-			c.ProxmoxCSIInsecure = shiftVal(a)
+			c.Providers.Proxmox.CSIInsecure = shiftVal(a)
 		case "--csi-storage-class":
-			c.ProxmoxCSIStorageClassName = shiftVal(a)
+			c.Providers.Proxmox.CSIStorageClassName = shiftVal(a)
 		case "--csi-storage":
-			c.ProxmoxCSIStorage = shiftVal(a)
+			c.Providers.Proxmox.CSIStorage = shiftVal(a)
 		case "--cloudinit-storage":
-			c.ProxmoxCloudinitStorage = shiftVal(a)
+			c.Providers.Proxmox.CloudinitStorage = shiftVal(a)
 		case "--memory-adjustment":
-			c.ProxmoxMemoryAdjustment = shiftVal(a)
+			c.Providers.Proxmox.MemoryAdjustment = shiftVal(a)
 		case "--disable-argocd":
 			c.ArgoCDEnabled = false
 		case "--disable-workload-argocd":
@@ -207,11 +207,11 @@ func Parse(c *config.Config, argv []string) {
 			c.BootstrapKindStateOp = "restore"
 			c.BootstrapKindStatePath = v
 		case "--disable-proxmox-csi":
-			c.ProxmoxCSIEnabled = false
+			c.Providers.Proxmox.CSIEnabled = false
 		case "--proxmox-csi-version":
-			c.ProxmoxCSIChartVersion = shiftVal(a)
+			c.Providers.Proxmox.CSIChartVersion = shiftVal(a)
 		case "--disable-proxmox-csi-smoketest":
-			c.ProxmoxCSISmokeEnabled = false
+			c.Providers.Proxmox.CSISmokeEnabled = false
 		case "--disable-argocd-workload-postsync-hooks":
 			c.ArgoWorkloadPostsyncHooksEnabled = false
 		case "--argocd-workload-postsync-hooks-git-url":
@@ -241,43 +241,43 @@ func Parse(c *config.Config, argv []string) {
 		case "--victoriametrics-version":
 			c.VictoriaMetricsChartVersion = shiftVal(a)
 		case "--csi-reclaim-policy":
-			c.ProxmoxCSIReclaimPolicy = shiftVal(a)
+			c.Providers.Proxmox.CSIReclaimPolicy = shiftVal(a)
 		case "--csi-fstype":
-			c.ProxmoxCSIFsType = shiftVal(a)
+			c.Providers.Proxmox.CSIFsType = shiftVal(a)
 		case "--csi-default-class":
-			c.ProxmoxCSIDefaultClass = shiftVal(a)
+			c.Providers.Proxmox.CSIDefaultClass = shiftVal(a)
 		case "--capi-user-id":
-			c.ProxmoxCAPIUserID = shiftVal(a)
+			c.Providers.Proxmox.CAPIUserID = shiftVal(a)
 		case "--capi-token-prefix":
-			c.ProxmoxCAPITokenPrefix = shiftVal(a)
+			c.Providers.Proxmox.CAPITokenPrefix = shiftVal(a)
 		case "--cluster-set-id":
 			c.ClusterSetID = shiftVal(a)
 		case "--recreate-proxmox-identities":
-			c.RecreateProxmoxIdentities = true
+			c.Providers.Proxmox.RecreateIdentities = true
 		case "--recreate-proxmox-identities-scope":
-			c.ProxmoxIdentityRecreateScope = shiftVal(a)
+			c.Providers.Proxmox.IdentityRecreateScope = shiftVal(a)
 		case "--recreate-proxmox-identities-state-rm":
-			c.ProxmoxIdentityRecreateStateRm = true
+			c.Providers.Proxmox.IdentityRecreateStateRm = true
 		case "--control-plane-boot-volume-device":
-			c.ControlPlaneBootVolumeDevice = shiftVal(a)
+			c.Providers.Proxmox.ControlPlaneBootVolumeDevice = shiftVal(a)
 		case "--control-plane-boot-volume-size":
-			c.ControlPlaneBootVolumeSize = shiftVal(a)
+			c.Providers.Proxmox.ControlPlaneBootVolumeSize = shiftVal(a)
 		case "--control-plane-num-sockets":
-			c.ControlPlaneNumSockets = shiftVal(a)
+			c.Providers.Proxmox.ControlPlaneNumSockets = shiftVal(a)
 		case "--control-plane-num-cores":
-			c.ControlPlaneNumCores = shiftVal(a)
+			c.Providers.Proxmox.ControlPlaneNumCores = shiftVal(a)
 		case "--control-plane-memory-mib":
-			c.ControlPlaneMemoryMiB = shiftVal(a)
+			c.Providers.Proxmox.ControlPlaneMemoryMiB = shiftVal(a)
 		case "--worker-boot-volume-device":
-			c.WorkerBootVolumeDevice = shiftVal(a)
+			c.Providers.Proxmox.WorkerBootVolumeDevice = shiftVal(a)
 		case "--worker-boot-volume-size":
-			c.WorkerBootVolumeSize = shiftVal(a)
+			c.Providers.Proxmox.WorkerBootVolumeSize = shiftVal(a)
 		case "--worker-num-sockets":
-			c.WorkerNumSockets = shiftVal(a)
+			c.Providers.Proxmox.WorkerNumSockets = shiftVal(a)
 		case "--worker-num-cores":
-			c.WorkerNumCores = shiftVal(a)
+			c.Providers.Proxmox.WorkerNumCores = shiftVal(a)
 		case "--worker-memory-mib":
-			c.WorkerMemoryMiB = shiftVal(a)
+			c.Providers.Proxmox.WorkerMemoryMiB = shiftVal(a)
 		case "--workload-cluster-name":
 			c.WorkloadClusterName = shiftVal(a)
 			c.WorkloadClusterNameExplicit = true
@@ -354,55 +354,55 @@ func Parse(c *config.Config, argv []string) {
 		case "--bootstrap-mode":
 			c.BootstrapMode = strings.ToLower(shiftVal(a))
 		case "--aws-mode":
-			c.AWSMode = strings.ToLower(shiftVal(a))
+			c.Providers.AWS.Mode = strings.ToLower(shiftVal(a))
 		case "--aws-fargate-pod-count":
-			c.AWSFargatePodCount = shiftVal(a)
+			c.Providers.AWS.FargatePodCount = shiftVal(a)
 		case "--aws-fargate-pod-cpu":
-			c.AWSFargatePodCPU = shiftVal(a)
+			c.Providers.AWS.FargatePodCPU = shiftVal(a)
 		case "--aws-fargate-pod-memory-gib":
-			c.AWSFargatePodMemoryGiB = shiftVal(a)
+			c.Providers.AWS.FargatePodMemoryGiB = shiftVal(a)
 		case "--aws-overhead-tier":
-			c.AWSOverheadTier = strings.ToLower(shiftVal(a))
+			c.Providers.AWS.OverheadTier = strings.ToLower(shiftVal(a))
 		case "--aws-nat-gateway-count":
-			c.AWSNATGatewayCount = shiftVal(a)
+			c.Providers.AWS.NATGatewayCount = shiftVal(a)
 		case "--aws-alb-count":
-			c.AWSALBCount = shiftVal(a)
+			c.Providers.AWS.ALBCount = shiftVal(a)
 		case "--aws-nlb-count":
-			c.AWSNLBCount = shiftVal(a)
+			c.Providers.AWS.NLBCount = shiftVal(a)
 		case "--aws-data-transfer-gb":
-			c.AWSDataTransferGB = shiftVal(a)
+			c.Providers.AWS.DataTransferGB = shiftVal(a)
 		case "--aws-cloudwatch-logs-gb":
-			c.AWSCloudWatchLogsGB = shiftVal(a)
+			c.Providers.AWS.CloudWatchLogsGB = shiftVal(a)
 		case "--azure-mode":
-			c.AzureMode = strings.ToLower(shiftVal(a))
+			c.Providers.Azure.Mode = strings.ToLower(shiftVal(a))
 		case "--azure-location":
-			c.AzureLocation = shiftVal(a)
+			c.Providers.Azure.Location = shiftVal(a)
 		case "--azure-control-plane-machine-type":
-			c.AzureControlPlaneMachineType = shiftVal(a)
+			c.Providers.Azure.ControlPlaneMachineType = shiftVal(a)
 		case "--azure-node-machine-type":
-			c.AzureNodeMachineType = shiftVal(a)
+			c.Providers.Azure.NodeMachineType = shiftVal(a)
 		case "--azure-overhead-tier":
-			c.AzureOverheadTier = strings.ToLower(shiftVal(a))
+			c.Providers.Azure.OverheadTier = strings.ToLower(shiftVal(a))
 		case "--gcp-mode":
-			c.GCPMode = strings.ToLower(shiftVal(a))
+			c.Providers.GCP.Mode = strings.ToLower(shiftVal(a))
 		case "--gcp-region":
-			c.GCPRegion = shiftVal(a)
+			c.Providers.GCP.Region = shiftVal(a)
 		case "--gcp-project":
-			c.GCPProject = shiftVal(a)
+			c.Providers.GCP.Project = shiftVal(a)
 		case "--gcp-control-plane-machine-type":
-			c.GCPControlPlaneMachineType = shiftVal(a)
+			c.Providers.GCP.ControlPlaneMachineType = shiftVal(a)
 		case "--gcp-node-machine-type":
-			c.GCPNodeMachineType = shiftVal(a)
+			c.Providers.GCP.NodeMachineType = shiftVal(a)
 		case "--gcp-overhead-tier":
-			c.GCPOverheadTier = strings.ToLower(shiftVal(a))
+			c.Providers.GCP.OverheadTier = strings.ToLower(shiftVal(a))
 		case "--hetzner-control-plane-machine-type":
-			c.HetznerControlPlaneMachineType = shiftVal(a)
+			c.Providers.Hetzner.ControlPlaneMachineType = shiftVal(a)
 		case "--hetzner-node-machine-type":
-			c.HetznerNodeMachineType = shiftVal(a)
+			c.Providers.Hetzner.NodeMachineType = shiftVal(a)
 		case "--hetzner-location":
-			c.HetznerLocation = shiftVal(a)
+			c.Providers.Hetzner.Location = shiftVal(a)
 		case "--hetzner-overhead-tier":
-			c.HetznerOverheadTier = strings.ToLower(shiftVal(a))
+			c.Providers.Hetzner.OverheadTier = strings.ToLower(shiftVal(a))
 		case "--resource-budget-fraction":
 			v := shiftVal(a)
 			if f, err := strconv.ParseFloat(v, 64); err == nil {
@@ -411,37 +411,37 @@ func Parse(c *config.Config, argv []string) {
 		case "--pivot-verify-timeout":
 			c.PivotVerifyTimeout = shiftVal(a)
 		case "--mgmt-cluster-name":
-			c.MgmtClusterName = shiftVal(a)
+			c.Mgmt.ClusterName = shiftVal(a)
 		case "--mgmt-cluster-namespace":
-			c.MgmtClusterNamespace = shiftVal(a)
+			c.Mgmt.ClusterNamespace = shiftVal(a)
 		case "--mgmt-k8s-version":
-			c.MgmtKubernetesVersion = shiftVal(a)
+			c.Mgmt.KubernetesVersion = shiftVal(a)
 		case "--mgmt-cilium-cluster-id":
-			c.MgmtCiliumClusterID = shiftVal(a)
+			c.Mgmt.CiliumClusterID = shiftVal(a)
 		case "--mgmt-control-plane-machine-count":
-			c.MgmtControlPlaneMachineCount = shiftVal(a)
+			c.Mgmt.ControlPlaneMachineCount = shiftVal(a)
 		case "--mgmt-worker-machine-count":
-			c.MgmtWorkerMachineCount = shiftVal(a)
+			c.Mgmt.WorkerMachineCount = shiftVal(a)
 		case "--mgmt-control-plane-endpoint-ip":
-			c.MgmtControlPlaneEndpointIP = shiftVal(a)
+			c.Mgmt.ControlPlaneEndpointIP = shiftVal(a)
 		case "--mgmt-control-plane-endpoint-port":
-			c.MgmtControlPlaneEndpointPort = shiftVal(a)
+			c.Mgmt.ControlPlaneEndpointPort = shiftVal(a)
 		case "--mgmt-node-ip-ranges":
-			c.MgmtNodeIPRanges = shiftVal(a)
+			c.Mgmt.NodeIPRanges = shiftVal(a)
 		case "--mgmt-capi-manifest":
-			c.MgmtCAPIManifest = shiftVal(a)
+			c.Mgmt.CAPIManifest = shiftVal(a)
 		case "--mgmt-control-plane-num-sockets":
-			c.MgmtControlPlaneNumSockets = shiftVal(a)
+			c.Providers.Proxmox.Mgmt.ControlPlaneNumSockets = shiftVal(a)
 		case "--mgmt-control-plane-num-cores":
-			c.MgmtControlPlaneNumCores = shiftVal(a)
+			c.Providers.Proxmox.Mgmt.ControlPlaneNumCores = shiftVal(a)
 		case "--mgmt-control-plane-memory-mib":
-			c.MgmtControlPlaneMemoryMiB = shiftVal(a)
+			c.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB = shiftVal(a)
 		case "--mgmt-control-plane-boot-volume-device":
-			c.MgmtControlPlaneBootVolumeDevice = shiftVal(a)
+			c.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeDevice = shiftVal(a)
 		case "--mgmt-control-plane-boot-volume-size":
-			c.MgmtControlPlaneBootVolumeSize = shiftVal(a)
+			c.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize = shiftVal(a)
 		case "--capi-proxmox-machine-template-spec-rev-skip":
-			c.CAPIProxmoxMachineTemplateSpecRev = false
+			c.Providers.Proxmox.CAPIMachineTemplateSpecRev = false
 		case "--cilium-wait-duration":
 			c.CiliumWaitDuration = shiftVal(a)
 		case "--cilium-ingress":
@@ -480,6 +480,12 @@ func Parse(c *config.Config, argv []string) {
 			c.EnableMetricsServer = false
 		case "--disable-workload-metrics-server":
 			c.EnableWorkloadMetricsServer = false
+		case "--infra-provider", "--infrastructure-provider":
+			// Sets the active infrastructure provider. Mirrors the
+			// INFRA_PROVIDER env var (which Load() reads at startup).
+			// usage.txt has long referenced --infrastructure-provider as
+			// if it existed — this commit makes it real.
+			c.InfraProvider = strings.ToLower(strings.TrimSpace(shiftVal(a)))
 		case "-h", "--help":
 			PrintUsage(nil)
 			os.Exit(0)

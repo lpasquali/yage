@@ -21,7 +21,7 @@ import (
 // renderManagementManifest generates the CAPI manifest for the management
 // cluster on Proxmox by shelling out to `clusterctl generate cluster`,
 // mirroring capimanifest.GenerateWorkloadManifestIfMissing but with MGMT_*
-// inputs. Writes the rendered manifest to cfg.MgmtCAPIManifest (or a temp
+// inputs. Writes the rendered manifest to cfg.Mgmt.CAPIManifest (or a temp
 // file when empty) and returns the path on disk.
 //
 // After generation, applies the same four patches the workload manifest
@@ -39,9 +39,9 @@ func renderManagementManifest(cfg *config.Config, clusterctlCfgPath string) (str
 		return "", fmt.Errorf("renderManagementManifest: clusterctl config %s: %w", clusterctlCfgPath, err)
 	}
 
-	// Determine output path: cfg.MgmtCAPIManifest wins; otherwise a
+	// Determine output path: cfg.Mgmt.CAPIManifest wins; otherwise a
 	// stable temp file under os.TempDir so subsequent runs reuse it.
-	out := cfg.MgmtCAPIManifest
+	out := cfg.Mgmt.CAPIManifest
 	if out == "" {
 		f, err := os.CreateTemp("", "capi-mgmt-*.yaml")
 		if err != nil {
@@ -49,7 +49,7 @@ func renderManagementManifest(cfg *config.Config, clusterctlCfgPath string) (str
 		}
 		out = f.Name()
 		f.Close()
-		cfg.MgmtCAPIManifest = out
+		cfg.Mgmt.CAPIManifest = out
 	}
 
 	// Reuse an existing non-empty manifest. The mgmt manifest has no
@@ -65,32 +65,32 @@ func renderManagementManifest(cfg *config.Config, clusterctlCfgPath string) (str
 
 	// Required inputs.
 	var missing []string
-	if cfg.ProxmoxURL == "" {
+	if cfg.Providers.Proxmox.URL == "" {
 		missing = append(missing, "PROXMOX_URL")
 	}
-	if cfg.ProxmoxRegion == "" {
+	if cfg.Providers.Proxmox.Region == "" {
 		missing = append(missing, "PROXMOX_REGION")
 	}
-	if cfg.ProxmoxNode == "" {
+	if cfg.Providers.Proxmox.Node == "" {
 		missing = append(missing, "PROXMOX_NODE")
 	}
-	if cfg.ProxmoxTemplateID == "" {
+	if cfg.Providers.Proxmox.TemplateID == "" {
 		missing = append(missing, "PROXMOX_TEMPLATE_ID")
 	}
-	if cfg.MgmtControlPlaneEndpointIP == "" {
+	if cfg.Mgmt.ControlPlaneEndpointIP == "" {
 		missing = append(missing, "MGMT_CONTROL_PLANE_ENDPOINT_IP")
 	}
-	if cfg.MgmtNodeIPRanges == "" {
+	if cfg.Mgmt.NodeIPRanges == "" {
 		missing = append(missing, "MGMT_NODE_IP_RANGES")
 	}
 	if len(missing) > 0 {
 		return "", fmt.Errorf("missing inputs for management manifest: %s", strings.Join(missing, " "))
 	}
 
-	bridge := cfg.ProxmoxBridge
-	sourceNode := cfg.ProxmoxSourceNode
+	bridge := cfg.Providers.Proxmox.Bridge
+	sourceNode := cfg.Providers.Proxmox.SourceNode
 	if sourceNode == "" {
-		sourceNode = cfg.ProxmoxNode
+		sourceNode = cfg.Providers.Proxmox.Node
 	}
 	sshKeys := cfg.VMSSHKeys
 	if sshKeys == "" {
@@ -122,40 +122,40 @@ func renderManagementManifest(cfg *config.Config, clusterctlCfgPath string) (str
 	// We override those with MGMT_* values so the same Proxmox provider
 	// template renders the management cluster.
 	args := []string{
-		"generate", "cluster", cfg.MgmtClusterName,
+		"generate", "cluster", cfg.Mgmt.ClusterName,
 		"--config", clusterctlCfgPath,
-		"--kubernetes-version", cfg.MgmtKubernetesVersion,
-		"--control-plane-machine-count", cfg.MgmtControlPlaneMachineCount,
-		"--worker-machine-count", cfg.MgmtWorkerMachineCount,
+		"--kubernetes-version", cfg.Mgmt.KubernetesVersion,
+		"--control-plane-machine-count", cfg.Mgmt.ControlPlaneMachineCount,
+		"--worker-machine-count", cfg.Mgmt.WorkerMachineCount,
 		"--infrastructure", cfg.InfraProvider,
 	}
 	cmd := exec.Command("clusterctl", args...)
 	cmd.Env = append(os.Environ(),
-		"PROXMOX_URL="+cfg.ProxmoxURL,
-		"PROXMOX_REGION="+cfg.ProxmoxRegion,
-		"PROXMOX_NODE="+cfg.ProxmoxNode,
-		"PROXMOX_TEMPLATE_ID="+cfg.ProxmoxTemplateID,
-		"PROXMOX_POOL="+cfg.MgmtProxmoxPool,
-		"TEMPLATE_VMID="+cfg.ProxmoxTemplateID,
+		"PROXMOX_URL="+cfg.Providers.Proxmox.URL,
+		"PROXMOX_REGION="+cfg.Providers.Proxmox.Region,
+		"PROXMOX_NODE="+cfg.Providers.Proxmox.Node,
+		"PROXMOX_TEMPLATE_ID="+cfg.Providers.Proxmox.TemplateID,
+		"PROXMOX_POOL="+cfg.Providers.Proxmox.Mgmt.Pool,
+		"TEMPLATE_VMID="+cfg.Providers.Proxmox.TemplateID,
 		"BRIDGE="+bridge,
 		"PROXMOX_SOURCENODE="+sourceNode,
 		"VM_SSH_KEYS="+sshKeys,
-		"CONTROL_PLANE_ENDPOINT_IP="+cfg.MgmtControlPlaneEndpointIP,
-		"NODE_IP_RANGES="+cfg.MgmtNodeIPRanges,
+		"CONTROL_PLANE_ENDPOINT_IP="+cfg.Mgmt.ControlPlaneEndpointIP,
+		"NODE_IP_RANGES="+cfg.Mgmt.NodeIPRanges,
 		"GATEWAY="+cfg.Gateway,
 		"IP_PREFIX="+cfg.IPPrefix,
 		"DNS_SERVERS="+cfg.DNSServers,
 		"ALLOWED_NODES="+cfg.AllowedNodes,
-		"PROXMOX_CLOUDINIT_STORAGE="+cfg.ProxmoxCloudinitStorage,
+		"PROXMOX_CLOUDINIT_STORAGE="+cfg.Providers.Proxmox.CloudinitStorage,
 		// MGMT_* hardware sizing maps onto the same template vars the
 		// workload uses (the worker* knobs in cfg). Both control-plane
 		// and worker entries in the rendered manifest get these values;
 		// patchPMTBlockMgmt below rewrites them per-role afterwards.
-		"BOOT_VOLUME_DEVICE="+cfg.MgmtControlPlaneBootVolumeDevice,
-		"BOOT_VOLUME_SIZE="+cfg.MgmtControlPlaneBootVolumeSize,
-		"NUM_SOCKETS="+cfg.MgmtControlPlaneNumSockets,
-		"NUM_CORES="+cfg.MgmtControlPlaneNumCores,
-		"MEMORY_MIB="+cfg.MgmtControlPlaneMemoryMiB,
+		"BOOT_VOLUME_DEVICE="+cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeDevice,
+		"BOOT_VOLUME_SIZE="+cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize,
+		"NUM_SOCKETS="+cfg.Providers.Proxmox.Mgmt.ControlPlaneNumSockets,
+		"NUM_CORES="+cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores,
+		"MEMORY_MIB="+cfg.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB,
 	)
 
 	outFile, err := os.Create(tmpPath)
@@ -254,8 +254,8 @@ func mgmtRoleResourceOverrides(cfg *config.Config, manifestPath string) error {
 	// Patch every PMT (control-plane or worker) using the mgmt sizing
 	// and per-role template overrides (with PROXMOX_TEMPLATE_ID as the
 	// catch-all fallback when MGMT_*_TEMPLATE_ID is unset).
-	mgmtCPTpl := firstNonEmptyMgmt(cfg.MgmtControlPlaneTemplateID, cfg.ProxmoxTemplateID)
-	mgmtWkTpl := firstNonEmptyMgmt(cfg.MgmtWorkerTemplateID, cfg.ProxmoxTemplateID)
+	mgmtCPTpl := firstNonEmptyMgmt(cfg.Providers.Proxmox.Mgmt.ControlPlaneTemplateID, cfg.Providers.Proxmox.TemplateID)
+	mgmtWkTpl := firstNonEmptyMgmt(cfg.Providers.Proxmox.Mgmt.WorkerTemplateID, cfg.Providers.Proxmox.TemplateID)
 	parts := strings.Split(text, "\n---\n")
 	nameRE := regexp.MustCompile(`(?m)^  name:\s*(\S+)\s*$`)
 	for i, doc := range parts {
@@ -268,11 +268,11 @@ func mgmtRoleResourceOverrides(cfg *config.Config, manifestPath string) error {
 		}
 		// Replace the five hardware fields. Same regex shapes as the
 		// workload helper (capimanifest.patchPMTBlock).
-		doc = replaceFirstPerLine(doc, `(disk:\s*)[^\n]+`, "${1}"+cfg.MgmtControlPlaneBootVolumeDevice)
-		doc = replaceFirstPerLine(doc, `(sizeGb:\s*)[^\n]+`, "${1}"+cfg.MgmtControlPlaneBootVolumeSize)
-		doc = replaceFirstPerLine(doc, `(numSockets:\s*)[^\n]+`, "${1}"+cfg.MgmtControlPlaneNumSockets)
-		doc = replaceFirstPerLine(doc, `(numCores:\s*)[^\n]+`, "${1}"+cfg.MgmtControlPlaneNumCores)
-		doc = replaceFirstPerLine(doc, `(memoryMiB:\s*)[^\n]+`, "${1}"+cfg.MgmtControlPlaneMemoryMiB)
+		doc = replaceFirstPerLine(doc, `(disk:\s*)[^\n]+`, "${1}"+cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeDevice)
+		doc = replaceFirstPerLine(doc, `(sizeGb:\s*)[^\n]+`, "${1}"+cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize)
+		doc = replaceFirstPerLine(doc, `(numSockets:\s*)[^\n]+`, "${1}"+cfg.Providers.Proxmox.Mgmt.ControlPlaneNumSockets)
+		doc = replaceFirstPerLine(doc, `(numCores:\s*)[^\n]+`, "${1}"+cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores)
+		doc = replaceFirstPerLine(doc, `(memoryMiB:\s*)[^\n]+`, "${1}"+cfg.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB)
 		// Pick the per-role template override; default to CP for any
 		// PMT whose name doesn't contain "worker" (mgmt typically has 0
 		// workers, but we honor the override if present).
@@ -292,7 +292,7 @@ func mgmtRoleResourceOverrides(cfg *config.Config, manifestPath string) error {
 	text = scalarCSVToYAMLList(text, "allowedNodes")
 	text = scalarCSVToYAMLList(text, "dnsServers")
 	text = scalarCSVToYAMLList(text, "addresses")
-	text = injectMemoryAdjustment(text, cfg.ProxmoxMemoryAdjustment)
+	text = injectMemoryAdjustment(text, cfg.Providers.Proxmox.MemoryAdjustment)
 
 	return os.WriteFile(manifestPath, []byte(text), 0o644)
 }
@@ -300,7 +300,7 @@ func mgmtRoleResourceOverrides(cfg *config.Config, manifestPath string) error {
 // renderMgmtCiliumHelmChartProxy renders a HelmChartProxy YAML doc that
 // targets the management cluster (not the workload). It uses the
 // existing CAAPH selector convention: select Clusters labelled
-// `caaph: enabled` and `caaph.cilium.cluster-id: <MgmtCiliumClusterID>`.
+// `caaph: enabled` and `caaph.cilium.cluster-id: <Mgmt.CiliumClusterID>`.
 //
 // Returns the YAML doc as a string; the caller server-side-applies it.
 //
@@ -311,15 +311,15 @@ func renderMgmtCiliumHelmChartProxy(cfg *config.Config) string {
 	if ver == "" {
 		ver = "1.19.3"
 	}
-	ns := cfg.MgmtClusterNamespace
+	ns := cfg.Mgmt.ClusterNamespace
 	if ns == "" {
 		ns = "default"
 	}
-	name := cfg.MgmtClusterName
+	name := cfg.Mgmt.ClusterName
 	if name == "" {
 		name = "capi-management"
 	}
-	clusterID := cfg.MgmtCiliumClusterID
+	clusterID := cfg.Mgmt.CiliumClusterID
 	if clusterID == "" {
 		// Stable derivation: reuse the workload cluster ID if set,
 		// else derive from the cluster name. Differ from workload by
@@ -333,22 +333,22 @@ func renderMgmtCiliumHelmChartProxy(cfg *config.Config) string {
 	fmt.Fprintf(&vt, "  name: %s\n", g(".Cluster.metadata.name"))
 	fmt.Fprintf(&vt, "  id: %s\n", clusterID)
 	vt.WriteString("kubeProxyReplacement: true\n")
-	fmt.Fprintf(&vt, "k8sServiceHost: %s\n", cfg.MgmtControlPlaneEndpointIP)
-	port := cfg.MgmtControlPlaneEndpointPort
+	fmt.Fprintf(&vt, "k8sServiceHost: %s\n", cfg.Mgmt.ControlPlaneEndpointIP)
+	port := cfg.Mgmt.ControlPlaneEndpointPort
 	if port == "" {
 		port = "6443"
 	}
 	fmt.Fprintf(&vt, "k8sServicePort: %s\n", port)
 	// Hubble: on by default for the management cluster (cheap on a
 	// single-node cluster, valuable for observability).
-	if sysinfo.IsTrue(cfg.MgmtCiliumHubble) {
+	if sysinfo.IsTrue(cfg.Mgmt.CiliumHubble) {
 		vt.WriteString("hubble:\n  enabled: true\n  relay:\n    enabled: true\n")
 	}
 	// LB-IPAM: off by default for management (no Service type=LoadBalancer
 	// targets on a stateless mgmt cluster). Setting `loadBalancer.l2.enabled`
 	// to false here is informational; the operator default is already off,
 	// but we render the key explicitly so an inspector can confirm.
-	if !sysinfo.IsTrue(cfg.MgmtCiliumLBIPAM) {
+	if !sysinfo.IsTrue(cfg.Mgmt.CiliumLBIPAM) {
 		vt.WriteString("loadBalancer:\n  l2:\n    enabled: false\n")
 	}
 	pool := strings.ReplaceAll(strings.TrimSpace(cfg.CiliumIPAMClusterPoolIPv4), `"`, "")
@@ -396,8 +396,8 @@ func renderMgmtCiliumHelmChartProxy(cfg *config.Config) string {
 // applied at create time. Live-patching after apply happens via the
 // same dynamic-client patch in pivot.go.
 func patchMgmtClusterCAAPHLabels(cfg *config.Config, manifestPath string) error {
-	if cfg.MgmtCiliumClusterID == "" {
-		cfg.MgmtCiliumClusterID = deriveMgmtClusterID(cfg)
+	if cfg.Mgmt.CiliumClusterID == "" {
+		cfg.Mgmt.CiliumClusterID = deriveMgmtClusterID(cfg)
 	}
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -405,14 +405,14 @@ func patchMgmtClusterCAAPHLabels(cfg *config.Config, manifestPath string) error 
 	}
 	text := string(raw)
 	docs := strings.Split(text, "\n---\n")
-	port := cfg.MgmtControlPlaneEndpointPort
+	port := cfg.Mgmt.ControlPlaneEndpointPort
 	if port == "" {
 		port = "6443"
 	}
 	labels := []struct{ k, v string }{
 		{"caaph", "enabled"},
-		{"caaph.cilium.cluster-id", cfg.MgmtCiliumClusterID},
-		{"caaph.cilium.k8s-service-host", cfg.MgmtControlPlaneEndpointIP},
+		{"caaph.cilium.cluster-id", cfg.Mgmt.CiliumClusterID},
+		{"caaph.cilium.k8s-service-host", cfg.Mgmt.ControlPlaneEndpointIP},
 		{"caaph.cilium.k8s-service-port", port},
 	}
 
@@ -502,10 +502,10 @@ func patchMgmtClusterCAAPHLabels(cfg *config.Config, manifestPath string) error 
 // the same ClusterMesh ID). 1..255 range, same shape as
 // proxmox.DeriveCiliumClusterID.
 func deriveMgmtClusterID(cfg *config.Config) string {
-	if cfg.MgmtCiliumClusterID != "" {
-		return cfg.MgmtCiliumClusterID
+	if cfg.Mgmt.CiliumClusterID != "" {
+		return cfg.Mgmt.CiliumClusterID
 	}
-	src := cfg.MgmtClusterName
+	src := cfg.Mgmt.ClusterName
 	if src == "" {
 		src = "capi-management"
 	}

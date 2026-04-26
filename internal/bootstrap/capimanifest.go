@@ -197,9 +197,9 @@ func DeleteCAPIManifestSecret(cfg *config.Config) {
 // (L4350-L4360). Returns the explicit override when it exists on disk,
 // ./config.yaml when it exists, or "".
 func ResolvedLocalConfigYAMLPath(cfg *config.Config) string {
-	if cfg.ProxmoxBootstrapConfigFile != "" {
-		if _, err := os.Stat(cfg.ProxmoxBootstrapConfigFile); err == nil {
-			return cfg.ProxmoxBootstrapConfigFile
+	if cfg.Providers.Proxmox.BootstrapConfigFile != "" {
+		if _, err := os.Stat(cfg.Providers.Proxmox.BootstrapConfigFile); err == nil {
+			return cfg.Providers.Proxmox.BootstrapConfigFile
 		}
 	}
 	cwd, err := os.Getwd()
@@ -296,13 +296,13 @@ func WorkloadClusterctlIsStale(cfg *config.Config) bool {
 // Returns the path the caller should hand to clusterctl.
 func SyncClusterctlConfigFile(cfg *config.Config) string {
 	var missing []string
-	if cfg.ProxmoxURL == "" {
+	if cfg.Providers.Proxmox.URL == "" {
 		missing = append(missing, "PROXMOX_URL")
 	}
-	if cfg.ProxmoxToken == "" {
+	if cfg.Providers.Proxmox.Token == "" {
 		missing = append(missing, "PROXMOX_TOKEN")
 	}
-	if cfg.ProxmoxSecret == "" {
+	if cfg.Providers.Proxmox.Secret == "" {
 		missing = append(missing, "PROXMOX_SECRET")
 	}
 	if len(missing) > 0 {
@@ -318,12 +318,12 @@ func SyncClusterctlConfigFile(cfg *config.Config) string {
 	}
 	defer f.Close()
 	body := fmt.Sprintf("PROXMOX_URL: %q\nPROXMOX_TOKEN: %q\nPROXMOX_SECRET: %q\n",
-		cfg.ProxmoxURL, cfg.ProxmoxToken, cfg.ProxmoxSecret)
+		cfg.Providers.Proxmox.URL, cfg.Providers.Proxmox.Token, cfg.Providers.Proxmox.Secret)
 	if _, err := f.WriteString(body); err != nil {
 		logx.Die("Cannot write ephemeral clusterctl config: %v", err)
 	}
 	SetEphemeralClusterctlConfig(f.Name())
 	logx.Log("Using ephemeral clusterctl config under %s (bootstrap state lives in kind Secret %s, not a local clusterctl path).",
-		os.TempDir(), cfg.ProxmoxBootstrapConfigSecretName)
+		os.TempDir(), cfg.Providers.Proxmox.BootstrapConfigSecretName)
 	return f.Name()
 }

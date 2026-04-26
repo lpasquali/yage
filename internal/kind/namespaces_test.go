@@ -20,8 +20,8 @@ func TestBackupNamespaces(t *testing.T) {
 	})
 	t.Run("default: union of bootstrap + workload namespace", func(t *testing.T) {
 		cfg := &config.Config{
-			ProxmoxBootstrapSecretNamespace: "proxmox-bootstrap-system",
-			WorkloadClusterNamespace:        "default",
+			Providers:                config.Providers{Proxmox: config.ProxmoxConfig{BootstrapSecretNamespace: "proxmox-bootstrap-system"}},
+			WorkloadClusterNamespace: "default",
 		}
 		got := BackupNamespaces(cfg)
 		want := []string{"default", "proxmox-bootstrap-system"}
@@ -30,7 +30,7 @@ func TestBackupNamespaces(t *testing.T) {
 		}
 	})
 	t.Run("default: one of the two empty", func(t *testing.T) {
-		cfg := &config.Config{ProxmoxBootstrapSecretNamespace: "only"}
+		cfg := &config.Config{Providers: config.Providers{Proxmox: config.ProxmoxConfig{BootstrapSecretNamespace: "only"}}}
 		got := BackupNamespaces(cfg)
 		want := []string{"only"}
 		if !reflect.DeepEqual(got, want) {

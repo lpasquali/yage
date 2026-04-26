@@ -65,7 +65,7 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 	if !kindClusterExists(name) {
 		return nil
 	}
-	ns := cfg.ProxmoxBootstrapSecretNamespace
+	ns := cfg.Providers.Proxmox.BootstrapSecretNamespace
 	if err := ensureNamespace(ctx, ns); err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 	lookup := func(k string) string { return env[k] }
 
 	// --- Legacy single-Secret branch ---
-	if cfg.ProxmoxBootstrapSecretName != "" {
+	if cfg.Providers.Proxmox.BootstrapSecretName != "" {
 		legacyKeys := []string{
 			"PROXMOX_URL", "PROXMOX_TOKEN", "PROXMOX_SECRET",
 			"PROXMOX_CSI_URL", "PROXMOX_CSI_TOKEN_ID", "PROXMOX_CSI_TOKEN_SECRET",
@@ -83,16 +83,16 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 		_ = (kindSecret{
 			Context:     ctx,
 			Namespace:   ns,
-			Name:        cfg.ProxmoxBootstrapSecretName,
+			Name:        cfg.Providers.Proxmox.BootstrapSecretName,
 			AllowedKeys: legacyKeys,
 			LookupValue: lookup,
 		}).apply()
-		logx.Log("Updated %s/%s (legacy CAPI/CSI from current environment).", ns, cfg.ProxmoxBootstrapSecretName)
+		logx.Log("Updated %s/%s (legacy CAPI/CSI from current environment).", ns, cfg.Providers.Proxmox.BootstrapSecretName)
 
-		adminTarget := cfg.ProxmoxBootstrapSecretName
-		if cfg.ProxmoxBootstrapAdminSecretName != "" &&
-			cfg.ProxmoxBootstrapAdminSecretName != cfg.ProxmoxBootstrapSecretName {
-			adminTarget = cfg.ProxmoxBootstrapAdminSecretName
+		adminTarget := cfg.Providers.Proxmox.BootstrapSecretName
+		if cfg.Providers.Proxmox.BootstrapAdminSecretName != "" &&
+			cfg.Providers.Proxmox.BootstrapAdminSecretName != cfg.Providers.Proxmox.BootstrapSecretName {
+			adminTarget = cfg.Providers.Proxmox.BootstrapAdminSecretName
 		}
 		_ = applyAdminYAMLToKind(cfg, ctx, adminTarget)
 		_ = UpdateCapmoxManagerSecretOnKind(cfg)
@@ -107,16 +107,16 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 	_ = (kindSecret{
 		Context:     ctx,
 		Namespace:   ns,
-		Name:        cfg.ProxmoxBootstrapCAPMOXSecretName,
+		Name:        cfg.Providers.Proxmox.BootstrapCAPMOXSecretName,
 		AllowedKeys: capmoxKeys,
 		LookupValue: lookup,
 	}).apply()
-	logx.Log("Updated %s/%s (CAPI / clusterctl keys from current environment).", ns, cfg.ProxmoxBootstrapCAPMOXSecretName)
+	logx.Log("Updated %s/%s (CAPI / clusterctl keys from current environment).", ns, cfg.Providers.Proxmox.BootstrapCAPMOXSecretName)
 
 	// Derive PROXMOX_CSI_URL from PROXMOX_URL when not set — bash L979-L982.
-	if cfg.ProxmoxURL != "" && cfg.ProxmoxCSIURL == "" {
-		cfg.ProxmoxCSIURL = proxmox.APIJSONURL(cfg)
-		env["PROXMOX_CSI_URL"] = cfg.ProxmoxCSIURL
+	if cfg.Providers.Proxmox.URL != "" && cfg.Providers.Proxmox.CSIURL == "" {
+		cfg.Providers.Proxmox.CSIURL = proxmox.APIJSONURL(cfg)
+		env["PROXMOX_CSI_URL"] = cfg.Providers.Proxmox.CSIURL
 	}
 
 	// --- Default split: CSI Secret ---
@@ -136,19 +136,19 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 	_ = (kindSecret{
 		Context:     ctx,
 		Namespace:   ns,
-		Name:        cfg.ProxmoxBootstrapCSISecretName,
+		Name:        cfg.Providers.Proxmox.BootstrapCSISecretName,
 		AllowedKeys: csiKeys,
 		LookupValue: lookup,
 	}).apply()
 	logx.Log("Updated %s/%s (CSI: API URL, token id/secret, user id, chart/storage toggles, … from current environment).",
-		ns, cfg.ProxmoxBootstrapCSISecretName)
+		ns, cfg.Providers.Proxmox.BootstrapCSISecretName)
 
-	if cfg.ProxmoxCSITokenID == "" || cfg.ProxmoxCSITokenSecret == "" {
+	if cfg.Providers.Proxmox.CSITokenID == "" || cfg.Providers.Proxmox.CSITokenSecret == "" {
 		logx.Warn("PROXMOX_CSI_TOKEN_ID/PROXMOX_CSI_TOKEN_SECRET are unset; %s will not contain CSI tokens until Terraform identity outputs or the environment set them (URL/region are still written when known).",
-			cfg.ProxmoxBootstrapCSISecretName)
+			cfg.Providers.Proxmox.BootstrapCSISecretName)
 	}
 
-	_ = applyAdminYAMLToKind(cfg, ctx, cfg.ProxmoxBootstrapAdminSecretName)
+	_ = applyAdminYAMLToKind(cfg, ctx, cfg.Providers.Proxmox.BootstrapAdminSecretName)
 	_ = UpdateCapmoxManagerSecretOnKind(cfg)
 	return nil
 }
@@ -207,7 +207,7 @@ func applyAdminYAMLToKind(cfg *config.Config, kctx, targetSecret string) error {
 	// configured key.
 	data := map[string][]byte{}
 	var existingLabels map[string]string
-	cur, getErr := cli.Typed.CoreV1().Secrets(cfg.ProxmoxBootstrapSecretNamespace).
+	cur, getErr := cli.Typed.CoreV1().Secrets(cfg.Providers.Proxmox.BootstrapSecretNamespace).
 		Get(bg, targetSecret, metav1.GetOptions{})
 	if getErr == nil && cur != nil {
 		for k, v := range cur.Data {
@@ -217,18 +217,18 @@ func applyAdminYAMLToKind(cfg *config.Config, kctx, targetSecret string) error {
 		}
 		existingLabels = cur.Labels
 	}
-	ak := cfg.ProxmoxBootstrapAdminSecretKey
+	ak := cfg.Providers.Proxmox.BootstrapAdminSecretKey
 	if ak == "" {
 		ak = "proxmox-admin.yaml"
 	}
 	data[ak] = []byte(text)
 
-	if err := applySecret(bg, cli, cfg.ProxmoxBootstrapSecretNamespace, targetSecret, data, existingLabels); err != nil {
-		logx.Warn("Failed to update %s/%s (proxmox-admin.yaml).", cfg.ProxmoxBootstrapSecretNamespace, targetSecret)
+	if err := applySecret(bg, cli, cfg.Providers.Proxmox.BootstrapSecretNamespace, targetSecret, data, existingLabels); err != nil {
+		logx.Warn("Failed to update %s/%s (proxmox-admin.yaml).", cfg.Providers.Proxmox.BootstrapSecretNamespace, targetSecret)
 		return err
 	}
 	logx.Log("Updated %s/%s (merged %s from current environment).",
-		cfg.ProxmoxBootstrapSecretNamespace, targetSecret, ak)
+		cfg.Providers.Proxmox.BootstrapSecretNamespace, targetSecret, ak)
 	return nil
 }
 
@@ -237,7 +237,7 @@ func applyAdminYAMLToKind(cfg *config.Config, kctx, targetSecret string) error {
 // required so a deleted in-cluster capmox credential is restored on the
 // next sync without waiting for the full Argo / CAAPH loop.
 func UpdateCapmoxManagerSecretOnKind(cfg *config.Config) error {
-	if cfg.ProxmoxURL == "" || cfg.ProxmoxToken == "" || cfg.ProxmoxSecret == "" {
+	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Secret == "" {
 		return nil
 	}
 	kctx := "kind-" + cfg.KindClusterName
@@ -252,9 +252,9 @@ func UpdateCapmoxManagerSecretOnKind(cfg *config.Config) error {
 		return nil
 	}
 	data := map[string][]byte{
-		"url":    []byte(cfg.ProxmoxURL),
-		"token":  []byte(cfg.ProxmoxToken),
-		"secret": []byte(cfg.ProxmoxSecret),
+		"url":    []byte(cfg.Providers.Proxmox.URL),
+		"token":  []byte(cfg.Providers.Proxmox.Token),
+		"secret": []byte(cfg.Providers.Proxmox.Secret),
 	}
 	if err := applySecret(bg, cli, "capmox-system", "capmox-manager-credentials", data, nil); err != nil {
 		logx.Die("Failed to update capmox-system/capmox-manager-credentials on %s: %v", kctx, err)
@@ -301,7 +301,7 @@ func RolloutRestartProxmoxCSIOnWorkload(cfg *config.Config) {
 		logx.Warn("Failed to load workload kubeconfig — skip Proxmox CSI controller restart.")
 		return
 	}
-	ns := cfg.ProxmoxCSINamespace
+	ns := cfg.Providers.Proxmox.CSINamespace
 	bg := context.Background()
 	if _, err := cli.Typed.AppsV1().Deployments(ns).Get(bg, "proxmox-csi-plugin-controller", metav1.GetOptions{}); err != nil {
 		logx.Warn("proxmox-csi controller deployment not found in %s — skip restart.", ns)

@@ -10,8 +10,8 @@ import (
 
 // AWS overhead **shape** — counts, not money. Per-tier defaults
 // describe an architecture (how many NAT GWs, ALBs, NLBs the
-// workload assumes), and per-component cfg overrides (AWSALBCount,
-// AWSNATGatewayCount, ...) override individual counts. The actual
+// workload assumes), and per-component cfg overrides (Providers.AWS.ALBCount,
+// Providers.AWS.NATGatewayCount, ...) override individual counts. The actual
 // $/unit comes from internal/pricing live AWS API at the moment of
 // estimation.
 
@@ -60,27 +60,27 @@ func overheadDefaults(tier string) overheadCounts {
 // Returns the new slice. Component counts come from tier defaults
 // + per-component cfg overrides.
 func addServiceOverhead(items []provider.CostItem, cfg *config.Config, region string) ([]provider.CostItem, error) {
-	tier := orDefault(cfg.AWSOverheadTier, "prod")
+	tier := orDefault(cfg.Providers.AWS.OverheadTier, "prod")
 	d := overheadDefaults(tier)
 
 	// Apply per-component overrides when set on cfg.
-	if cfg.AWSNATGatewayCount != "" {
-		d.natGateways = atoiOr(cfg.AWSNATGatewayCount, d.natGateways)
+	if cfg.Providers.AWS.NATGatewayCount != "" {
+		d.natGateways = atoiOr(cfg.Providers.AWS.NATGatewayCount, d.natGateways)
 	}
-	if cfg.AWSALBCount != "" {
-		d.albs = atoiOr(cfg.AWSALBCount, d.albs)
+	if cfg.Providers.AWS.ALBCount != "" {
+		d.albs = atoiOr(cfg.Providers.AWS.ALBCount, d.albs)
 	}
-	if cfg.AWSNLBCount != "" {
-		d.nlbs = atoiOr(cfg.AWSNLBCount, d.nlbs)
+	if cfg.Providers.AWS.NLBCount != "" {
+		d.nlbs = atoiOr(cfg.Providers.AWS.NLBCount, d.nlbs)
 	}
-	if cfg.AWSDataTransferGB != "" {
-		d.dataTransferGB = atoiOr(cfg.AWSDataTransferGB, d.dataTransferGB)
+	if cfg.Providers.AWS.DataTransferGB != "" {
+		d.dataTransferGB = atoiOr(cfg.Providers.AWS.DataTransferGB, d.dataTransferGB)
 	}
-	if cfg.AWSCloudWatchLogsGB != "" {
-		d.cloudwatchGB = atoiOr(cfg.AWSCloudWatchLogsGB, d.cloudwatchGB)
+	if cfg.Providers.AWS.CloudWatchLogsGB != "" {
+		d.cloudwatchGB = atoiOr(cfg.Providers.AWS.CloudWatchLogsGB, d.cloudwatchGB)
 	}
-	if cfg.AWSRoute53HostedZones != "" {
-		d.route53Zones = atoiOr(cfg.AWSRoute53HostedZones, d.route53Zones)
+	if cfg.Providers.AWS.Route53HostedZones != "" {
+		d.route53Zones = atoiOr(cfg.Providers.AWS.Route53HostedZones, d.route53Zones)
 	}
 
 	add := func(name string, qty int, unitMonthly float64) {

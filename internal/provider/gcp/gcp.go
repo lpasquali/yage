@@ -30,7 +30,7 @@
 //
 // PatchManifest is a no-op: GCPMachineTemplate sizes via
 // spec.template.spec.instanceType (e.g. "n2-standard-2"), so a future
-// patch could map cfg.ControlPlaneNumCores / Memory to the right
+// patch could map cfg.Providers.Proxmox.ControlPlaneNumCores / Memory to the right
 // machine family. Not implemented yet.
 package gcp
 
@@ -210,7 +210,7 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 }
 
 // PatchManifest is a no-op for GCP today. Future: map
-// cfg.ControlPlaneNumCores / Memory to a GCP machine family
+// cfg.Providers.Proxmox.ControlPlaneNumCores / Memory to a GCP machine family
 // (e2-standard-2, n2-standard-2, …) and patch
 // GCPMachineTemplate.spec.template.spec.instanceType.
 func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {

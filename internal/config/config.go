@@ -17,9 +17,329 @@ import (
 	"strings"
 )
 
+// MgmtConfig holds management-cluster shape that every provider needs:
+// names, K8s version, replica counts, control-plane endpoint, Cilium add-on
+// toggles, and the rendered CAPI manifest. Provider-specific bits (Proxmox
+// VM sizing, template IDs, pool, CSI) live in ProxmoxMgmtConfig under
+// cfg.Providers.Proxmox.Mgmt.
+type MgmtConfig struct {
+	ClusterName              string
+	ClusterNamespace         string
+	KubernetesVersion        string
+	CiliumClusterID          string
+	ControlPlaneMachineCount string // "1" by default (single-node mgmt)
+	WorkerMachineCount       string // "0" by default (CP-only)
+	ControlPlaneEndpointIP   string // 1 VIP — user-provided
+	ControlPlaneEndpointPort string
+	NodeIPRanges             string // 2-IP range — user-provided
+	// CiliumHubble / CiliumLBIPAM tune the mgmt-side Cilium
+	// HelmChartProxy. Hubble defaults to true (observability is cheap on
+	// a single-node cluster); LB-IPAM defaults to false (no L2/BGP
+	// announcements needed for management add-ons).
+	CiliumHubble string
+	CiliumLBIPAM string
+	// CAPIManifest is the rendered management-cluster CAPI manifest.
+	// Lives next to cfg.CAPIManifest as a Secret on the kind cluster
+	// during bootstrap; cleaned up after pivot.
+	CAPIManifest string
+}
+
+// ProxmoxMgmtConfig holds Proxmox-only sizing / pool / CSI knobs for the
+// management cluster. Lives at cfg.Providers.Proxmox.Mgmt because none of
+// it makes sense for AWS/Azure/GCP/Hetzner/...
+type ProxmoxMgmtConfig struct {
+	ControlPlaneNumSockets       string // "1"
+	ControlPlaneNumCores         string // "2"
+	ControlPlaneMemoryMiB        string // "4096"
+	ControlPlaneBootVolumeDevice string
+	ControlPlaneBootVolumeSize   string
+	ControlPlaneTemplateID       string
+	WorkerTemplateID             string
+	// Pool is the Proxmox VE pool name the management cluster's VMs are
+	// tagged with. See ProxmoxConfig.Pool for the workload counterpart.
+	Pool string
+	// CSIEnabled — when true, install Proxmox CSI on the management
+	// cluster too. Default false: management is stateless (CAPI
+	// controllers + bootstrap state Secrets only — no PVCs).
+	CSIEnabled bool
+}
+
+// Providers groups all per-provider configuration sub-structs. Each cloud
+// (and Proxmox, treated as a "cloud" of one) has its own struct under
+// cfg.Providers.<Name>; only fields meaningful when that provider is the
+// active --infra-provider live there. Universal cluster-shape fields stay at
+// the top level of Config.
+type Providers struct {
+	// Proxmox holds every Proxmox-only knob: API/CSI credentials, identity
+	// suffix bookkeeping, VM template / pool / network bridge, the
+	// per-cluster VM sizing fields, and the Proxmox-specific bits of the
+	// management cluster.
+	Proxmox ProxmoxConfig
+	// AWS holds AWS-only knobs: region/SKU/AMI defaults, CAPA flavor mode
+	// (unmanaged/EKS/EKS+Fargate), Fargate sizing inputs, the
+	// "everything else" overhead tier, and per-component overhead
+	// overrides for the cost estimator. Credentials come from the AWS
+	// SDK chain (env, ~/.aws/config, IAM role) — not from cfg.
+	AWS AWSConfig
+	// Azure / GCP / Hetzner / DigitalOcean / Linode / OCI / IBMCloud:
+	// minimal sub-configs covering the bits the cost estimator and CAPI
+	// plumbing read for each provider. See each Config struct's docstring
+	// for the field-by-field rationale.
+	Azure         AzureConfig
+	GCP           GCPConfig
+	Hetzner       HetznerConfig
+	DigitalOcean  DigitalOceanConfig
+	Linode        LinodeConfig
+	OCI           OCIConfig
+	IBMCloud      IBMCloudConfig
+}
+
+// AzureConfig is the per-provider Azure (CAPZ) configuration.
+type AzureConfig struct {
+	// ControlPlaneMachineType / NodeMachineType drive the Azure VM SKUs
+	// CAPZ provisions for the workload cluster when --infrastructure-
+	// provider azure. Defaults match the CAPZ quick-start
+	// (Standard_D2s_v3 for both CP and worker). The Azure provider
+	// also uses these to estimate monthly cost in dry-run.
+	ControlPlaneMachineType string
+	NodeMachineType         string
+	Location                string
+	// Mode picks the CAPZ flavor:
+	//   - "unmanaged" (default): self-managed Kubernetes on Azure VMs.
+	//   - "aks": AKS-managed control plane (AzureManagedControlPlane)
+	//     + Node Pool VMs (AzureManagedMachinePool). CP costs flip
+	//     from N× VM to a flat hourly fee per cluster.
+	Mode string
+	// OverheadTier picks the bundled cost estimate (NAT, LB, public IPs,
+	// Log Analytics, DNS, egress).
+	OverheadTier string
+}
+
+// GCPConfig is the per-provider GCP (CAPG) configuration.
+type GCPConfig struct {
+	// ControlPlaneMachineType / NodeMachineType drive the GCE machine
+	// types CAPG provisions for the workload cluster when --infrastructure-
+	// provider gcp. Defaults to n2-standard-2 for both. Sustained-use and
+	// spot/preemptible discounts are NOT applied in the cost estimate.
+	ControlPlaneMachineType string
+	NodeMachineType         string
+	Region                  string
+	Project                 string
+	// Mode picks the CAPG flavor (unmanaged / gke). Autopilot is not
+	// modeled today.
+	Mode string
+	// OverheadTier picks the bundled cost estimate (Cloud NAT, LBs,
+	// Cloud Logging, Cloud DNS, internet egress).
+	OverheadTier string
+}
+
+// HetznerConfig is the per-provider Hetzner (CAPHV) configuration.
+type HetznerConfig struct {
+	// ControlPlaneMachineType / NodeMachineType drive the Hetzner Cloud
+	// server types CAPHV provisions when --infrastructure-provider
+	// hetzner. Defaults to cx22 — the cheapest type that comfortably
+	// runs k3s. Hetzner has no managed-Kubernetes service in CAPHV
+	// today, so there's no Mode equivalent to AWS/Azure.
+	ControlPlaneMachineType string
+	NodeMachineType         string
+	Location                string // fsn1, nbg1, hel1, ash, hil, sin
+	// OverheadTier picks the bundled cost estimate (LBs, floating IPs,
+	// optional volumes, optional backup surcharge).
+	OverheadTier string
+}
+
+// DigitalOceanConfig is the per-provider DigitalOcean (CAPDO) configuration.
+// API token comes from env DIGITALOCEAN_TOKEN — not from cfg.
+type DigitalOceanConfig struct {
+	Region           string
+	ControlPlaneSize string // s-2vcpu-4gb, s-4vcpu-8gb, ...
+	NodeSize         string
+}
+
+// LinodeConfig is the per-provider Linode/Akamai (CAPL) configuration.
+// Catalog is auth-free; provisioning needs LINODE_TOKEN.
+type LinodeConfig struct {
+	Region           string
+	ControlPlaneType string // g6-standard-2, g6-standard-4, ...
+	NodeType         string
+}
+
+// OCIConfig is the per-provider Oracle Cloud Infrastructure (CAPOCI)
+// configuration. Cost estimator JSON is auth-free; provisioning needs
+// OCI API key (not in cfg).
+type OCIConfig struct {
+	Region            string
+	ControlPlaneShape string // VM.Standard.E4.Flex, ...
+	NodeShape         string
+}
+
+// IBMCloudConfig is the per-provider IBM Cloud (CAPIBM) configuration.
+// Both the Global Catalog (pricing) and provisioning need IBMCLOUD_API_KEY.
+type IBMCloudConfig struct {
+	Region              string
+	ControlPlaneProfile string // bx2-2x8, cx2-4x8, ...
+	NodeProfile         string
+}
+
+// AWSConfig is the per-provider AWS configuration. Field names lose the
+// AWS prefix because the path qualifies them.
+type AWSConfig struct {
+	// ControlPlaneMachineType / NodeMachineType drive the EC2 instance
+	// types CAPA provisions for the workload cluster when
+	// --infrastructure-provider aws. Defaults match the CAPA quick-start
+	// (t3.large CP, t3.medium worker). The AWS provider also uses these
+	// to estimate monthly cost in dry-run.
+	ControlPlaneMachineType string
+	NodeMachineType         string
+	Region                  string
+	SSHKeyName              string
+	AMIID                   string
+	// Mode picks the CAPA flavor:
+	//   - "unmanaged" (default): self-managed Kubernetes on EC2.
+	//     CAPA emits AWSCluster + AWSMachineTemplate; you pay for
+	//     CP + worker EC2 nodes + EBS.
+	//   - "eks": EKS-managed control plane (AWSManagedControlPlane)
+	//     + EC2 worker nodes (AWSManagedMachinePool). CP costs flip
+	//     from 3× EC2 to a flat hourly fee per cluster (live AWS price).
+	//   - "eks-fargate": EKS CP + Fargate workers (AWSFargateProfile).
+	//     No worker EC2 fleet; pay per pod-vCPU-hour + GB-hour.
+	Mode string
+	// FargatePodCount / FargatePodCPU / FargatePodMemoryGiB parameterise
+	// the cost estimate when Mode=eks-fargate. Pod count is the
+	// application-pod count you expect (rough planning input — Argo
+	// later actually deploys), not a VM count. Default 10 pods.
+	FargatePodCount     string
+	FargatePodCPU       string // vCPU per Fargate task; "0.25" "0.5" "1" "2" "4"
+	FargatePodMemoryGiB string // GiB per Fargate task; pairs with CPU per AWS rules
+	// OverheadTier picks the bundled "everything else" cost estimate
+	// (NAT Gateway, ALB/NLB, CloudWatch, Route53, ECR, VPC endpoints,
+	// data transfer):
+	//   - "dev"        — single-AZ, no NAT, 1 ALB, minimal CloudWatch
+	//   - "prod"       — 1 NAT GW, 1 ALB, CloudWatch, Route53        (default)
+	//   - "enterprise" — 3 NAT GWs (multi-AZ HA), 2 ALBs, VPC endpoints
+	// Per-component overrides are also available; see NATGatewayCount,
+	// ALBCount, NLBCount, DataTransferGB, CloudWatchLogsGB.
+	OverheadTier      string
+	NATGatewayCount   string // overrides the tier default
+	ALBCount          string
+	NLBCount          string
+	DataTransferGB    string // monthly egress estimate
+	CloudWatchLogsGB  string
+	Route53HostedZones string
+}
+
+// ProxmoxConfig is the per-provider Proxmox configuration. Field names lose
+// the redundant `Proxmox` prefix because the path already qualifies them
+// (cfg.Providers.Proxmox.URL is unambiguous). CLI flag and env-var spellings
+// are preserved verbatim for back-compat — only the in-process struct path
+// changes.
+type ProxmoxConfig struct {
+	// ---- Bootstrap config / secret bookkeeping ----
+	BootstrapConfigFile       string
+	BootstrapConfigSecretName string
+	BootstrapConfigSecretKey  string
+	BootstrapAdminSecretKey   string
+	BootstrapSecretNamespace  string
+	BootstrapSecretName       string
+	BootstrapCAPMOXSecretName string
+	BootstrapCSISecretName    string
+	BootstrapAdminSecretName  string
+	BootstrapKindSecretUsed   bool
+	KindCAPMOXActive          bool
+
+	// ---- Admin / identity ----
+	AdminConfig             string
+	AdminInsecure           string
+	AdminUsername           string
+	AdminToken              string
+	IdentityTF              string
+	IdentityRecreateScope   string
+	IdentityRecreateStateRm bool
+	IdentitySuffix          string
+	RecreateIdentities      bool
+
+	// ---- Core API / target ----
+	URL            string
+	Token          string
+	Secret         string
+	Region         string
+	Node           string
+	SourceNode     string
+	TopologyRegion string
+	TopologyZone   string
+	TemplateID     string
+	Bridge         string
+	// Pool is the Proxmox VE pool name VMs created by CAPMOX will be tagged
+	// with. Pools group VMs in the Proxmox UI and gate ACLs (delegating
+	// start/stop/console permissions); they do NOT enforce CPU/memory
+	// quotas — that remains per-VM + per-storage. Empty default means
+	// "no pool"; when set, yage pre-creates the pool via the admin API
+	// before applying the CAPI manifest, so CAPMOX won't fail on a missing
+	// pool reference.
+	Pool string
+
+	// ---- CSI ----
+	CSIEnabled          bool
+	CSISmokeEnabled     bool
+	CSIChartRepoURL     string
+	CSIChartName        string
+	CSIChartVersion     string
+	CSINamespace        string
+	CSIConfigProvider   string
+	CSITopologyLabels   string
+	CSIConfig           string
+	CSIURL              string
+	CSITokenID          string
+	CSITokenSecret      string
+	CSIUserID           string
+	CSITokenPrefix      string
+	CSIInsecure         string
+	CSIStorageClassName string
+	CSIStorage          string
+	CSIReclaimPolicy    string
+	CSIFsType           string
+	CSIDefaultClass     string
+
+	// ---- CAPMOX identity / cloud-init / memory ----
+	CAPIUserID                 string
+	CAPITokenPrefix            string
+	CAPIMachineTemplateSpecRev bool
+	CloudinitStorage           string
+	MemoryAdjustment           string
+
+	// ---- Per-cluster VM sizing (Proxmox VM concepts) ----
+	//
+	// NumSockets / NumCores / MemoryMiB / BootVolume{Device,Size} are
+	// Proxmox VM knobs — AWS encodes the same idea as a single instance
+	// type string (AWSNodeMachineType), Hetzner as a server type, etc.
+	// They live here, not at the top level, because only the Proxmox
+	// orchestrator path reads them.
+	ControlPlaneBootVolumeDevice string
+	ControlPlaneBootVolumeSize   string
+	ControlPlaneNumSockets       string
+	ControlPlaneNumCores         string
+	ControlPlaneMemoryMiB        string
+	WorkerBootVolumeDevice       string
+	WorkerBootVolumeSize         string
+	WorkerNumSockets             string
+	WorkerNumCores               string
+	WorkerMemoryMiB              string
+
+	// ---- Management cluster (Proxmox VM specifics) ----
+	//
+	// Mirrors the workload sizing block above but for the kind→mgmt-cluster
+	// pivot target. See ProxmoxMgmtConfig for the field-by-field rationale.
+	Mgmt ProxmoxMgmtConfig
+}
+
 // Config holds every runtime tunable. Zero value is not meaningful — always
 // call Load().
 type Config struct {
+	// Providers groups per-cloud configuration. Today only Proxmox lives
+	// here; the AWS/Azure/… buckets land in subsequent commits of Phase C.
+	Providers Providers
+
+
 	// ---- Tool versions ----
 	KindVersion       string
 	KubectlVersion    string
@@ -152,141 +472,10 @@ type Config struct {
 	// is split into three equal buckets (db / observability / product).
 	SystemAppsCPUMillicores     int    // default 2000 = 2 cores
 	SystemAppsMemoryMiB         int64  // default 4096 = 4 GiB
-	// AWSControlPlaneMachineType / AWSNodeMachineType drive the
-	// EC2 instance types CAPA provisions for the workload cluster
-	// when --infrastructure-provider aws. Defaults match the CAPA
-	// quick-start (t3.large CP, t3.medium worker). The AWS provider
-	// also uses these to estimate monthly cost in dry-run.
-	AWSControlPlaneMachineType  string
-	AWSNodeMachineType          string
-	AWSRegion                   string
-	AWSSSHKeyName               string
-	AWSAMIID                    string
-	// AWSMode picks the CAPA flavor:
-	//   - "unmanaged" (default): self-managed Kubernetes on EC2.
-	//     CAPA emits AWSCluster + AWSMachineTemplate; you pay for
-	//     CP + worker EC2 nodes + EBS.
-	//   - "eks": EKS-managed control plane (AWSManagedControlPlane)
-	//     + EC2 worker nodes (AWSManagedMachinePool). CP costs flip
-	//     from 3× EC2 to a flat hourly fee per cluster (live AWS price).
-	//   - "eks-fargate": EKS CP + Fargate workers (AWSFargateProfile).
-	//     No worker EC2 fleet; pay per pod-vCPU-hour + GB-hour.
-	AWSMode                     string
-	// AWSFargatePodCount and AWSFargatePodCPU / Memory parameterise
-	// the cost estimate when AWSMode=eks-fargate. Pod count is the
-	// application-pod count you expect (rough planning input — Argo
-	// later actually deploys), not a VM count. Default 10 pods.
-	AWSFargatePodCount          string
-	AWSFargatePodCPU            string // vCPU per Fargate task; "0.25" "0.5" "1" "2" "4"
-	AWSFargatePodMemoryGiB      string // GiB per Fargate task; pairs with CPU per AWS rules
-	// AWSOverheadTier picks the bundled "everything else" cost
-	// estimate (NAT Gateway, ALB/NLB, CloudWatch, Route53, ECR, VPC
-	// endpoints, data transfer):
-	//   - "dev"        — single-AZ, no NAT, 1 ALB, minimal CloudWatch
-	//   - "prod"       — 1 NAT GW, 1 ALB, CloudWatch, Route53        (default)
-	//   - "enterprise" — 3 NAT GWs (multi-AZ HA), 2 ALBs, VPC endpoints
-	// Per-component overrides are also available; see AWSNATGatewayCount,
-	// AWSALBCount, AWSNLBCount, AWSDataTransferGB, AWSCloudWatchLogsGB.
-	AWSOverheadTier             string
-	AWSNATGatewayCount          string // overrides the tier default
-	AWSALBCount                 string
-	AWSNLBCount                 string
-	AWSDataTransferGB           string // monthly egress estimate
-	AWSCloudWatchLogsGB         string
-	AWSRoute53HostedZones       string
-	// AzureControlPlaneMachineType / AzureNodeMachineType drive the
-	// Azure VM SKUs CAPZ provisions for the workload cluster when
-	// --infrastructure-provider azure. Defaults match the CAPZ
-	// quick-start (Standard_D2s_v3 for both CP and worker). The Azure
-	// provider also uses these to estimate monthly cost in dry-run.
-	AzureControlPlaneMachineType string
-	AzureNodeMachineType         string
-	AzureLocation                string
-	// AzureMode picks the CAPZ flavor:
-	//   - "unmanaged" (default): self-managed Kubernetes on Azure VMs.
-	//     CAPZ emits AzureCluster + AzureMachineTemplate; you pay for
-	//     CP + worker VMs + managed boot disks.
-	//   - "aks": AKS-managed control plane (AzureManagedControlPlane)
-	//     + Node Pool VMs (AzureManagedMachinePool). CP costs flip
-	//     from N× VM to a flat hourly fee per cluster (Standard tier;
-	//     the Free tier was retired mid-2024). Priced live via the
-	//     Azure Retail Prices API.
-	AzureMode string
-	// AzureOverheadTier picks the bundled "everything else" cost
-	// estimate (NAT Gateway, Standard Load Balancer, Public IP, Log
-	// Analytics, DNS zone, egress):
-	//   - "dev"        — no NAT, 1 LB, 1 public IP, minimal Log Analytics
-	//   - "prod"       — 1 NAT GW, 1 LB, 2 public IPs, Log Analytics, DNS  (default)
-	//   - "enterprise" — 3 NAT GWs (multi-zone), 2 LBs, 4 public IPs, heavy Log Analytics
-	AzureOverheadTier string
-	// GCPControlPlaneMachineType / GCPNodeMachineType drive the GCE
-	// machine types CAPG provisions for the workload cluster when
-	// --infrastructure-provider gcp. Defaults match the CAPG quick-
-	// start (n2-standard-2 for both CP and worker). The GCP provider
-	// uses these to estimate monthly cost in dry-run via live Cloud
-	// Billing Catalog API (region from GCPRegion). Sustained-use
-	// discount and spot/preemptible discounts are NOT applied.
-	GCPControlPlaneMachineType string
-	GCPNodeMachineType         string
-	GCPRegion                  string
-	GCPProject                 string
-	// GCPMode picks the CAPG flavor:
-	//   - "unmanaged" (default): self-managed Kubernetes on GCE.
-	//     CAPG emits GCPCluster + GCPMachineTemplate; you pay for
-	//     CP + worker GCE nodes + persistent-disk boot volumes.
-	//   - "gke": GKE Standard managed control plane + GCE worker
-	//     nodes (GKE node pool). CP costs flip from N× GCE to a flat
-	//     hourly fee per cluster (priced live via the GCP Cloud Billing
-	//     Catalog API). Autopilot mode is per-pod-billed (similar to
-	//     AWS Fargate) and not modeled today.
-	GCPMode string
-	// GCPOverheadTier picks the bundled "everything else" cost
-	// estimate (Cloud NAT, Load Balancers, Cloud Logging, Cloud DNS,
-	// internet egress):
-	//   - "dev"        — public IPs only (no NAT), 1 LB, minimal logging
-	//   - "prod"       — 1 NAT, 1 LB, 10 GB logging, 1 DNS zone   (default)
-	//   - "enterprise" — 3 NATs (multi-region HA), 3 LBs, 50 GB logging
-	GCPOverheadTier string
-	// HetznerControlPlaneMachineType / HetznerNodeMachineType drive
-	// the Hetzner Cloud server types CAPHV provisions for the
-	// workload cluster when --infrastructure-provider hetzner.
-	// Defaults to cx22 (2 vCPU shared, 4 GB RAM, 40 GB SSD) — the
-	// cheapest Hetzner type that comfortably runs k3s. The Hetzner
-	// provider uses these to estimate monthly cost in dry-run.
-	// Hetzner has no managed-Kubernetes service in CAPHV today, so
-	// there's no Mode equivalent to AWSMode/AzureMode.
-	HetznerControlPlaneMachineType string
-	HetznerNodeMachineType         string
-	HetznerLocation                string // fsn1 (Falkenstein DE), nbg1 (Nuremberg), hel1 (Helsinki), ash (US-east), hil (US-west), sin (Singapore)
-	// HetznerOverheadTier picks the bundled "everything else" cost
-	// estimate (Cloud Load Balancers, Floating IPs, optional extra
-	// Cloud Volumes, optional backup surcharge):
-	//   - "dev"        — 1 LB11 (ingress), 0 floating IPs, no backups
-	//   - "prod"       — 1 LB21, 1 floating IP, no backups            (default)
-	//   - "enterprise" — 2 LB21, 2 floating IPs, 5 TB volume budget, +20% backups
-	HetznerOverheadTier string
-	// DigitalOcean (CAPDO) — minimal config: region + droplet sizes.
-	// API token comes from env DIGITALOCEAN_TOKEN (used by both
-	// pricing fetcher and CAPDO).
-	DigitalOceanRegion              string
-	DigitalOceanControlPlaneSize    string // s-2vcpu-4gb, s-4vcpu-8gb, ...
-	DigitalOceanNodeSize            string
-	// Linode/Akamai (CAPL) — minimal config: region + instance type.
-	// Catalog is auth-free; provisioning needs LINODE_TOKEN.
-	LinodeRegion                    string
-	LinodeControlPlaneType          string // g6-standard-2, g6-standard-4, ...
-	LinodeNodeType                  string
-	// Oracle Cloud Infrastructure (CAPOCI) — minimal config: region
-	// + shape. Cost Estimator JSON is auth-free; provisioning needs
-	// OCI API key.
-	OCIRegion                       string
-	OCIControlPlaneShape            string // VM.Standard.E4.Flex, ...
-	OCINodeShape                    string
-	// IBM Cloud (CAPIBM) — minimal config: region + profile. Both
-	// Global Catalog (pricing) and provisioning need IBMCLOUD_API_KEY.
-	IBMCloudRegion                  string
-	IBMCloudControlPlaneProfile     string // bx2-2x8, cx2-4x8, ...
-	IBMCloudNodeProfile             string
+	// AWS-only fields live in cfg.Providers.AWS.* (see AWSConfig).
+	// Azure / GCP / Hetzner / DigitalOcean / Linode / OCI / IBMCloud
+	// per-provider fields live under cfg.Providers.<Name>.* — see the
+	// matching <Name>Config struct above for the field roster.
 	// BootstrapMode selects the Kubernetes flavor:
 	//   - "kubeadm" (default): standard upstream Kubernetes via kubeadm,
 	//     control-plane runs etcd + apiserver + controller-manager +
@@ -312,14 +501,9 @@ type Config struct {
 	BootstrapRegenerateCAPIManifest          bool
 	BootstrapSkipImmutableManifestWarning    bool
 	BootstrapClusterctlRegeneratedManifest   bool
-	CAPIProxmoxMachineTemplateSpecRev        bool
 	CAPIManifestSecretNamespace              string
 	CAPIManifestSecretName                   string
 	CAPIManifestSecretKey                    string
-	ProxmoxBootstrapConfigFile               string
-	ProxmoxBootstrapConfigSecretName         string
-	ProxmoxBootstrapConfigSecretKey          string
-	ProxmoxBootstrapAdminSecretKey           string
 
 	// ---- Kind backup/restore ----
 	BootstrapKindBackupNamespaces string
@@ -354,16 +538,6 @@ type Config struct {
 	WorkloadMetricsServerInsecureTLS  string
 	MetricsServerManifestURL          string
 	MetricsServerGitChartTag          string
-
-	// ---- Proxmox CSI ----
-	ProxmoxCSIEnabled        bool
-	ProxmoxCSISmokeEnabled   bool
-	ProxmoxCSIChartRepoURL   string
-	ProxmoxCSIChartName      string
-	ProxmoxCSIChartVersion   string
-	ProxmoxCSINamespace      string
-	ProxmoxCSIConfigProvider string
-	ProxmoxCSITopologyLabels string
 
 	// Argo workload post-sync hooks
 	ArgoWorkloadPostsyncHooksEnabled    bool
@@ -469,47 +643,23 @@ type Config struct {
 	KeycloakOperatorGitRef   string
 	KeycloakOperatorNS       string
 
-	// ---- Proxmox core / admin / CSI / identities ----
-	ClusterctlCfg                    string
-	ProxmoxAdminConfig               string
-	ProxmoxCSIConfig                 string
-	ProxmoxBootstrapSecretNamespace  string
-	ProxmoxBootstrapSecretName       string
-	ProxmoxBootstrapCAPMOXSecretName string
-	ProxmoxBootstrapCSISecretName    string
-	ProxmoxBootstrapAdminSecretName  string
-	ProxmoxBootstrapKindSecretUsed   bool
-	ProxmoxKindCAPMOXActive          bool
-	ProxmoxIdentityTF                string
-	ProxmoxAdminInsecure             string
-	ClusterSetID                     string
-	RecreateProxmoxIdentities        bool
-	ProxmoxIdentityRecreateScope     string
-	ProxmoxIdentityRecreateStateRm   bool
-	ProxmoxIdentitySuffix            string
+	// ---- Cluster / clusterctl plumbing (universal) ----
+	ClusterctlCfg string
+	ClusterSetID  string
 
-	ProxmoxURL           string
-	ProxmoxToken         string
-	ProxmoxSecret        string
-	ProxmoxAdminUsername string
-	ProxmoxAdminToken    string
-	ProxmoxRegion        string
-	ProxmoxNode          string
-	ProxmoxSourceNode    string
-	ProxmoxTopologyRegion string
-	ProxmoxTopologyZone   string
-	ProxmoxTemplateID    string
-	ProxmoxBridge        string
-	// ProxmoxPool / MgmtProxmoxPool are Proxmox VE pool names that
-	// VMs created by CAPMOX will be tagged with. Pools group VMs in
-	// the Proxmox UI and gate ACLs (delegating start/stop/console
-	// permissions); they do NOT enforce CPU/memory quotas — that
-	// remains per-VM + per-storage. Empty default means "no pool";
-	// when set, yage pre-creates the pool via the admin API
-	// before applying the CAPI manifest, so CAPMOX won't fail on a
-	// missing pool reference.
-	ProxmoxPool          string
-	MgmtProxmoxPool      string
+	// Mgmt holds universal management-cluster shape (names, K8s version,
+	// replica counts, control-plane endpoint, Cilium toggles, manifest).
+	// Provider-specific bits — Proxmox VM sizing, template IDs, pool, CSI —
+	// live under cfg.Providers.Proxmox.Mgmt.
+	Mgmt MgmtConfig
+
+	// MgmtKubeconfigPath is set by the orchestrator after
+	// EnsureManagementCluster() returns; read by Provider.PivotTarget
+	// (Phase E) to know which kubeconfig file `clusterctl move` should
+	// pivot into. Empty until that phase runs. Lives at the top level —
+	// not under cfg.Mgmt — because it's runtime-discovered, not
+	// configuration the user provides.
+	MgmtKubeconfigPath string
 
 	// ---- Network / IP ----
 	ControlPlaneEndpointIP   string
@@ -526,48 +676,18 @@ type Config struct {
 	AllowedNodes             string
 	VMSSHKeys                string
 
-	// ---- Proxmox CSI credentials / storage ----
-	ProxmoxCSIURL               string
-	ProxmoxCSITokenID           string
-	ProxmoxCSITokenSecret       string
-	ProxmoxCSIUserID            string
-	ProxmoxCSITokenPrefix       string
-	ProxmoxCSIInsecure          string
-	ProxmoxCSIStorageClassName  string
-	ProxmoxCSIStorage           string
-	ProxmoxCloudinitStorage     string
-	ProxmoxMemoryAdjustment     string
-	ProxmoxCSIReclaimPolicy     string
-	ProxmoxCSIFsType            string
-	ProxmoxCSIDefaultClass      string
-	ProxmoxCAPIUserID           string
-	ProxmoxCAPITokenPrefix      string
-
-	// ---- VM sizing ----
-	ControlPlaneBootVolumeDevice string
-	ControlPlaneBootVolumeSize   string
-	ControlPlaneNumSockets       string
-	ControlPlaneNumCores         string
-	ControlPlaneMemoryMiB        string
-	WorkerBootVolumeDevice       string
-	WorkerBootVolumeSize         string
-	WorkerNumSockets             string
-	WorkerNumCores               string
-	WorkerMemoryMiB              string
-
-	// ---- Per-machine-type Proxmox VM template overrides ----
+	// ---- Per-machine-type Proxmox VM template overrides (workload) ----
 	//
 	// Each cluster (workload or management) and role (control-plane or
 	// worker) can specify its own Proxmox template VM ID. Empty values
-	// fall through to ProxmoxTemplateID — the catch-all default that
-	// clusterctl substitutes during manifest generation. The overrides
+	// fall through to Providers.Proxmox.TemplateID — the catch-all default
+	// that clusterctl substitutes during manifest generation. The overrides
 	// are applied as a post-generation patch on the corresponding
 	// ProxmoxMachineTemplate (matched by metadata.name containing
-	// "control-plane" or "worker").
+	// "control-plane" or "worker"). Mgmt-side equivalents live in
+	// cfg.Providers.Proxmox.Mgmt.{ControlPlaneTemplateID,WorkerTemplateID}.
 	WorkloadControlPlaneTemplateID string
 	WorkloadWorkerTemplateID       string
-	MgmtControlPlaneTemplateID     string
-	MgmtWorkerTemplateID           string
 
 	// ---- Workload cluster ----
 	WorkloadClusterName             string
@@ -579,7 +699,7 @@ type Config struct {
 	ControlPlaneMachineCount        string
 	WorkerMachineCount              string
 
-	// ---- Pivot: management cluster on Proxmox ----
+	// ---- Pivot orchestration toggles ----
 	//
 	// When PivotEnabled is true, the bootstrap follows the standard CAPI
 	// "bootstrap-and-pivot" pattern: kind provisions a management cluster
@@ -600,48 +720,23 @@ type Config struct {
 	// management cluster has no Services that need LoadBalancer IPs).
 	// CSI: disabled by default (the management cluster is stateless
 	// unless explicitly opted-in via MGMT_PROXMOX_CSI_ENABLED=true).
-	PivotEnabled                  bool
-	MgmtClusterName               string
-	MgmtClusterNamespace          string
-	MgmtKubernetesVersion         string
-	MgmtCiliumClusterID           string
-	MgmtControlPlaneMachineCount  string // "1" by default (single-node mgmt)
-	MgmtWorkerMachineCount        string // "0" by default (CP-only)
-	MgmtControlPlaneNumSockets    string // "1"
-	MgmtControlPlaneNumCores      string // "2"
-	MgmtControlPlaneMemoryMiB     string // "4096"
-	MgmtControlPlaneBootVolumeDevice string
-	MgmtControlPlaneBootVolumeSize   string
-	MgmtControlPlaneEndpointIP    string // 1 VIP — user-provided
-	MgmtControlPlaneEndpointPort  string
-	MgmtNodeIPRanges              string // 2-IP range — user-provided
-	// MgmtCiliumHubble / MgmtCiliumLBIPAM tune the mgmt-side Cilium
-	// HelmChartProxy. Hubble defaults to true (observability is cheap on
-	// a single-node cluster); LB-IPAM defaults to false (no L2/BGP
-	// announcements needed for management add-ons).
-	MgmtCiliumHubble              string
-	MgmtCiliumLBIPAM              string
-	// MgmtProxmoxCSIEnabled — when true, install Proxmox CSI on the
-	// management cluster too. Default false: management is stateless
-	// (CAPI controllers + bootstrap state Secrets only — no PVCs).
-	MgmtProxmoxCSIEnabled         bool
-	// MgmtCAPIManifest is the rendered management-cluster CAPI manifest.
-	// Lives next to cfg.CAPIManifest as a Secret on the kind cluster
-	// during bootstrap; cleaned up after pivot.
-	MgmtCAPIManifest              string
+	//
+	// The cluster shape itself lives in cfg.Mgmt; Proxmox-only sizing /
+	// pool / CSI knobs live in cfg.Providers.Proxmox.Mgmt.
+	PivotEnabled bool
 	// PivotKeepKind, when true, skips the final `kind delete cluster`
 	// after a successful pivot — useful for debugging.
-	PivotKeepKind                 bool
+	PivotKeepKind bool
 	// PivotVerifyTimeout caps how long we wait for the management
 	// cluster to look "identical" to kind before declaring success.
-	PivotVerifyTimeout            string
+	PivotVerifyTimeout string
 	// PivotDryRun stops after provisioning + clusterctl-init on the
 	// management cluster, runs `clusterctl move --dry-run` so the user
 	// can inspect the planned hand-off without executing it, and
 	// returns. The workload cluster stays managed by kind. Useful for
 	// validating mgmt connectivity / sizing before committing to the
 	// move.
-	PivotDryRun                   bool
+	PivotDryRun bool
 }
 
 // Load reads environment variables and applies the same defaults the bash
@@ -719,52 +814,52 @@ func Load() *Config {
 	c.HardwareKWHRateUSD = envFloat("HARDWARE_KWH_RATE_USD", 0.15)
 	c.HardwareSupportUSDMonth = envFloat("HARDWARE_SUPPORT_USD_MONTH", 0)
 	c.BootstrapMode = getenv("BOOTSTRAP_MODE", "kubeadm")
-	c.AWSControlPlaneMachineType = getenv("AWS_CONTROL_PLANE_MACHINE_TYPE", "t3.large")
-	c.AWSNodeMachineType = getenv("AWS_NODE_MACHINE_TYPE", "t3.medium")
-	c.AWSRegion = getenv("AWS_REGION", "us-east-1")
-	c.AWSSSHKeyName = getenv("AWS_SSH_KEY_NAME", "")
-	c.AWSAMIID = getenv("AWS_AMI_ID", "")
-	c.AWSMode = getenv("AWS_MODE", "unmanaged")
-	c.AWSFargatePodCount = getenv("AWS_FARGATE_POD_COUNT", "10")
-	c.AWSFargatePodCPU = getenv("AWS_FARGATE_POD_CPU", "0.5")
-	c.AWSFargatePodMemoryGiB = getenv("AWS_FARGATE_POD_MEMORY_GIB", "1")
-	c.AWSOverheadTier = getenv("AWS_OVERHEAD_TIER", "prod")
+	c.Providers.AWS.ControlPlaneMachineType = getenv("AWS_CONTROL_PLANE_MACHINE_TYPE", "t3.large")
+	c.Providers.AWS.NodeMachineType = getenv("AWS_NODE_MACHINE_TYPE", "t3.medium")
+	c.Providers.AWS.Region = getenv("AWS_REGION", "us-east-1")
+	c.Providers.AWS.SSHKeyName = getenv("AWS_SSH_KEY_NAME", "")
+	c.Providers.AWS.AMIID = getenv("AWS_AMI_ID", "")
+	c.Providers.AWS.Mode = getenv("AWS_MODE", "unmanaged")
+	c.Providers.AWS.FargatePodCount = getenv("AWS_FARGATE_POD_COUNT", "10")
+	c.Providers.AWS.FargatePodCPU = getenv("AWS_FARGATE_POD_CPU", "0.5")
+	c.Providers.AWS.FargatePodMemoryGiB = getenv("AWS_FARGATE_POD_MEMORY_GIB", "1")
+	c.Providers.AWS.OverheadTier = getenv("AWS_OVERHEAD_TIER", "prod")
 	// Per-component overrides default to empty so the tier defaults
 	// apply; setting any of these to a non-empty value pins that
 	// component regardless of tier.
-	c.AWSNATGatewayCount = getenv("AWS_NAT_GATEWAY_COUNT", "")
-	c.AWSALBCount = getenv("AWS_ALB_COUNT", "")
-	c.AWSNLBCount = getenv("AWS_NLB_COUNT", "")
-	c.AWSDataTransferGB = getenv("AWS_DATA_TRANSFER_GB", "")
-	c.AWSCloudWatchLogsGB = getenv("AWS_CLOUDWATCH_LOGS_GB", "")
-	c.AWSRoute53HostedZones = getenv("AWS_ROUTE53_HOSTED_ZONES", "")
-	c.AzureControlPlaneMachineType = getenv("AZURE_CONTROL_PLANE_MACHINE_TYPE", "Standard_D2s_v3")
-	c.AzureNodeMachineType = getenv("AZURE_NODE_MACHINE_TYPE", "Standard_D2s_v3")
-	c.AzureLocation = getenv("AZURE_LOCATION", "eastus")
-	c.AzureMode = getenv("AZURE_MODE", "unmanaged")
-	c.AzureOverheadTier = getenv("AZURE_OVERHEAD_TIER", "prod")
-	c.GCPControlPlaneMachineType = getenv("GCP_CONTROL_PLANE_MACHINE_TYPE", "n2-standard-2")
-	c.GCPNodeMachineType = getenv("GCP_NODE_MACHINE_TYPE", "n2-standard-2")
-	c.GCPRegion = getenv("GCP_REGION", "us-central1")
-	c.GCPProject = getenv("GCP_PROJECT", "")
-	c.GCPMode = getenv("GCP_MODE", "unmanaged")
-	c.GCPOverheadTier = getenv("GCP_OVERHEAD_TIER", "prod")
-	c.HetznerControlPlaneMachineType = getenv("HCLOUD_CONTROL_PLANE_MACHINE_TYPE", "cx22")
-	c.HetznerNodeMachineType = getenv("HCLOUD_NODE_MACHINE_TYPE", "cx22")
-	c.HetznerLocation = getenv("HCLOUD_REGION", "fsn1")
-	c.HetznerOverheadTier = getenv("HETZNER_OVERHEAD_TIER", "prod")
-	c.DigitalOceanRegion = getenv("DIGITALOCEAN_REGION", "nyc3")
-	c.DigitalOceanControlPlaneSize = getenv("DIGITALOCEAN_CONTROL_PLANE_SIZE", "s-2vcpu-4gb")
-	c.DigitalOceanNodeSize = getenv("DIGITALOCEAN_NODE_SIZE", "s-2vcpu-4gb")
-	c.LinodeRegion = getenv("LINODE_REGION", "us-east")
-	c.LinodeControlPlaneType = getenv("LINODE_CONTROL_PLANE_TYPE", "g6-standard-2")
-	c.LinodeNodeType = getenv("LINODE_NODE_TYPE", "g6-standard-2")
-	c.OCIRegion = getenv("OCI_REGION", "us-ashburn-1")
-	c.OCIControlPlaneShape = getenv("OCI_CONTROL_PLANE_SHAPE", "VM.Standard.E4.Flex")
-	c.OCINodeShape = getenv("OCI_NODE_SHAPE", "VM.Standard.E4.Flex")
-	c.IBMCloudRegion = getenv("IBMCLOUD_REGION", "us-south")
-	c.IBMCloudControlPlaneProfile = getenv("IBMCLOUD_CONTROL_PLANE_PROFILE", "bx2-2x8")
-	c.IBMCloudNodeProfile = getenv("IBMCLOUD_NODE_PROFILE", "bx2-2x8")
+	c.Providers.AWS.NATGatewayCount = getenv("AWS_NAT_GATEWAY_COUNT", "")
+	c.Providers.AWS.ALBCount = getenv("AWS_ALB_COUNT", "")
+	c.Providers.AWS.NLBCount = getenv("AWS_NLB_COUNT", "")
+	c.Providers.AWS.DataTransferGB = getenv("AWS_DATA_TRANSFER_GB", "")
+	c.Providers.AWS.CloudWatchLogsGB = getenv("AWS_CLOUDWATCH_LOGS_GB", "")
+	c.Providers.AWS.Route53HostedZones = getenv("AWS_ROUTE53_HOSTED_ZONES", "")
+	c.Providers.Azure.ControlPlaneMachineType = getenv("AZURE_CONTROL_PLANE_MACHINE_TYPE", "Standard_D2s_v3")
+	c.Providers.Azure.NodeMachineType = getenv("AZURE_NODE_MACHINE_TYPE", "Standard_D2s_v3")
+	c.Providers.Azure.Location = getenv("AZURE_LOCATION", "eastus")
+	c.Providers.Azure.Mode = getenv("AZURE_MODE", "unmanaged")
+	c.Providers.Azure.OverheadTier = getenv("AZURE_OVERHEAD_TIER", "prod")
+	c.Providers.GCP.ControlPlaneMachineType = getenv("GCP_CONTROL_PLANE_MACHINE_TYPE", "n2-standard-2")
+	c.Providers.GCP.NodeMachineType = getenv("GCP_NODE_MACHINE_TYPE", "n2-standard-2")
+	c.Providers.GCP.Region = getenv("GCP_REGION", "us-central1")
+	c.Providers.GCP.Project = getenv("GCP_PROJECT", "")
+	c.Providers.GCP.Mode = getenv("GCP_MODE", "unmanaged")
+	c.Providers.GCP.OverheadTier = getenv("GCP_OVERHEAD_TIER", "prod")
+	c.Providers.Hetzner.ControlPlaneMachineType = getenv("HCLOUD_CONTROL_PLANE_MACHINE_TYPE", "cx22")
+	c.Providers.Hetzner.NodeMachineType = getenv("HCLOUD_NODE_MACHINE_TYPE", "cx22")
+	c.Providers.Hetzner.Location = getenv("HCLOUD_REGION", "fsn1")
+	c.Providers.Hetzner.OverheadTier = getenv("HETZNER_OVERHEAD_TIER", "prod")
+	c.Providers.DigitalOcean.Region = getenv("DIGITALOCEAN_REGION", "nyc3")
+	c.Providers.DigitalOcean.ControlPlaneSize = getenv("DIGITALOCEAN_CONTROL_PLANE_SIZE", "s-2vcpu-4gb")
+	c.Providers.DigitalOcean.NodeSize = getenv("DIGITALOCEAN_NODE_SIZE", "s-2vcpu-4gb")
+	c.Providers.Linode.Region = getenv("LINODE_REGION", "us-east")
+	c.Providers.Linode.ControlPlaneType = getenv("LINODE_CONTROL_PLANE_TYPE", "g6-standard-2")
+	c.Providers.Linode.NodeType = getenv("LINODE_NODE_TYPE", "g6-standard-2")
+	c.Providers.OCI.Region = getenv("OCI_REGION", "us-ashburn-1")
+	c.Providers.OCI.ControlPlaneShape = getenv("OCI_CONTROL_PLANE_SHAPE", "VM.Standard.E4.Flex")
+	c.Providers.OCI.NodeShape = getenv("OCI_NODE_SHAPE", "VM.Standard.E4.Flex")
+	c.Providers.IBMCloud.Region = getenv("IBMCLOUD_REGION", "us-south")
+	c.Providers.IBMCloud.ControlPlaneProfile = getenv("IBMCLOUD_CONTROL_PLANE_PROFILE", "bx2-2x8")
+	c.Providers.IBMCloud.NodeProfile = getenv("IBMCLOUD_NODE_PROFILE", "bx2-2x8")
 	c.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
 	c.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
 
@@ -779,14 +874,14 @@ func Load() *Config {
 	c.BootstrapRegenerateCAPIManifest = envBool("BOOTSTRAP_REGENERATE_CAPI_MANIFEST", false)
 	c.BootstrapSkipImmutableManifestWarning = envBool("BOOTSTRAP_SKIP_IMMUTABLE_MANIFEST_WARNING", false)
 	c.BootstrapClusterctlRegeneratedManifest = envBool("BOOTSTRAP_CLUSTERCTL_REGENERATED_MANIFEST", false)
-	c.CAPIProxmoxMachineTemplateSpecRev = envBool("CAPI_PROXMOX_MACHINE_TEMPLATE_SPEC_REV", true)
+	c.Providers.Proxmox.CAPIMachineTemplateSpecRev = envBool("CAPI_PROXMOX_MACHINE_TEMPLATE_SPEC_REV", true)
 	c.CAPIManifestSecretNamespace = getenv("CAPI_MANIFEST_SECRET_NAMESPACE", "proxmox-bootstrap-system")
 	c.CAPIManifestSecretName = getenv("CAPI_MANIFEST_SECRET_NAME", "proxmox-yage-manifest")
 	c.CAPIManifestSecretKey = getenv("CAPI_MANIFEST_SECRET_KEY", "workload.yaml")
-	c.ProxmoxBootstrapConfigFile = getenv("PROXMOX_BOOTSTRAP_CONFIG_FILE", "")
-	c.ProxmoxBootstrapConfigSecretName = getenv("PROXMOX_BOOTSTRAP_CONFIG_SECRET_NAME", "proxmox-bootstrap-config")
-	c.ProxmoxBootstrapConfigSecretKey = getenv("PROXMOX_BOOTSTRAP_CONFIG_SECRET_KEY", "config.yaml")
-	c.ProxmoxBootstrapAdminSecretKey = getenv("PROXMOX_BOOTSTRAP_ADMIN_SECRET_KEY", "proxmox-admin.yaml")
+	c.Providers.Proxmox.BootstrapConfigFile = getenv("PROXMOX_BOOTSTRAP_CONFIG_FILE", "")
+	c.Providers.Proxmox.BootstrapConfigSecretName = getenv("PROXMOX_BOOTSTRAP_CONFIG_SECRET_NAME", "proxmox-bootstrap-config")
+	c.Providers.Proxmox.BootstrapConfigSecretKey = getenv("PROXMOX_BOOTSTRAP_CONFIG_SECRET_KEY", "config.yaml")
+	c.Providers.Proxmox.BootstrapAdminSecretKey = getenv("PROXMOX_BOOTSTRAP_ADMIN_SECRET_KEY", "proxmox-admin.yaml")
 
 	// --- Kind backup/restore (lines 391-397, 476-478) ---
 	c.BootstrapKindBackupNamespaces = getenv("BOOTSTRAP_KIND_BACKUP_NAMESPACES", "")
@@ -823,14 +918,14 @@ func Load() *Config {
 	c.MetricsServerGitChartTag = getenv("METRICS_SERVER_GIT_CHART_TAG", "v0.7.2")
 
 	// --- Proxmox CSI (lines 481-496, 617) ---
-	c.ProxmoxCSIEnabled = envBool("PROXMOX_CSI_ENABLED", true)
-	c.ProxmoxCSISmokeEnabled = envBool("PROXMOX_CSI_SMOKE_ENABLED", true)
-	c.ProxmoxCSIChartRepoURL = getenv("PROXMOX_CSI_CHART_REPO_URL", "oci://ghcr.io/sergelogvinov/charts")
-	c.ProxmoxCSIChartName = getenv("PROXMOX_CSI_CHART_NAME", "proxmox-csi-plugin")
-	c.ProxmoxCSIChartVersion = getenv("PROXMOX_CSI_CHART_VERSION", "0.5.7")
-	c.ProxmoxCSINamespace = getenv("PROXMOX_CSI_NAMESPACE", "csi-proxmox")
-	c.ProxmoxCSIConfigProvider = getenv("PROXMOX_CSI_CONFIG_PROVIDER", "proxmox")
-	c.ProxmoxCSITopologyLabels = getenv("PROXMOX_CSI_TOPOLOGY_LABELS", "true")
+	c.Providers.Proxmox.CSIEnabled = envBool("PROXMOX_CSI_ENABLED", true)
+	c.Providers.Proxmox.CSISmokeEnabled = envBool("PROXMOX_CSI_SMOKE_ENABLED", true)
+	c.Providers.Proxmox.CSIChartRepoURL = getenv("PROXMOX_CSI_CHART_REPO_URL", "oci://ghcr.io/sergelogvinov/charts")
+	c.Providers.Proxmox.CSIChartName = getenv("PROXMOX_CSI_CHART_NAME", "proxmox-csi-plugin")
+	c.Providers.Proxmox.CSIChartVersion = getenv("PROXMOX_CSI_CHART_VERSION", "0.5.7")
+	c.Providers.Proxmox.CSINamespace = getenv("PROXMOX_CSI_NAMESPACE", "csi-proxmox")
+	c.Providers.Proxmox.CSIConfigProvider = getenv("PROXMOX_CSI_CONFIG_PROVIDER", "proxmox")
+	c.Providers.Proxmox.CSITopologyLabels = getenv("PROXMOX_CSI_TOPOLOGY_LABELS", "true")
 
 	// --- Argo workload postsync ---
 	c.ArgoWorkloadPostsyncHooksEnabled = envBool("ARGO_WORKLOAD_POSTSYNC_HOOKS_ENABLED", true)
@@ -940,36 +1035,36 @@ func Load() *Config {
 
 	// --- Proxmox bootstrap / identities ---
 	c.ClusterctlCfg = getenv("CLUSTERCTL_CFG", "")
-	c.ProxmoxAdminConfig = getenv("PROXMOX_ADMIN_CONFIG", "")
-	c.ProxmoxCSIConfig = getenv("PROXMOX_CSI_CONFIG", "")
-	c.ProxmoxBootstrapSecretNamespace = getenv("PROXMOX_BOOTSTRAP_SECRET_NAMESPACE", "proxmox-bootstrap-system")
-	c.ProxmoxBootstrapSecretName = getenv("PROXMOX_BOOTSTRAP_SECRET_NAME", "")
-	c.ProxmoxBootstrapCAPMOXSecretName = getenv("PROXMOX_BOOTSTRAP_CAPMOX_SECRET_NAME", "proxmox-bootstrap-capmox-credentials")
-	c.ProxmoxBootstrapCSISecretName = getenv("PROXMOX_BOOTSTRAP_CSI_SECRET_NAME", "proxmox-bootstrap-csi-credentials")
-	c.ProxmoxBootstrapAdminSecretName = getenv("PROXMOX_BOOTSTRAP_ADMIN_SECRET_NAME", "proxmox-bootstrap-admin-credentials")
-	c.ProxmoxBootstrapKindSecretUsed = envBool("PROXMOX_BOOTSTRAP_KIND_SECRET_USED", false)
-	c.ProxmoxKindCAPMOXActive = envBool("PROXMOX_KIND_CAPMOX_CREDENTIALS_ACTIVE", false)
-	c.ProxmoxIdentityTF = getenv("PROXMOX_IDENTITY_TF", "proxmox-identity.tf")
-	c.ProxmoxAdminInsecure = getenv("PROXMOX_ADMIN_INSECURE", "true")
+	c.Providers.Proxmox.AdminConfig = getenv("PROXMOX_ADMIN_CONFIG", "")
+	c.Providers.Proxmox.CSIConfig = getenv("PROXMOX_CSI_CONFIG", "")
+	c.Providers.Proxmox.BootstrapSecretNamespace = getenv("PROXMOX_BOOTSTRAP_SECRET_NAMESPACE", "proxmox-bootstrap-system")
+	c.Providers.Proxmox.BootstrapSecretName = getenv("PROXMOX_BOOTSTRAP_SECRET_NAME", "")
+	c.Providers.Proxmox.BootstrapCAPMOXSecretName = getenv("PROXMOX_BOOTSTRAP_CAPMOX_SECRET_NAME", "proxmox-bootstrap-capmox-credentials")
+	c.Providers.Proxmox.BootstrapCSISecretName = getenv("PROXMOX_BOOTSTRAP_CSI_SECRET_NAME", "proxmox-bootstrap-csi-credentials")
+	c.Providers.Proxmox.BootstrapAdminSecretName = getenv("PROXMOX_BOOTSTRAP_ADMIN_SECRET_NAME", "proxmox-bootstrap-admin-credentials")
+	c.Providers.Proxmox.BootstrapKindSecretUsed = envBool("PROXMOX_BOOTSTRAP_KIND_SECRET_USED", false)
+	c.Providers.Proxmox.KindCAPMOXActive = envBool("PROXMOX_KIND_CAPMOX_CREDENTIALS_ACTIVE", false)
+	c.Providers.Proxmox.IdentityTF = getenv("PROXMOX_IDENTITY_TF", "proxmox-identity.tf")
+	c.Providers.Proxmox.AdminInsecure = getenv("PROXMOX_ADMIN_INSECURE", "true")
 	c.ClusterSetID = getenv("CLUSTER_SET_ID", "")
-	c.RecreateProxmoxIdentities = envBool("RECREATE_PROXMOX_IDENTITIES", false)
-	c.ProxmoxIdentityRecreateScope = getenv("PROXMOX_IDENTITY_RECREATE_SCOPE", "both")
-	c.ProxmoxIdentityRecreateStateRm = envBool("PROXMOX_IDENTITY_RECREATE_STATE_RM", false)
-	c.ProxmoxIdentitySuffix = getenv("PROXMOX_IDENTITY_SUFFIX", "")
+	c.Providers.Proxmox.RecreateIdentities = envBool("RECREATE_PROXMOX_IDENTITIES", false)
+	c.Providers.Proxmox.IdentityRecreateScope = getenv("PROXMOX_IDENTITY_RECREATE_SCOPE", "both")
+	c.Providers.Proxmox.IdentityRecreateStateRm = envBool("PROXMOX_IDENTITY_RECREATE_STATE_RM", false)
+	c.Providers.Proxmox.IdentitySuffix = getenv("PROXMOX_IDENTITY_SUFFIX", "")
 
 	// --- Proxmox core ---
-	c.ProxmoxURL = getenv("PROXMOX_URL", "")
-	c.ProxmoxToken = getenv("PROXMOX_TOKEN", "")
-	c.ProxmoxSecret = getenv("PROXMOX_SECRET", "")
-	c.ProxmoxAdminUsername = getenv("PROXMOX_ADMIN_USERNAME", "root@pam!capi-bootstrap")
-	c.ProxmoxAdminToken = getenv("PROXMOX_ADMIN_TOKEN", "")
-	c.ProxmoxRegion = getenv("PROXMOX_REGION", "")
-	c.ProxmoxNode = getenv("PROXMOX_NODE", "")
-	c.ProxmoxSourceNode = getenv("PROXMOX_SOURCENODE", "")
-	c.ProxmoxTopologyRegion = getenv("PROXMOX_TOPOLOGY_REGION", "")
-	c.ProxmoxTopologyZone = getenv("PROXMOX_TOPOLOGY_ZONE", "")
-	c.ProxmoxTemplateID = getenv("PROXMOX_TEMPLATE_ID", getenv("TEMPLATE_VMID", "104"))
-	c.ProxmoxBridge = getenv("PROXMOX_BRIDGE", "vmbr0")
+	c.Providers.Proxmox.URL = getenv("PROXMOX_URL", "")
+	c.Providers.Proxmox.Token = getenv("PROXMOX_TOKEN", "")
+	c.Providers.Proxmox.Secret = getenv("PROXMOX_SECRET", "")
+	c.Providers.Proxmox.AdminUsername = getenv("PROXMOX_ADMIN_USERNAME", "root@pam!capi-bootstrap")
+	c.Providers.Proxmox.AdminToken = getenv("PROXMOX_ADMIN_TOKEN", "")
+	c.Providers.Proxmox.Region = getenv("PROXMOX_REGION", "")
+	c.Providers.Proxmox.Node = getenv("PROXMOX_NODE", "")
+	c.Providers.Proxmox.SourceNode = getenv("PROXMOX_SOURCENODE", "")
+	c.Providers.Proxmox.TopologyRegion = getenv("PROXMOX_TOPOLOGY_REGION", "")
+	c.Providers.Proxmox.TopologyZone = getenv("PROXMOX_TOPOLOGY_ZONE", "")
+	c.Providers.Proxmox.TemplateID = getenv("PROXMOX_TEMPLATE_ID", getenv("TEMPLATE_VMID", "104"))
+	c.Providers.Proxmox.Bridge = getenv("PROXMOX_BRIDGE", "vmbr0")
 
 	// --- Network ---
 	c.ControlPlaneEndpointIP = getenv("CONTROL_PLANE_ENDPOINT_IP", "192.168.0.20")
@@ -983,50 +1078,50 @@ func Load() *Config {
 	c.IPPrefixExplicit = envBool("IP_PREFIX_EXPLICIT", false)
 	c.NodeIPRangesExplicit = envBool("NODE_IP_RANGES_EXPLICIT", false)
 	c.AllowedNodesExplicit = envBool("ALLOWED_NODES_EXPLICIT", false)
-	c.AllowedNodes = getenv("ALLOWED_NODES", c.ProxmoxNode)
+	c.AllowedNodes = getenv("ALLOWED_NODES", c.Providers.Proxmox.Node)
 	c.VMSSHKeys = getenv("VM_SSH_KEYS", "")
 
 	// --- Proxmox CSI credentials/storage ---
-	c.ProxmoxCSIURL = getenv("PROXMOX_CSI_URL", "")
-	c.ProxmoxCSITokenID = getenv("PROXMOX_CSI_TOKEN_ID", "")
-	c.ProxmoxCSITokenSecret = getenv("PROXMOX_CSI_TOKEN_SECRET", "")
-	c.ProxmoxCSIUserID = getenv("PROXMOX_CSI_USER_ID", "")
-	c.ProxmoxCSITokenPrefix = getenv("PROXMOX_CSI_TOKEN_PREFIX", "csi")
-	c.ProxmoxCSIInsecure = getenv("PROXMOX_CSI_INSECURE", c.ProxmoxAdminInsecure)
-	c.ProxmoxCSIStorageClassName = getenv("PROXMOX_CSI_STORAGE_CLASS_NAME", "proxmox-data-xfs")
-	c.ProxmoxCSIStorage = getenv("PROXMOX_CSI_STORAGE", "local-lvm")
-	c.ProxmoxCloudinitStorage = getenv("PROXMOX_CLOUDINIT_STORAGE", "local")
-	c.ProxmoxMemoryAdjustment = getenv("PROXMOX_MEMORY_ADJUSTMENT", "0")
-	c.ProxmoxCSIReclaimPolicy = getenv("PROXMOX_CSI_RECLAIM_POLICY", "Delete")
-	c.ProxmoxCSIFsType = getenv("PROXMOX_CSI_FSTYPE", "xfs")
-	c.ProxmoxCSIDefaultClass = getenv("PROXMOX_CSI_DEFAULT_CLASS", "true")
-	c.ProxmoxCAPIUserID = getenv("PROXMOX_CAPI_USER_ID", "")
-	c.ProxmoxCAPITokenPrefix = getenv("PROXMOX_CAPI_TOKEN_PREFIX", "capi")
+	c.Providers.Proxmox.CSIURL = getenv("PROXMOX_CSI_URL", "")
+	c.Providers.Proxmox.CSITokenID = getenv("PROXMOX_CSI_TOKEN_ID", "")
+	c.Providers.Proxmox.CSITokenSecret = getenv("PROXMOX_CSI_TOKEN_SECRET", "")
+	c.Providers.Proxmox.CSIUserID = getenv("PROXMOX_CSI_USER_ID", "")
+	c.Providers.Proxmox.CSITokenPrefix = getenv("PROXMOX_CSI_TOKEN_PREFIX", "csi")
+	c.Providers.Proxmox.CSIInsecure = getenv("PROXMOX_CSI_INSECURE", c.Providers.Proxmox.AdminInsecure)
+	c.Providers.Proxmox.CSIStorageClassName = getenv("PROXMOX_CSI_STORAGE_CLASS_NAME", "proxmox-data-xfs")
+	c.Providers.Proxmox.CSIStorage = getenv("PROXMOX_CSI_STORAGE", "local-lvm")
+	c.Providers.Proxmox.CloudinitStorage = getenv("PROXMOX_CLOUDINIT_STORAGE", "local")
+	c.Providers.Proxmox.MemoryAdjustment = getenv("PROXMOX_MEMORY_ADJUSTMENT", "0")
+	c.Providers.Proxmox.CSIReclaimPolicy = getenv("PROXMOX_CSI_RECLAIM_POLICY", "Delete")
+	c.Providers.Proxmox.CSIFsType = getenv("PROXMOX_CSI_FSTYPE", "xfs")
+	c.Providers.Proxmox.CSIDefaultClass = getenv("PROXMOX_CSI_DEFAULT_CLASS", "true")
+	c.Providers.Proxmox.CAPIUserID = getenv("PROXMOX_CAPI_USER_ID", "")
+	c.Providers.Proxmox.CAPITokenPrefix = getenv("PROXMOX_CAPI_TOKEN_PREFIX", "capi")
 
-	// --- VM sizing ---
-	c.ControlPlaneBootVolumeDevice = getenv("CONTROL_PLANE_BOOT_VOLUME_DEVICE", "scsi0")
-	c.ControlPlaneBootVolumeSize = getenv("CONTROL_PLANE_BOOT_VOLUME_SIZE", "40")
+	// --- VM sizing (Proxmox-only — see ProxmoxConfig) ---
+	c.Providers.Proxmox.ControlPlaneBootVolumeDevice = getenv("CONTROL_PLANE_BOOT_VOLUME_DEVICE", "scsi0")
+	c.Providers.Proxmox.ControlPlaneBootVolumeSize = getenv("CONTROL_PLANE_BOOT_VOLUME_SIZE", "40")
 	// Bare-minimum kubeadm CP sizing: etcd + apiserver + controller-mgr +
 	// scheduler + Cilium fit comfortably in 2 vCPU / 4 GiB. Larger
 	// workloads should bump these; --bootstrap-mode k3s targets even
 	// smaller envs (1 vCPU / 1 GiB).
-	c.ControlPlaneNumSockets = getenv("CONTROL_PLANE_NUM_SOCKETS", "1")
-	c.ControlPlaneNumCores = getenv("CONTROL_PLANE_NUM_CORES", "2")
-	c.ControlPlaneMemoryMiB = getenv("CONTROL_PLANE_MEMORY_MIB", "4096")
-	c.WorkerBootVolumeDevice = getenv("WORKER_BOOT_VOLUME_DEVICE", "scsi0")
-	c.WorkerBootVolumeSize = getenv("WORKER_BOOT_VOLUME_SIZE", "40")
+	c.Providers.Proxmox.ControlPlaneNumSockets = getenv("CONTROL_PLANE_NUM_SOCKETS", "1")
+	c.Providers.Proxmox.ControlPlaneNumCores = getenv("CONTROL_PLANE_NUM_CORES", "2")
+	c.Providers.Proxmox.ControlPlaneMemoryMiB = getenv("CONTROL_PLANE_MEMORY_MIB", "4096")
+	c.Providers.Proxmox.WorkerBootVolumeDevice = getenv("WORKER_BOOT_VOLUME_DEVICE", "scsi0")
+	c.Providers.Proxmox.WorkerBootVolumeSize = getenv("WORKER_BOOT_VOLUME_SIZE", "40")
 	// Bare-minimum kubeadm worker sizing: kubelet + kube-proxy +
 	// Cilium agent fit in 2 vCPU / 4 GiB; remaining pods compete for
 	// what's left. Bump for larger workloads.
-	c.WorkerNumSockets = getenv("WORKER_NUM_SOCKETS", "1")
-	c.WorkerNumCores = getenv("WORKER_NUM_CORES", "2")
-	c.WorkerMemoryMiB = getenv("WORKER_MEMORY_MIB", "4096")
+	c.Providers.Proxmox.WorkerNumSockets = getenv("WORKER_NUM_SOCKETS", "1")
+	c.Providers.Proxmox.WorkerNumCores = getenv("WORKER_NUM_CORES", "2")
+	c.Providers.Proxmox.WorkerMemoryMiB = getenv("WORKER_MEMORY_MIB", "4096")
 
-	// Per-machine-type template overrides; empty → fall back to ProxmoxTemplateID.
+	// Per-machine-type template overrides; empty → fall back to Providers.Proxmox.TemplateID.
 	c.WorkloadControlPlaneTemplateID = getenv("WORKLOAD_CONTROL_PLANE_TEMPLATE_ID", "")
 	c.WorkloadWorkerTemplateID = getenv("WORKLOAD_WORKER_TEMPLATE_ID", "")
-	c.MgmtControlPlaneTemplateID = getenv("MGMT_CONTROL_PLANE_TEMPLATE_ID", "")
-	c.MgmtWorkerTemplateID = getenv("MGMT_WORKER_TEMPLATE_ID", "")
+	c.Providers.Proxmox.Mgmt.ControlPlaneTemplateID = getenv("MGMT_CONTROL_PLANE_TEMPLATE_ID", "")
+	c.Providers.Proxmox.Mgmt.WorkerTemplateID = getenv("MGMT_WORKER_TEMPLATE_ID", "")
 
 	// --- Workload cluster ---
 	c.WorkloadClusterName = getenv("WORKLOAD_CLUSTER_NAME", "capi-quickstart")
@@ -1038,39 +1133,43 @@ func Load() *Config {
 	c.ControlPlaneMachineCount = getenv("CONTROL_PLANE_MACHINE_COUNT", "1")
 	c.WorkerMachineCount = getenv("WORKER_MACHINE_COUNT", "2")
 
-	// --- Pivot: management cluster on Proxmox ---
+	// --- Pivot orchestration toggles ---
 	c.PivotEnabled = envBool("PIVOT_ENABLED", false)
 	c.PivotKeepKind = envBool("PIVOT_KEEP_KIND", false)
 	c.PivotDryRun = envBool("PIVOT_DRY_RUN", false)
 	c.PivotVerifyTimeout = getenv("PIVOT_VERIFY_TIMEOUT", "10m")
-	c.MgmtClusterName = getenv("MGMT_CLUSTER_NAME", "capi-management")
-	c.MgmtClusterNamespace = getenv("MGMT_CLUSTER_NAMESPACE", "default")
-	c.MgmtKubernetesVersion = getenv("MGMT_KUBERNETES_VERSION", c.WorkloadKubernetesVersion)
-	c.MgmtCiliumClusterID = getenv("MGMT_CILIUM_CLUSTER_ID", "")
-	c.MgmtControlPlaneMachineCount = getenv("MGMT_CONTROL_PLANE_MACHINE_COUNT", "1")
-	c.MgmtWorkerMachineCount = getenv("MGMT_WORKER_MACHINE_COUNT", "0")
-	// Management-cluster sizing: leaner than workload defaults because
-	// the mgmt cluster only carries CAPI controllers + bootstrap state.
-	c.MgmtControlPlaneNumSockets = getenv("MGMT_CONTROL_PLANE_NUM_SOCKETS", "1")
-	c.MgmtControlPlaneNumCores = getenv("MGMT_CONTROL_PLANE_NUM_CORES", "2")
-	c.MgmtControlPlaneMemoryMiB = getenv("MGMT_CONTROL_PLANE_MEMORY_MIB", "2048")
-	c.MgmtControlPlaneBootVolumeDevice = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE", c.ControlPlaneBootVolumeDevice)
-	c.MgmtControlPlaneBootVolumeSize = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE", "30")
-	c.MgmtControlPlaneEndpointIP = getenv("MGMT_CONTROL_PLANE_ENDPOINT_IP", "")
-	c.MgmtControlPlaneEndpointPort = getenv("MGMT_CONTROL_PLANE_ENDPOINT_PORT", c.ControlPlaneEndpointPort)
-	c.MgmtNodeIPRanges = getenv("MGMT_NODE_IP_RANGES", "")
+
+	// --- Management cluster shape (universal) ---
+	c.Mgmt.ClusterName = getenv("MGMT_CLUSTER_NAME", "capi-management")
+	c.Mgmt.ClusterNamespace = getenv("MGMT_CLUSTER_NAMESPACE", "default")
+	c.Mgmt.KubernetesVersion = getenv("MGMT_KUBERNETES_VERSION", c.WorkloadKubernetesVersion)
+	c.Mgmt.CiliumClusterID = getenv("MGMT_CILIUM_CLUSTER_ID", "")
+	c.Mgmt.ControlPlaneMachineCount = getenv("MGMT_CONTROL_PLANE_MACHINE_COUNT", "1")
+	c.Mgmt.WorkerMachineCount = getenv("MGMT_WORKER_MACHINE_COUNT", "0")
+	c.Mgmt.ControlPlaneEndpointIP = getenv("MGMT_CONTROL_PLANE_ENDPOINT_IP", "")
+	c.Mgmt.ControlPlaneEndpointPort = getenv("MGMT_CONTROL_PLANE_ENDPOINT_PORT", c.ControlPlaneEndpointPort)
+	c.Mgmt.NodeIPRanges = getenv("MGMT_NODE_IP_RANGES", "")
 	// Cilium on the management cluster: Hubble on, LB-IPAM off — no
 	// LoadBalancer Services run on a stateless single-node mgmt.
-	c.MgmtCiliumHubble = getenv("MGMT_CILIUM_HUBBLE", "true")
-	c.MgmtCiliumLBIPAM = getenv("MGMT_CILIUM_LB_IPAM", "false")
+	c.Mgmt.CiliumHubble = getenv("MGMT_CILIUM_HUBBLE", "true")
+	c.Mgmt.CiliumLBIPAM = getenv("MGMT_CILIUM_LB_IPAM", "false")
+	c.Mgmt.CAPIManifest = getenv("MGMT_CAPI_MANIFEST", "")
+
+	// --- Management cluster (Proxmox-only sizing / pool / CSI) ---
+	// Leaner than workload defaults because the mgmt cluster only carries
+	// CAPI controllers + bootstrap state.
+	c.Providers.Proxmox.Mgmt.ControlPlaneNumSockets = getenv("MGMT_CONTROL_PLANE_NUM_SOCKETS", "1")
+	c.Providers.Proxmox.Mgmt.ControlPlaneNumCores = getenv("MGMT_CONTROL_PLANE_NUM_CORES", "2")
+	c.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB = getenv("MGMT_CONTROL_PLANE_MEMORY_MIB", "2048")
+	c.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeDevice = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE", c.Providers.Proxmox.ControlPlaneBootVolumeDevice)
+	c.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE", "30")
 	// Proxmox CSI on the management cluster: off by default (stateless).
-	c.MgmtProxmoxCSIEnabled = envBool("MGMT_PROXMOX_CSI_ENABLED", false)
-	c.MgmtCAPIManifest = getenv("MGMT_CAPI_MANIFEST", "")
+	c.Providers.Proxmox.Mgmt.CSIEnabled = envBool("MGMT_PROXMOX_CSI_ENABLED", false)
 
 	// Pool defaults to the matching cluster name so each cluster
 	// gets its own organizational bucket. User can override or set empty.
-	c.ProxmoxPool = getenv("PROXMOX_POOL", c.WorkloadClusterName)
-	c.MgmtProxmoxPool = getenv("MGMT_PROXMOX_POOL", c.MgmtClusterName)
+	c.Providers.Proxmox.Pool = getenv("PROXMOX_POOL", c.WorkloadClusterName)
+	c.Providers.Proxmox.Mgmt.Pool = getenv("MGMT_PROXMOX_POOL", c.Mgmt.ClusterName)
 
 	return c
 }

@@ -14,11 +14,11 @@ import (
 // are priced per-OCPU + per-GB-hour and we model them at the user-
 // supplied OCPU/memory; fixed shapes price per-hour.
 func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
-	region := orDefault(cfg.OCIRegion, "us-ashburn-1")
+	region := orDefault(cfg.Providers.OCI.Region, "us-ashburn-1")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
-	cpShape := orDefault(cfg.OCIControlPlaneShape, "VM.Standard.E4.Flex")
-	wkShape := orDefault(cfg.OCINodeShape, "VM.Standard.E4.Flex")
+	cpShape := orDefault(cfg.Providers.OCI.ControlPlaneShape, "VM.Standard.E4.Flex")
+	wkShape := orDefault(cfg.Providers.OCI.NodeShape, "VM.Standard.E4.Flex")
 
 	items := []provider.CostItem{}
 	if cp > 0 {

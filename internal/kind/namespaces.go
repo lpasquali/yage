@@ -25,8 +25,8 @@ func BackupNamespaces(cfg *config.Config) []string {
 			}
 		}
 	} else {
-		if cfg.ProxmoxBootstrapSecretNamespace != "" {
-			raw = append(raw, cfg.ProxmoxBootstrapSecretNamespace)
+		if cfg.Providers.Proxmox.BootstrapSecretNamespace != "" {
+			raw = append(raw, cfg.Providers.Proxmox.BootstrapSecretNamespace)
 		}
 		if cfg.WorkloadClusterNamespace != "" {
 			raw = append(raw, cfg.WorkloadClusterNamespace)

@@ -30,17 +30,17 @@ import (
 // hosted, sunk cost) or when the live API is unreachable.
 //
 // Provider → SKU mapping (cheap tier only):
-//   aws     → "ebs:gp3"  (live Bulk Pricing JSON, region from cfg.AWSRegion)
+//   aws     → "ebs:gp3"  (live Bulk Pricing JSON, region from cfg.Providers.AWS.Region)
 //   azure   → "Standard SSD Managed Disks" (live Retail Prices API,
-//                                            region from cfg.AzureLocation)
+//                                            region from cfg.Providers.Azure.Location)
 //   gcp     → "pd:balanced" (live Cloud Billing Catalog,
-//                            region from cfg.GCPRegion; needs API key)
+//                            region from cfg.Providers.GCP.Region; needs API key)
 //   hetzner → live volume rate from /v1/pricing
 //   anything else → 0, ErrNotApplicable
 func liveBlockStorageUSDPerGBMonth(provName string, cfg *config.Config) (float64, error) {
 	switch provName {
 	case "aws":
-		region := cfg.AWSRegion
+		region := cfg.Providers.AWS.Region
 		if region == "" {
 			region = "us-east-1"
 		}
@@ -50,13 +50,13 @@ func liveBlockStorageUSDPerGBMonth(provName string, cfg *config.Config) (float64
 		}
 		return it.USDPerMonth, nil
 	case "azure":
-		region := cfg.AzureLocation
+		region := cfg.Providers.Azure.Location
 		if region == "" {
 			region = "eastus"
 		}
 		return pricing.AzureManagedDiskUSDPerGBMonth(region, "Standard SSD Managed Disks")
 	case "gcp":
-		region := cfg.GCPRegion
+		region := cfg.Providers.GCP.Region
 		if region == "" {
 			region = "us-central1"
 		}

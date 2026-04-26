@@ -47,17 +47,17 @@ func ApplyRoleResourceOverrides(cfg *config.Config) error {
 		disk, size, sockets, cores, mem, template string
 	}
 	// Per-role template overrides fall back to the catch-all
-	// cfg.ProxmoxTemplateID when empty.
-	cpTpl := firstNonEmpty(cfg.WorkloadControlPlaneTemplateID, cfg.ProxmoxTemplateID)
-	wkTpl := firstNonEmpty(cfg.WorkloadWorkerTemplateID, cfg.ProxmoxTemplateID)
+	// cfg.Providers.Proxmox.TemplateID when empty.
+	cpTpl := firstNonEmpty(cfg.WorkloadControlPlaneTemplateID, cfg.Providers.Proxmox.TemplateID)
+	wkTpl := firstNonEmpty(cfg.WorkloadWorkerTemplateID, cfg.Providers.Proxmox.TemplateID)
 	cp := hw{
-		disk: cfg.ControlPlaneBootVolumeDevice, size: cfg.ControlPlaneBootVolumeSize,
-		sockets: cfg.ControlPlaneNumSockets, cores: cfg.ControlPlaneNumCores, mem: cfg.ControlPlaneMemoryMiB,
+		disk: cfg.Providers.Proxmox.ControlPlaneBootVolumeDevice, size: cfg.Providers.Proxmox.ControlPlaneBootVolumeSize,
+		sockets: cfg.Providers.Proxmox.ControlPlaneNumSockets, cores: cfg.Providers.Proxmox.ControlPlaneNumCores, mem: cfg.Providers.Proxmox.ControlPlaneMemoryMiB,
 		template: cpTpl,
 	}
 	wk := hw{
-		disk: cfg.WorkerBootVolumeDevice, size: cfg.WorkerBootVolumeSize,
-		sockets: cfg.WorkerNumSockets, cores: cfg.WorkerNumCores, mem: cfg.WorkerMemoryMiB,
+		disk: cfg.Providers.Proxmox.WorkerBootVolumeDevice, size: cfg.Providers.Proxmox.WorkerBootVolumeSize,
+		sockets: cfg.Providers.Proxmox.WorkerNumSockets, cores: cfg.Providers.Proxmox.WorkerNumCores, mem: cfg.Providers.Proxmox.WorkerMemoryMiB,
 		template: wkTpl,
 	}
 	text = patchPMTBlock(text, "control-plane", cp)
@@ -65,7 +65,7 @@ func ApplyRoleResourceOverrides(cfg *config.Config) error {
 	text = scalarCSVToYAMLList(text, "allowedNodes")
 	text = scalarCSVToYAMLList(text, "dnsServers")
 	text = scalarCSVToYAMLList(text, "addresses")
-	text = injectMemoryAdjustment(text, cfg.ProxmoxMemoryAdjustment)
+	text = injectMemoryAdjustment(text, cfg.Providers.Proxmox.MemoryAdjustment)
 
 	return os.WriteFile(cfg.CAPIManifest, []byte(text), 0o644)
 }
@@ -194,16 +194,16 @@ func injectMemoryAdjustment(text, mem string) string {
 // every KubeadmConfig-style block, with
 // topology.kubernetes.io/region=<region>, topology.kubernetes.io/zone=<zone>.
 func PatchProxmoxCSITopologyLabels(cfg *config.Config) error {
-	if !sysinfo.IsTrue(cfg.ProxmoxCSITopologyLabels) {
+	if !sysinfo.IsTrue(cfg.Providers.Proxmox.CSITopologyLabels) {
 		return nil
 	}
-	region := cfg.ProxmoxTopologyRegion
+	region := cfg.Providers.Proxmox.TopologyRegion
 	if region == "" {
-		region = cfg.ProxmoxRegion
+		region = cfg.Providers.Proxmox.Region
 	}
-	zone := cfg.ProxmoxTopologyZone
+	zone := cfg.Providers.Proxmox.TopologyZone
 	if zone == "" {
-		zone = cfg.ProxmoxNode
+		zone = cfg.Providers.Proxmox.Node
 	}
 	if region == "" || zone == "" {
 		logx.Warn("Skipping Proxmox CSI topology node-labels: set PROXMOX_REGION and PROXMOX_NODE (region must match CSI clusters[].region; PROXMOX_TOPOLOGY_REGION / PROXMOX_TOPOLOGY_ZONE override defaults).")
@@ -298,7 +298,7 @@ func PatchKubeadmSkipKubeProxyForCilium(cfg *config.Config) error {
 //
 // Returns the list of new template names (comma-joined, for logging).
 func PatchProxmoxMachineTemplateSpecRevisions(cfg *config.Config) (string, error) {
-	if !cfg.CAPIProxmoxMachineTemplateSpecRev {
+	if !cfg.Providers.Proxmox.CAPIMachineTemplateSpecRev {
 		return "", nil
 	}
 	raw, err := os.ReadFile(cfg.CAPIManifest)

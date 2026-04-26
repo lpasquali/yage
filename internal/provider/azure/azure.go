@@ -34,7 +34,7 @@
 //
 // PatchManifest is a no-op: AzureMachineTemplate sizes via
 // spec.template.spec.vmSize (e.g. "Standard_D2s_v3"), so a future
-// patch could map cfg.ControlPlaneNumCores / Memory to the right VM
+// patch could map cfg.Providers.Proxmox.ControlPlaneNumCores / Memory to the right VM
 // family. Not implemented yet.
 package azure
 
@@ -222,7 +222,7 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 }
 
 // PatchManifest is a no-op for Azure today. Future: map
-// cfg.ControlPlaneNumCores / Memory to a VM family
+// cfg.Providers.Proxmox.ControlPlaneNumCores / Memory to a VM family
 // (Standard_B2s, Standard_D2s_v3, …) and patch
 // AzureMachineTemplate.spec.template.spec.vmSize.
 func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {

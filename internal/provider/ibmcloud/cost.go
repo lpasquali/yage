@@ -13,11 +13,11 @@ import (
 // live Global Catalog data. Profile IDs look like "bx2-2x8" (general
 // purpose, 2 vCPU, 8 GB) or "cx2-4x8" (compute optimised).
 func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
-	region := orDefault(cfg.IBMCloudRegion, "us-south")
+	region := orDefault(cfg.Providers.IBMCloud.Region, "us-south")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
-	cpProfile := orDefault(cfg.IBMCloudControlPlaneProfile, "bx2-2x8")
-	wkProfile := orDefault(cfg.IBMCloudNodeProfile, "bx2-2x8")
+	cpProfile := orDefault(cfg.Providers.IBMCloud.ControlPlaneProfile, "bx2-2x8")
+	wkProfile := orDefault(cfg.Providers.IBMCloud.NodeProfile, "bx2-2x8")
 
 	items := []provider.CostItem{}
 	if cp > 0 {

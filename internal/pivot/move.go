@@ -149,8 +149,8 @@ func MoveCAPIState(cfg *config.Config, mgmtKubeconfig string) error {
 	// objects + their dependants land on mgmt.
 	namespaces := dedupe([]string{
 		cfg.WorkloadClusterNamespace,
-		cfg.MgmtClusterNamespace,
-		cfg.ProxmoxBootstrapSecretNamespace,
+		cfg.Mgmt.ClusterNamespace,
+		cfg.Providers.Proxmox.BootstrapSecretNamespace,
 	})
 
 	for _, ns := range namespaces {

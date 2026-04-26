@@ -100,11 +100,11 @@ func TokenIDForSet(userID, tokenPrefix, setID string) string {
 // Fills empty PROXMOX_CSI_USER_ID / PROXMOX_CAPI_USER_ID from the defaults
 // + IDENTITY_SUFFIX.
 func RefreshDerivedIdentityUserIDs(cfg *config.Config) {
-	if cfg.ProxmoxCSIUserID == "" {
-		cfg.ProxmoxCSIUserID = UserIDWithSuffix(DefaultCSIUserBase, cfg.ProxmoxIdentitySuffix)
+	if cfg.Providers.Proxmox.CSIUserID == "" {
+		cfg.Providers.Proxmox.CSIUserID = UserIDWithSuffix(DefaultCSIUserBase, cfg.Providers.Proxmox.IdentitySuffix)
 	}
-	if cfg.ProxmoxCAPIUserID == "" {
-		cfg.ProxmoxCAPIUserID = UserIDWithSuffix(DefaultCAPIUserBase, cfg.ProxmoxIdentitySuffix)
+	if cfg.Providers.Proxmox.CAPIUserID == "" {
+		cfg.Providers.Proxmox.CAPIUserID = UserIDWithSuffix(DefaultCAPIUserBase, cfg.Providers.Proxmox.IdentitySuffix)
 	}
 }
 
@@ -113,13 +113,13 @@ func RefreshDerivedIdentityUserIDs(cfg *config.Config) {
 // derived id paired with a real secret (from kind) produces a 401.
 func RefreshDerivedIdentityTokenIDs(cfg *config.Config) {
 	RefreshDerivedIdentityUserIDs(cfg)
-	if cfg.ProxmoxToken == "" && cfg.ProxmoxSecret == "" &&
-		cfg.ProxmoxCAPIUserID != "" && cfg.ProxmoxCAPITokenPrefix != "" {
-		cfg.ProxmoxToken = TokenID(cfg.ProxmoxCAPIUserID, cfg.ProxmoxCAPITokenPrefix, cfg.ProxmoxIdentitySuffix)
+	if cfg.Providers.Proxmox.Token == "" && cfg.Providers.Proxmox.Secret == "" &&
+		cfg.Providers.Proxmox.CAPIUserID != "" && cfg.Providers.Proxmox.CAPITokenPrefix != "" {
+		cfg.Providers.Proxmox.Token = TokenID(cfg.Providers.Proxmox.CAPIUserID, cfg.Providers.Proxmox.CAPITokenPrefix, cfg.Providers.Proxmox.IdentitySuffix)
 	}
-	if cfg.ProxmoxCSITokenID == "" && cfg.ProxmoxCSITokenSecret == "" &&
-		cfg.ProxmoxCSIUserID != "" && cfg.ProxmoxCSITokenPrefix != "" {
-		cfg.ProxmoxCSITokenID = TokenID(cfg.ProxmoxCSIUserID, cfg.ProxmoxCSITokenPrefix, cfg.ProxmoxIdentitySuffix)
+	if cfg.Providers.Proxmox.CSITokenID == "" && cfg.Providers.Proxmox.CSITokenSecret == "" &&
+		cfg.Providers.Proxmox.CSIUserID != "" && cfg.Providers.Proxmox.CSITokenPrefix != "" {
+		cfg.Providers.Proxmox.CSITokenID = TokenID(cfg.Providers.Proxmox.CSIUserID, cfg.Providers.Proxmox.CSITokenPrefix, cfg.Providers.Proxmox.IdentitySuffix)
 	}
 }
 
@@ -156,7 +156,7 @@ func RefreshDerivedCiliumClusterID(cfg *config.Config) {
 // APIJSONURL ports proxmox_api_json_url: appends /api2/json unless already
 // suffixed, stripping a trailing slash first.
 func APIJSONURL(cfg *config.Config) string {
-	u := cfg.ProxmoxURL
+	u := cfg.Providers.Proxmox.URL
 	if strings.HasSuffix(u, "/api2/json") {
 		return u
 	}
@@ -166,7 +166,7 @@ func APIJSONURL(cfg *config.Config) string {
 // HostBaseURL ports pve_api_host_base_url: strips a trailing /api2/json so
 // callers can append the path portion themselves.
 func HostBaseURL(cfg *config.Config) string {
-	u := strings.TrimRight(cfg.ProxmoxURL, "/")
+	u := strings.TrimRight(cfg.Providers.Proxmox.URL, "/")
 	if strings.HasSuffix(u, "/api2/json") {
 		u = strings.TrimSuffix(u, "/api2/json")
 	}
@@ -224,17 +224,17 @@ func ValidateClusterSetIDFormat(cfg *config.Config) {
 // Returns true on successful inference and mutates cfg; false when the
 // token ID strings are missing or do not share the same suffix.
 func InferIdentityFromTokenIDs(cfg *config.Config) bool {
-	if !strings.Contains(cfg.ProxmoxCSITokenID, "!") {
+	if !strings.Contains(cfg.Providers.Proxmox.CSITokenID, "!") {
 		return false
 	}
-	if !strings.Contains(cfg.ProxmoxToken, "!") {
+	if !strings.Contains(cfg.Providers.Proxmox.Token, "!") {
 		return false
 	}
-	csiUser, csiAfter, ok := strings.Cut(cfg.ProxmoxCSITokenID, "!")
+	csiUser, csiAfter, ok := strings.Cut(cfg.Providers.Proxmox.CSITokenID, "!")
 	if !ok {
 		return false
 	}
-	capiUser, capiAfter, ok := strings.Cut(cfg.ProxmoxToken, "!")
+	capiUser, capiAfter, ok := strings.Cut(cfg.Providers.Proxmox.Token, "!")
 	if !ok {
 		return false
 	}
@@ -252,11 +252,11 @@ func InferIdentityFromTokenIDs(cfg *config.Config) bool {
 		return false
 	}
 
-	cfg.ProxmoxCSIUserID = csiUser
-	cfg.ProxmoxCSITokenPrefix = csiPrefix
-	cfg.ProxmoxCAPIUserID = capiUser
-	cfg.ProxmoxCAPITokenPrefix = capiPrefix
-	cfg.ProxmoxIdentitySuffix = csiSuffix
+	cfg.Providers.Proxmox.CSIUserID = csiUser
+	cfg.Providers.Proxmox.CSITokenPrefix = csiPrefix
+	cfg.Providers.Proxmox.CAPIUserID = capiUser
+	cfg.Providers.Proxmox.CAPITokenPrefix = capiPrefix
+	cfg.Providers.Proxmox.IdentitySuffix = csiSuffix
 	if cfg.ClusterSetID == "" {
 		cfg.ClusterSetID = csiSuffix
 	}

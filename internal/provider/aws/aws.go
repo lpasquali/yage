@@ -31,7 +31,7 @@
 //
 // PatchManifest is a no-op: AWSMachineTemplate sizes via
 // spec.template.spec.instanceType (e.g. "t3.medium"), so a future
-// patch could map cfg.ControlPlaneNumCores / Memory to the right
+// patch could map cfg.Providers.Proxmox.ControlPlaneNumCores / Memory to the right
 // instance family. Not implemented yet.
 package aws
 
@@ -205,7 +205,7 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 }
 
 // PatchManifest is a no-op for AWS today. Future: map
-// cfg.ControlPlaneNumCores / Memory to an instance family
+// cfg.Providers.Proxmox.ControlPlaneNumCores / Memory to an instance family
 // (t3.medium, m5.large, …) and patch
 // AWSMachineTemplate.spec.template.spec.instanceType.
 func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {

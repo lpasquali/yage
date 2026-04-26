@@ -49,7 +49,7 @@ func Run(cfg *config.Config) int {
 	}
 	// ALLOWED_NODES falls back to PROXMOX_NODE once parsing is done (L8266).
 	if cfg.AllowedNodes == "" {
-		cfg.AllowedNodes = cfg.ProxmoxNode
+		cfg.AllowedNodes = cfg.Providers.Proxmox.Node
 	}
 
 	// CAPI VMs need at least 2 vCPUs (sockets × cores) per role to
@@ -139,8 +139,8 @@ func Run(cfg *config.Config) int {
 			EnsureCAPIManifestPath(cfg)
 			capimanifest.TryFillWorkloadInputsFromManagement(cfg)
 			kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
-			if cfg.ProxmoxTemplateID == "" {
-				cfg.ProxmoxTemplateID = "104"
+			if cfg.Providers.Proxmox.TemplateID == "" {
+				cfg.Providers.Proxmox.TemplateID = "104"
 			}
 			TryLoadCAPIManifestFromSecret(cfg)
 			if fi, err := os.Stat(cfg.CAPIManifest); err != nil || fi.Size() == 0 {
@@ -235,27 +235,27 @@ func Run(cfg *config.Config) int {
 	}
 
 	// --- CLUSTER_SET_ID + identity suffix (bash L7981-L8007) ---
-	if cfg.RecreateProxmoxIdentities {
+	if cfg.Providers.Proxmox.RecreateIdentities {
 		logx.Log("Re-creation mode: identity parameters are resolved in Phase 2 (Terraform state or CAPI/CSI token IDs in kind / env).")
-		if cfg.ClusterSetID != "" && cfg.ProxmoxIdentitySuffix == "" {
-			cfg.ProxmoxIdentitySuffix = proxmox.DeriveIdentitySuffix(cfg.ClusterSetID)
+		if cfg.ClusterSetID != "" && cfg.Providers.Proxmox.IdentitySuffix == "" {
+			cfg.Providers.Proxmox.IdentitySuffix = proxmox.DeriveIdentitySuffix(cfg.ClusterSetID)
 		}
 		if cfg.ClusterSetID != "" {
 			proxmox.ValidateClusterSetIDFormat(cfg)
 		}
-		if cfg.ProxmoxIdentitySuffix != "" {
-			logx.Log("Using Proxmox identity suffix: %s", cfg.ProxmoxIdentitySuffix)
+		if cfg.Providers.Proxmox.IdentitySuffix != "" {
+			logx.Log("Using Proxmox identity suffix: %s", cfg.Providers.Proxmox.IdentitySuffix)
 		}
 	} else {
 		if cfg.ClusterSetID == "" {
 			cfg.ClusterSetID = proxmox.GenerateUUIDv4()
 			logx.Log("Generated CLUSTER_SET_ID: %s", cfg.ClusterSetID)
 		}
-		if cfg.ProxmoxIdentitySuffix == "" {
-			cfg.ProxmoxIdentitySuffix = proxmox.DeriveIdentitySuffix(cfg.ClusterSetID)
+		if cfg.Providers.Proxmox.IdentitySuffix == "" {
+			cfg.Providers.Proxmox.IdentitySuffix = proxmox.DeriveIdentitySuffix(cfg.ClusterSetID)
 		}
 		proxmox.ValidateClusterSetIDFormat(cfg)
-		logx.Log("Using Proxmox identity suffix: %s", cfg.ProxmoxIdentitySuffix)
+		logx.Log("Using Proxmox identity suffix: %s", cfg.Providers.Proxmox.IdentitySuffix)
 	}
 
 	// =========================================================================
@@ -381,11 +381,11 @@ func Run(cfg *config.Config) int {
 	if !cfg.ClusterctlCfgFilePresent() && !cfg.HaveClusterctlCredsInEnv() {
 		phase0IdentityBootstrap = true
 	}
-	if cfg.ProxmoxCSIConfig != "" {
-		if _, err := os.Stat(cfg.ProxmoxCSIConfig); err != nil {
+	if cfg.Providers.Proxmox.CSIConfig != "" {
+		if _, err := os.Stat(cfg.Providers.Proxmox.CSIConfig); err != nil {
 			phase0IdentityBootstrap = true
 		}
-	} else if cfg.ProxmoxCSITokenID == "" || cfg.ProxmoxCSITokenSecret == "" {
+	} else if cfg.Providers.Proxmox.CSITokenID == "" || cfg.Providers.Proxmox.CSITokenSecret == "" {
 		phase0IdentityBootstrap = true
 	}
 
@@ -399,32 +399,32 @@ func Run(cfg *config.Config) int {
 		if !cfg.ClusterctlCfgFilePresent() && !cfg.HaveClusterctlCredsInEnv() {
 			needTerraform = true
 		}
-		if cfg.ProxmoxCSIConfig != "" {
-			if _, err := os.Stat(cfg.ProxmoxCSIConfig); err != nil {
-				if cfg.ProxmoxCSITokenID == "" || cfg.ProxmoxCSITokenSecret == "" {
+		if cfg.Providers.Proxmox.CSIConfig != "" {
+			if _, err := os.Stat(cfg.Providers.Proxmox.CSIConfig); err != nil {
+				if cfg.Providers.Proxmox.CSITokenID == "" || cfg.Providers.Proxmox.CSITokenSecret == "" {
 					needTerraform = true
 				}
 			}
-		} else if cfg.ProxmoxCSITokenID == "" || cfg.ProxmoxCSITokenSecret == "" {
+		} else if cfg.Providers.Proxmox.CSITokenID == "" || cfg.Providers.Proxmox.CSITokenSecret == "" {
 			needTerraform = true
 		}
 
 		if needTerraform {
 			logx.Warn("CLI/env values are insufficient — running Terraform bootstrap for CAPI/CSI identities.")
-			if cfg.ProxmoxURL == "" || cfg.ProxmoxAdminUsername == "" || cfg.ProxmoxAdminToken == "" {
+			if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 				EnsureProxmoxAdminConfig(cfg,
 					func() { kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg) },
 					func() { _ = kindsync.SyncBootstrapConfigToKind(cfg) },
 					func() { _ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg) })
 			}
 			var missingAdmin []string
-			if cfg.ProxmoxURL == "" {
+			if cfg.Providers.Proxmox.URL == "" {
 				missingAdmin = append(missingAdmin, "PROXMOX_URL")
 			}
-			if cfg.ProxmoxAdminUsername == "" {
+			if cfg.Providers.Proxmox.AdminUsername == "" {
 				missingAdmin = append(missingAdmin, "PROXMOX_ADMIN_USERNAME")
 			}
-			if cfg.ProxmoxAdminToken == "" {
+			if cfg.Providers.Proxmox.AdminToken == "" {
 				missingAdmin = append(missingAdmin, "PROXMOX_ADMIN_TOKEN")
 			}
 			if len(missingAdmin) > 0 {
@@ -435,7 +435,7 @@ func Run(cfg *config.Config) int {
 			}
 			_ = proxmox.ResolveAvailableClusterSetIDForRoles(cfg)
 			proxmox.CheckAdminAPIConnectivity(cfg)
-			if cfg.RecreateProxmoxIdentities {
+			if cfg.Providers.Proxmox.RecreateIdentities {
 				if err := opentofux.RecreateIdentities(cfg); err != nil {
 					logx.Die("recreate_proxmox_identities_terraform failed: %v", err)
 				}
@@ -449,8 +449,8 @@ func Run(cfg *config.Config) int {
 		}
 	}
 
-	if cfg.RecreateProxmoxIdentities && !recreateOpenTofuDone {
-		if cfg.ProxmoxURL == "" || cfg.ProxmoxAdminUsername == "" || cfg.ProxmoxAdminToken == "" {
+	if cfg.Providers.Proxmox.RecreateIdentities && !recreateOpenTofuDone {
+		if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 			EnsureProxmoxAdminConfig(cfg,
 				func() { kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg) },
 				func() { _ = kindsync.SyncBootstrapConfigToKind(cfg) },
@@ -471,17 +471,17 @@ func Run(cfg *config.Config) int {
 		logx.Warn("Proxmox clusterctl API identity is not in the environment and no explicit local CLUSTERCTL_CFG is set.")
 		if promptx.Confirm("Enter Proxmox API values interactively now?") {
 			fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox VE URL (e.g. https://pve.example:8006): ")
-			cfg.ProxmoxURL = promptx.ReadLine()
+			cfg.Providers.Proxmox.URL = promptx.ReadLine()
 			fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox API TokenID (e.g. capmox@pve!capi): ")
-			cfg.ProxmoxToken = promptx.ReadLine()
+			cfg.Providers.Proxmox.Token = promptx.ReadLine()
 			fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox API Token secret (UUID): ")
-			cfg.ProxmoxSecret = promptx.ReadLine()
+			cfg.Providers.Proxmox.Secret = promptx.ReadLine()
 			_ = kindsync.SyncBootstrapConfigToKind(cfg)
 			_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 			logx.Log("Proxmox API identity updated in kind when the management cluster is reachable. clusterctl on disk is not used by default (temp file for CLI only).")
 		} else {
 			logx.Warn("Skipping interactive creation. Set PROXMOX_URL, PROXMOX_TOKEN, and PROXMOX_SECRET, or add them to %s on kind, or set CLUSTERCTL_CFG to a local YAML you maintain.",
-				cfg.ProxmoxBootstrapSecretNamespace)
+				cfg.Providers.Proxmox.BootstrapSecretNamespace)
 			logx.Warn("Expected format:")
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintln(os.Stderr, `  PROXMOX_URL: "https://pve.example:8006"`)
@@ -500,35 +500,35 @@ func Run(cfg *config.Config) int {
 
 	// Fill URL/Token/Secret from an explicit local clusterctl file if not
 	// already populated from kind (matches bash L8255-L8259).
-	if !cfg.ProxmoxBootstrapKindSecretUsed && !cfg.ProxmoxKindCAPMOXActive && cfg.ClusterctlCfgFilePresent() {
-		if cfg.ProxmoxURL == "" {
-			cfg.ProxmoxURL = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_URL")
+	if !cfg.Providers.Proxmox.BootstrapKindSecretUsed && !cfg.Providers.Proxmox.KindCAPMOXActive && cfg.ClusterctlCfgFilePresent() {
+		if cfg.Providers.Proxmox.URL == "" {
+			cfg.Providers.Proxmox.URL = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_URL")
 		}
-		if cfg.ProxmoxToken == "" {
-			cfg.ProxmoxToken = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_TOKEN")
+		if cfg.Providers.Proxmox.Token == "" {
+			cfg.Providers.Proxmox.Token = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_TOKEN")
 		}
-		if cfg.ProxmoxSecret == "" {
-			cfg.ProxmoxSecret = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_SECRET")
+		if cfg.Providers.Proxmox.Secret == "" {
+			cfg.Providers.Proxmox.Secret = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_SECRET")
 		}
 	}
-	cfg.ProxmoxSecret = proxmox.NormalizeTokenSecret(cfg.ProxmoxSecret, cfg.ProxmoxToken)
-	proxmox.ValidateTokenSecret("PROXMOX_SECRET", cfg.ProxmoxSecret)
+	cfg.Providers.Proxmox.Secret = proxmox.NormalizeTokenSecret(cfg.Providers.Proxmox.Secret, cfg.Providers.Proxmox.Token)
+	proxmox.ValidateTokenSecret("PROXMOX_SECRET", cfg.Providers.Proxmox.Secret)
 	proxmox.RefreshDerivedIdentityTokenIDs(cfg)
-	if cfg.ProxmoxTemplateID == "" {
-		cfg.ProxmoxTemplateID = "104"
+	if cfg.Providers.Proxmox.TemplateID == "" {
+		cfg.Providers.Proxmox.TemplateID = "104"
 	}
 	if cfg.AllowedNodes == "" {
-		cfg.AllowedNodes = cfg.ProxmoxNode
+		cfg.AllowedNodes = cfg.Providers.Proxmox.Node
 	}
 
 	var missingCreds []string
-	if cfg.ProxmoxURL == "" {
+	if cfg.Providers.Proxmox.URL == "" {
 		missingCreds = append(missingCreds, "PROXMOX_URL")
 	}
-	if cfg.ProxmoxToken == "" {
+	if cfg.Providers.Proxmox.Token == "" {
 		missingCreds = append(missingCreds, "PROXMOX_TOKEN")
 	}
-	if cfg.ProxmoxSecret == "" {
+	if cfg.Providers.Proxmox.Secret == "" {
 		missingCreds = append(missingCreds, "PROXMOX_SECRET")
 	}
 	if len(missingCreds) > 0 {
@@ -743,18 +743,18 @@ func Run(cfg *config.Config) int {
 	// CAPMOX rejects a pool reference that doesn't exist, so we
 	// create the workload pool here and (when --pivot is enabled) the
 	// mgmt pool too. Idempotent: existing pools are silently kept.
-	if cfg.ProxmoxPool != "" {
-		if err := proxmox.EnsurePool(cfg, cfg.ProxmoxPool); err != nil {
-			logx.Warn("Proxmox pool %s: %v — VMs may fail to register; create it manually if needed.", cfg.ProxmoxPool, err)
+	if cfg.Providers.Proxmox.Pool != "" {
+		if err := proxmox.EnsurePool(cfg, cfg.Providers.Proxmox.Pool); err != nil {
+			logx.Warn("Proxmox pool %s: %v — VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Pool, err)
 		} else {
-			logx.Log("Proxmox pool '%s' ensured (workload).", cfg.ProxmoxPool)
+			logx.Log("Proxmox pool '%s' ensured (workload).", cfg.Providers.Proxmox.Pool)
 		}
 	}
-	if cfg.PivotEnabled && cfg.MgmtProxmoxPool != "" {
-		if err := proxmox.EnsurePool(cfg, cfg.MgmtProxmoxPool); err != nil {
-			logx.Warn("Proxmox pool %s: %v — mgmt VMs may fail to register; create it manually if needed.", cfg.MgmtProxmoxPool, err)
+	if cfg.PivotEnabled && cfg.Providers.Proxmox.Mgmt.Pool != "" {
+		if err := proxmox.EnsurePool(cfg, cfg.Providers.Proxmox.Mgmt.Pool); err != nil {
+			logx.Warn("Proxmox pool %s: %v — mgmt VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Mgmt.Pool, err)
 		} else {
-			logx.Log("Proxmox pool '%s' ensured (management).", cfg.MgmtProxmoxPool)
+			logx.Log("Proxmox pool '%s' ensured (management).", cfg.Providers.Proxmox.Mgmt.Pool)
 		}
 	}
 
@@ -810,8 +810,8 @@ func Run(cfg *config.Config) int {
 	capimanifest.TryFillWorkloadInputsFromManagement(cfg)
 	// Re-apply proxmox-bootstrap-config so snapshot keys beat live backfill.
 	kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
-	if cfg.ProxmoxTemplateID == "" {
-		cfg.ProxmoxTemplateID = "104"
+	if cfg.Providers.Proxmox.TemplateID == "" {
+		cfg.Providers.Proxmox.TemplateID = "104"
 	}
 	TryLoadCAPIManifestFromSecret(cfg)
 	clusterctlCfgPath = SyncClusterctlConfigFile(cfg)
@@ -864,13 +864,13 @@ func Run(cfg *config.Config) int {
 	}
 
 	// Proxmox CSI config Secret on the workload (bash L8481-L8489).
-	if cfg.ProxmoxCSIEnabled && cfg.ArgoCDEnabled && cfg.WorkloadArgoCDEnabled {
+	if cfg.Providers.Proxmox.CSIEnabled && cfg.ArgoCDEnabled && cfg.WorkloadArgoCDEnabled {
 		csix.LoadVarsFromConfig(cfg)
-		if cfg.ProxmoxCSIURL == "" {
-			cfg.ProxmoxCSIURL = proxmox.APIJSONURL(cfg)
+		if cfg.Providers.Proxmox.CSIURL == "" {
+			cfg.Providers.Proxmox.CSIURL = proxmox.APIJSONURL(cfg)
 		}
-		if cfg.ProxmoxCSIURL != "" && cfg.ProxmoxCSITokenID != "" &&
-			cfg.ProxmoxCSITokenSecret != "" && cfg.ProxmoxRegion != "" {
+		if cfg.Providers.Proxmox.CSIURL != "" && cfg.Providers.Proxmox.CSITokenID != "" &&
+			cfg.Providers.Proxmox.CSITokenSecret != "" && cfg.Providers.Proxmox.Region != "" {
 			csix.ApplyConfigSecretToWorkload(cfg, func() (string, error) {
 				return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
 			})
@@ -920,7 +920,7 @@ func Run(cfg *config.Config) int {
 
 // validateMinVCPU enforces the CAPI/kubeadm + k3s minimum of 2 vCPUs
 // per VM (sockets × cores) on every role that has at least one
-// replica. Mgmt-worker is skipped when MgmtWorkerMachineCount is 0
+// replica. Mgmt-worker is skipped when Mgmt.WorkerMachineCount is 0
 // (the default — mgmt is single-node CP-only).
 func validateMinVCPU(cfg *config.Config) error {
 	const minVCPU = 2
@@ -937,13 +937,13 @@ func validateMinVCPU(cfg *config.Config) error {
 		replicasNonZero  bool
 	}
 	roles := []role{
-		{"workload control-plane", cfg.ControlPlaneNumSockets, cfg.ControlPlaneNumCores, atoi(cfg.ControlPlaneMachineCount) > 0},
-		{"workload worker", cfg.WorkerNumSockets, cfg.WorkerNumCores, atoi(cfg.WorkerMachineCount) > 0},
+		{"workload control-plane", cfg.Providers.Proxmox.ControlPlaneNumSockets, cfg.Providers.Proxmox.ControlPlaneNumCores, atoi(cfg.ControlPlaneMachineCount) > 0},
+		{"workload worker", cfg.Providers.Proxmox.WorkerNumSockets, cfg.Providers.Proxmox.WorkerNumCores, atoi(cfg.WorkerMachineCount) > 0},
 	}
 	if cfg.PivotEnabled {
 		roles = append(roles,
-			role{"mgmt control-plane", cfg.MgmtControlPlaneNumSockets, cfg.MgmtControlPlaneNumCores, atoi(cfg.MgmtControlPlaneMachineCount) > 0},
-			role{"mgmt worker", cfg.WorkerNumSockets, cfg.WorkerNumCores, atoi(cfg.MgmtWorkerMachineCount) > 0},
+			role{"mgmt control-plane", cfg.Providers.Proxmox.Mgmt.ControlPlaneNumSockets, cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores, atoi(cfg.Mgmt.ControlPlaneMachineCount) > 0},
+			role{"mgmt worker", cfg.Providers.Proxmox.WorkerNumSockets, cfg.Providers.Proxmox.WorkerNumCores, atoi(cfg.Mgmt.WorkerMachineCount) > 0},
 		)
 	}
 	var bad []string

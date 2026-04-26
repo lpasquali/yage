@@ -286,7 +286,7 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 			if cli, err := k8sclient.ForContext("kind-" + cfg.KindClusterName); err == nil {
 				bg := context.Background()
 				_ = cli.Typed.CoreV1().Namespaces().
-					Delete(bg, cfg.ProxmoxBootstrapSecretNamespace, metav1.DeleteOptions{})
+					Delete(bg, cfg.Providers.Proxmox.BootstrapSecretNamespace, metav1.DeleteOptions{})
 			}
 			DeleteWorkloadClusterBeforeKindDeletion(cfg)
 			DeleteCAPIManifestSecret(cfg)
@@ -303,12 +303,12 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 	if cfg.CAPIManifest != "" {
 		_ = os.Remove(cfg.CAPIManifest)
 	}
-	if cfg.ProxmoxCSIConfig != "" {
-		_ = os.Remove(cfg.ProxmoxCSIConfig)
+	if cfg.Providers.Proxmox.CSIConfig != "" {
+		_ = os.Remove(cfg.Providers.Proxmox.CSIConfig)
 	}
-	if cfg.ProxmoxAdminConfig != "" {
-		if _, err := os.Stat(cfg.ProxmoxAdminConfig); err == nil {
-			_ = os.Remove(cfg.ProxmoxAdminConfig)
+	if cfg.Providers.Proxmox.AdminConfig != "" {
+		if _, err := os.Stat(cfg.Providers.Proxmox.AdminConfig); err == nil {
+			_ = os.Remove(cfg.Providers.Proxmox.AdminConfig)
 		}
 	}
 	if cfg.ClusterctlCfg != "" {
@@ -316,8 +316,8 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 			_ = os.Remove(cfg.ClusterctlCfg)
 		}
 	}
-	if cfg.ProxmoxIdentityTF != "" {
-		_ = os.Remove(cfg.ProxmoxIdentityTF)
+	if cfg.Providers.Proxmox.IdentityTF != "" {
+		_ = os.Remove(cfg.Providers.Proxmox.IdentityTF)
 	}
 	_ = os.RemoveAll(stateDir)
 	_ = os.RemoveAll(cfg.CAPMOXBuildDir)

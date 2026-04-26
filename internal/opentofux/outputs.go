@@ -27,12 +27,12 @@ func GenerateConfigsFromOutputs(cfg *config.Config) {
 	proxmox.ValidateTokenSecret("OpenTofu capi_token_secret", capiTokenSec)
 	proxmox.ValidateTokenSecret("OpenTofu csi_token_secret", csiTokenSec)
 
-	cfg.ProxmoxToken = capiTokenID
-	cfg.ProxmoxSecret = capiTokenSec
-	cfg.ProxmoxCSITokenID = csiTokenID
-	cfg.ProxmoxCSITokenSecret = csiTokenSec
-	if cfg.ProxmoxCSIURL == "" {
-		cfg.ProxmoxCSIURL = csiAPIURL
+	cfg.Providers.Proxmox.Token = capiTokenID
+	cfg.Providers.Proxmox.Secret = capiTokenSec
+	cfg.Providers.Proxmox.CSITokenID = csiTokenID
+	cfg.Providers.Proxmox.CSITokenSecret = csiTokenSec
+	if cfg.Providers.Proxmox.CSIURL == "" {
+		cfg.Providers.Proxmox.CSIURL = csiAPIURL
 	}
 	proxmox.RefreshDerivedIdentityTokenIDs(cfg)
 
@@ -56,46 +56,46 @@ func WriteClusterctlConfigIfMissing(cfg *config.Config) {
 	if cfg.ClusterctlCfgFilePresent() {
 		return
 	}
-	if cfg.ProxmoxURL == "" || cfg.ProxmoxToken == "" || cfg.ProxmoxSecret == "" {
+	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Secret == "" {
 		return
 	}
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
 	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 	switch {
-	case cfg.ProxmoxBootstrapSecretName != "" && cfg.ProxmoxBootstrapAdminSecretName != cfg.ProxmoxBootstrapSecretName:
+	case cfg.Providers.Proxmox.BootstrapSecretName != "" && cfg.Providers.Proxmox.BootstrapAdminSecretName != cfg.Providers.Proxmox.BootstrapSecretName:
 		logx.Log("Bootstrap state synced to kind: %s (config.yaml), %s (CAPI+CSI), %s (proxmox-admin.yaml) when the management cluster is reachable; clusterctl uses a temp file for the CLI only.",
-			cfg.ProxmoxBootstrapConfigSecretName, cfg.ProxmoxBootstrapSecretName, cfg.ProxmoxBootstrapAdminSecretName)
-	case cfg.ProxmoxBootstrapSecretName != "":
+			cfg.Providers.Proxmox.BootstrapConfigSecretName, cfg.Providers.Proxmox.BootstrapSecretName, cfg.Providers.Proxmox.BootstrapAdminSecretName)
+	case cfg.Providers.Proxmox.BootstrapSecretName != "":
 		logx.Log("Bootstrap state synced to kind: %s (config.yaml) and %s (legacy combined) when the management cluster is reachable; clusterctl uses a temp file for the CLI only.",
-			cfg.ProxmoxBootstrapConfigSecretName, cfg.ProxmoxBootstrapSecretName)
+			cfg.Providers.Proxmox.BootstrapConfigSecretName, cfg.Providers.Proxmox.BootstrapSecretName)
 	default:
 		logx.Log("Bootstrap state synced to kind: %s (config.yaml), %s + %s + %s when the management cluster is reachable; clusterctl uses a temp file for the CLI only.",
-			cfg.ProxmoxBootstrapConfigSecretName,
-			cfg.ProxmoxBootstrapCAPMOXSecretName,
-			cfg.ProxmoxBootstrapCSISecretName,
-			cfg.ProxmoxBootstrapAdminSecretName)
+			cfg.Providers.Proxmox.BootstrapConfigSecretName,
+			cfg.Providers.Proxmox.BootstrapCAPMOXSecretName,
+			cfg.Providers.Proxmox.BootstrapCSISecretName,
+			cfg.Providers.Proxmox.BootstrapAdminSecretName)
 	}
 }
 
 // WriteCSIConfigIfMissing ports write_csi_config_if_missing
-// (L3579-L3614). No-op unless cfg.ProxmoxCSIConfig is set AND does not
+// (L3579-L3614). No-op unless cfg.Providers.Proxmox.CSIConfig is set AND does not
 // yet exist AND PersistLocalSecrets is true. Writes the proxmox-csi
 // Helm values YAML with the current cfg.ProxmoxCSI* fields.
 func WriteCSIConfigIfMissing(cfg *config.Config) {
 	proxmox.RefreshDerivedIdentityTokenIDs(cfg)
-	if cfg.ProxmoxCSIConfig == "" {
+	if cfg.Providers.Proxmox.CSIConfig == "" {
 		return
 	}
-	if _, err := os.Stat(cfg.ProxmoxCSIConfig); err == nil {
+	if _, err := os.Stat(cfg.Providers.Proxmox.CSIConfig); err == nil {
 		return
 	}
 	if !cfg.PersistLocalSecrets() {
 		return
 	}
-	if cfg.ProxmoxCSIURL == "" {
-		cfg.ProxmoxCSIURL = proxmox.APIJSONURL(cfg)
+	if cfg.Providers.Proxmox.CSIURL == "" {
+		cfg.Providers.Proxmox.CSIURL = proxmox.APIJSONURL(cfg)
 	}
-	if cfg.ProxmoxCSITokenID == "" || cfg.ProxmoxCSITokenSecret == "" || cfg.ProxmoxRegion == "" {
+	if cfg.Providers.Proxmox.CSITokenID == "" || cfg.Providers.Proxmox.CSITokenSecret == "" || cfg.Providers.Proxmox.Region == "" {
 		return
 	}
 	body := fmt.Sprintf(`config:
@@ -114,19 +114,19 @@ storageClass:
     annotations:
       storageclass.kubernetes.io/is-default-class: "%s"
 `,
-		cfg.ProxmoxCSIURL,
-		cfg.ProxmoxCSIInsecure,
-		cfg.ProxmoxCSITokenID,
-		cfg.ProxmoxCSITokenSecret,
-		cfg.ProxmoxRegion,
-		cfg.ProxmoxCSIStorageClassName,
-		cfg.ProxmoxCSIStorage,
-		cfg.ProxmoxCSIReclaimPolicy,
-		cfg.ProxmoxCSIFsType,
-		cfg.ProxmoxCSIDefaultClass,
+		cfg.Providers.Proxmox.CSIURL,
+		cfg.Providers.Proxmox.CSIInsecure,
+		cfg.Providers.Proxmox.CSITokenID,
+		cfg.Providers.Proxmox.CSITokenSecret,
+		cfg.Providers.Proxmox.Region,
+		cfg.Providers.Proxmox.CSIStorageClassName,
+		cfg.Providers.Proxmox.CSIStorage,
+		cfg.Providers.Proxmox.CSIReclaimPolicy,
+		cfg.Providers.Proxmox.CSIFsType,
+		cfg.Providers.Proxmox.CSIDefaultClass,
 	)
-	if err := os.WriteFile(cfg.ProxmoxCSIConfig, []byte(body), 0o600); err != nil {
-		logx.Die("Failed to write %s: %v", cfg.ProxmoxCSIConfig, err)
+	if err := os.WriteFile(cfg.Providers.Proxmox.CSIConfig, []byte(body), 0o600); err != nil {
+		logx.Die("Failed to write %s: %v", cfg.Providers.Proxmox.CSIConfig, err)
 	}
-	logx.Log("Generated %s.", cfg.ProxmoxCSIConfig)
+	logx.Log("Generated %s.", cfg.Providers.Proxmox.CSIConfig)
 }

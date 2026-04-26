@@ -88,7 +88,7 @@ func (p *Provider) ClusterctlInitArgs(cfg *config.Config) []string {
 // Sizing comes from the OpenStack flavor name
 // (${OPENSTACK_NODE_MACHINE_FLAVOR} /
 // ${OPENSTACK_CONTROL_PLANE_MACHINE_FLAVOR}); a future PatchManifest
-// could resolve cfg.WorkerNumCores / WorkerMemoryMiB to the closest
+// could resolve cfg.Providers.Proxmox.WorkerNumCores / Providers.Proxmox.WorkerMemoryMiB to the closest
 // matching flavor via gophercloud.
 const k3sTemplate = `apiVersion: cluster.x-k8s.io/v1beta2
 kind: Cluster
@@ -234,8 +234,8 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 // PatchManifest is a no-op for CAPO: OpenStackMachineTemplate sizing
 // is set via the flavor name (${OPENSTACK_NODE_MACHINE_FLAVOR}) rather
 // than per-VM CPU/memory fields, so there's nothing per-role to patch
-// post-render. Future work: resolve cfg.WorkerNumCores /
-// WorkerMemoryMiB to the closest matching flavor via gophercloud and
+// post-render. Future work: resolve cfg.Providers.Proxmox.WorkerNumCores /
+// Providers.Proxmox.WorkerMemoryMiB to the closest matching flavor via gophercloud and
 // rewrite the spec.template.spec.flavor field here.
 func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {
 	return nil

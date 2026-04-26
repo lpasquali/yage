@@ -25,13 +25,13 @@ func (c *Config) ClusterctlCfgFilePresent() bool {
 
 // ProxmoxAdminCfgFilePresent ports _proxmox_admin_cfg_file_present.
 func (c *Config) ProxmoxAdminCfgFilePresent() bool {
-	return c.ProxmoxAdminConfig != "" && isRegularFile(c.ProxmoxAdminConfig)
+	return c.Providers.Proxmox.AdminConfig != "" && isRegularFile(c.Providers.Proxmox.AdminConfig)
 }
 
 // HaveClusterctlCredsInEnv ports have_clusterctl_creds_in_env: the trio
 // the CAPI/CAPMOX provider needs before it will initialize.
 func (c *Config) HaveClusterctlCredsInEnv() bool {
-	return c.ProxmoxURL != "" && c.ProxmoxToken != "" && c.ProxmoxSecret != ""
+	return c.Providers.Proxmox.URL != "" && c.Providers.Proxmox.Token != "" && c.Providers.Proxmox.Secret != ""
 }
 
 // ReapplyWorkloadGitDefaults ports reapply_workload_git_defaults. When a

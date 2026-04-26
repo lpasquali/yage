@@ -20,20 +20,20 @@ import (
 // when any priced dimension is unreachable — the orchestrator
 // surfaces "AWS estimate unavailable" rather than fabricate.
 //
-// Switches on cfg.AWSMode:
+// Switches on cfg.Providers.AWS.Mode:
 //   - "unmanaged" (default): self-managed Kubernetes on EC2.
 //   - "eks": EKS-managed control plane (live priced) + EC2 workers.
 //   - "eks-fargate": EKS CP + Fargate workers (live vCPU/GB-hour).
 func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
-	region := orDefault(cfg.AWSRegion, "us-east-1")
-	mode := orDefault(cfg.AWSMode, "unmanaged")
+	region := orDefault(cfg.Providers.AWS.Region, "us-east-1")
+	mode := orDefault(cfg.Providers.AWS.Mode, "unmanaged")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
-	cpType := orDefault(cfg.AWSControlPlaneMachineType, "t3.large")
-	wkType := orDefault(cfg.AWSNodeMachineType, "t3.medium")
+	cpType := orDefault(cfg.Providers.AWS.ControlPlaneMachineType, "t3.large")
+	wkType := orDefault(cfg.Providers.AWS.NodeMachineType, "t3.medium")
 
-	cpDiskGB := atoiOr(cfg.ControlPlaneBootVolumeSize, 30)
-	wkDiskGB := atoiOr(cfg.WorkerBootVolumeSize, 40)
+	cpDiskGB := atoiOr(cfg.Providers.Proxmox.ControlPlaneBootVolumeSize, 30)
+	wkDiskGB := atoiOr(cfg.Providers.Proxmox.WorkerBootVolumeSize, 40)
 
 	gp3GB, err := pricing.Fetch("aws", "ebs:gp3", region)
 	if err != nil {
@@ -79,7 +79,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 	// Workers: Fargate per-pod (live), or EC2 (live).
 	if mode == "eks-fargate" {
-		pods := atoiOr(cfg.AWSFargatePodCount, 10)
+		pods := atoiOr(cfg.Providers.AWS.FargatePodCount, 10)
 		vcpuPer, gbPer := parseFargateSize(cfg)
 		fgVCPUHr, fgGBHr, err := pricing.AWSFargatePerHour(region)
 		if err != nil {
@@ -118,13 +118,13 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	}
 
 	if cfg.PivotEnabled {
-		mcp := atoiOr(cfg.MgmtControlPlaneMachineCount, 1)
+		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mgmtType := "t3.medium"
 		mgmtPrice, err := liveEC2Monthly(mgmtType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: aws mgmt %s/%s: %v", provider.ErrNotApplicable, mgmtType, region, err)
 		}
-		mgmtDisk := atoiOr(cfg.MgmtControlPlaneBootVolumeSize, 30)
+		mgmtDisk := atoiOr(cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize, 30)
 		items = append(items, provider.CostItem{
 			Name:           fmt.Sprintf("mgmt control-plane (%s)", mgmtType),
 			UnitUSDMonthly: mgmtPrice,
@@ -150,7 +150,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		total += it.SubtotalUSD
 	}
 
-	tierLabel := orDefault(cfg.AWSOverheadTier, "prod")
+	tierLabel := orDefault(cfg.Providers.AWS.OverheadTier, "prod")
 	noteBase := fmt.Sprintf("region %s, %s overhead tier (NAT/ALB/CloudWatch/Route53/egress).", region, tierLabel)
 	note := ""
 	switch mode {
@@ -177,8 +177,8 @@ func liveEC2Monthly(instanceType, region string) (float64, error) {
 }
 
 func parseFargateSize(cfg *config.Config) (vcpu, gib float64) {
-	vcpu = parseFloatOr(cfg.AWSFargatePodCPU, 0.5)
-	gib = parseFloatOr(cfg.AWSFargatePodMemoryGiB, 1.0)
+	vcpu = parseFloatOr(cfg.Providers.AWS.FargatePodCPU, 0.5)
+	gib = parseFloatOr(cfg.Providers.AWS.FargatePodMemoryGiB, 1.0)
 	return
 }
 

@@ -14,11 +14,11 @@ import (
 // Region availability is global for compute (region only matters
 // for transfer pricing); we ignore region in the catalog lookup.
 func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
-	region := orDefault(cfg.LinodeRegion, "us-east")
+	region := orDefault(cfg.Providers.Linode.Region, "us-east")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
-	cpType := orDefault(cfg.LinodeControlPlaneType, "g6-standard-2")
-	wkType := orDefault(cfg.LinodeNodeType, "g6-standard-2")
+	cpType := orDefault(cfg.Providers.Linode.ControlPlaneType, "g6-standard-2")
+	wkType := orDefault(cfg.Providers.Linode.NodeType, "g6-standard-2")
 
 	items := []provider.CostItem{}
 	if cp > 0 {

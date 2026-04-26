@@ -53,8 +53,8 @@ type WorkloadAllocations struct {
 // or grow worker count").
 func AllocationsFor(cfg *config.Config) WorkloadAllocations {
 	workers := atoiOr(cfg.WorkerMachineCount, 0)
-	cpuPer := atoiOr(cfg.WorkerNumSockets, 1) * atoiOr(cfg.WorkerNumCores, 1) * 1000
-	memPer := atoi64Or(cfg.WorkerMemoryMiB, 0)
+	cpuPer := atoiOr(cfg.Providers.Proxmox.WorkerNumSockets, 1) * atoiOr(cfg.Providers.Proxmox.WorkerNumCores, 1) * 1000
+	memPer := atoi64Or(cfg.Providers.Proxmox.WorkerMemoryMiB, 0)
 
 	totalCPU := cpuPer * workers
 	totalMem := memPer * int64(workers)

@@ -254,7 +254,7 @@ func HelmOCI(cfg *config.Config, name, ns, ociURL, version, syncWave, valuesYAML
 	}
 	indented, indentedMS := indentValuesBoth(valuesYAML)
 
-	useMulti := cfg.ArgoWorkloadPostsyncHooksEnabled && cfg.ProxmoxCSISmokeEnabled &&
+	useMulti := cfg.ArgoWorkloadPostsyncHooksEnabled && cfg.Providers.Proxmox.CSISmokeEnabled &&
 		hook1Path != "" && hook1Kz != "" && hook2Path != "" && hook2Kz != ""
 	var hURL, sref string
 	if useMulti {

@@ -72,11 +72,11 @@ func hetznerOverheadDefaults(tier string) hetznerOverheadCounts {
 // CAPHV is unmanaged-only (no Hetzner-managed Kubernetes today),
 // so there's no managed-mode switch.
 func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
-	region := orDefault(cfg.HetznerLocation, "fsn1")
+	region := orDefault(cfg.Providers.Hetzner.Location, "fsn1")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
-	cpType := orDefault(cfg.HetznerControlPlaneMachineType, "cx22")
-	wkType := orDefault(cfg.HetznerNodeMachineType, "cx22")
+	cpType := orDefault(cfg.Providers.Hetzner.ControlPlaneMachineType, "cx22")
+	wkType := orDefault(cfg.Providers.Hetzner.NodeMachineType, "cx22")
 
 	items := []provider.CostItem{}
 
@@ -110,7 +110,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 	// Optional management cluster (pivot retains it).
 	if cfg.PivotEnabled {
-		mcp := atoiOr(cfg.MgmtControlPlaneMachineCount, 1)
+		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mgmtType := "cx22"
 		mgmtPrice, err := liveServerMonthly(mgmtType, region)
 		if err != nil {
@@ -138,7 +138,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		total += it.SubtotalUSD
 	}
 
-	tierLabel := orDefault(cfg.HetznerOverheadTier, "prod")
+	tierLabel := orDefault(cfg.Providers.Hetzner.OverheadTier, "prod")
 	note := fmt.Sprintf(
 		"Hetzner Cloud monthly caps (live api.hetzner.cloud, EUR→USD via YAGE_EUR_USD), "+
 			"region %s, %s overhead tier (LB + floating IPs + volume budget). "+
@@ -194,7 +194,7 @@ func liveFloatingIPMonthly() (float64, error) {
 // addHetznerOverhead appends overhead CostItems. Component counts
 // per tier are shape (constant); $/unit comes from live API.
 func addHetznerOverhead(items []provider.CostItem, cfg *config.Config, region string) ([]provider.CostItem, error) {
-	tier := orDefault(cfg.HetznerOverheadTier, "prod")
+	tier := orDefault(cfg.Providers.Hetzner.OverheadTier, "prod")
 	d := hetznerOverheadDefaults(tier)
 
 	add := func(name string, qty int, unitMonthly float64) {

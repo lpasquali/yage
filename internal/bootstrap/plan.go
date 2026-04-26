@@ -106,10 +106,10 @@ func planPrePhase(w *os.File, cfg *config.Config) {
 	if cfg.Purge {
 		bullet(w, "PURGE: delete generated files + Terraform state, kind workload Cluster, capi-manifest Secret")
 	}
-	if cfg.RecreateProxmoxIdentities {
+	if cfg.Providers.Proxmox.RecreateIdentities {
 		bullet(w, "RECREATE_PROXMOX_IDENTITIES: tear down + reapply CAPI/CSI identity Terraform")
 	}
-	bullet(w, "ClusterSetID = %s (identity suffix: %s)", firstNonEmptyStr(cfg.ClusterSetID, "<generated>"), firstNonEmptyStr(cfg.ProxmoxIdentitySuffix, "<derived>"))
+	bullet(w, "ClusterSetID = %s (identity suffix: %s)", firstNonEmptyStr(cfg.ClusterSetID, "<generated>"), firstNonEmptyStr(cfg.Providers.Proxmox.IdentitySuffix, "<derived>"))
 }
 
 func planPhase1(w *os.File, cfg *config.Config) {
@@ -137,13 +137,13 @@ func planPhase1(w *os.File, cfg *config.Config) {
 
 func planPhase2Identity(w *os.File, cfg *config.Config) {
 	section(w, "Phase 2.0 — Proxmox identity bootstrap (OpenTofu)")
-	if cfg.ProxmoxAdminUsername == "" || cfg.ProxmoxAdminToken == "" {
+	if cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 		bullet(w, "interactive prompt (PROXMOX_ADMIN_USERNAME / PROXMOX_ADMIN_TOKEN unset)")
 	} else {
-		bullet(w, "admin: %s @ %s", cfg.ProxmoxAdminUsername, cfg.ProxmoxURL)
+		bullet(w, "admin: %s @ %s", cfg.Providers.Proxmox.AdminUsername, cfg.Providers.Proxmox.URL)
 	}
-	bullet(w, "tofu apply: create CAPI user '%s' + token prefix '%s'", cfg.ProxmoxCAPIUserID, cfg.ProxmoxCAPITokenPrefix)
-	bullet(w, "tofu apply: create CSI user '%s' + token prefix '%s'", cfg.ProxmoxCSIUserID, cfg.ProxmoxCSITokenPrefix)
+	bullet(w, "tofu apply: create CAPI user '%s' + token prefix '%s'", cfg.Providers.Proxmox.CAPIUserID, cfg.Providers.Proxmox.CAPITokenPrefix)
+	bullet(w, "tofu apply: create CSI user '%s' + token prefix '%s'", cfg.Providers.Proxmox.CSIUserID, cfg.Providers.Proxmox.CSITokenPrefix)
 	bullet(w, "outputs piped into clusterctl + CSI configs")
 }
 
@@ -183,22 +183,22 @@ func planPhase29Workload(w *os.File, cfg *config.Config) {
 	bullet(w, "workers: %s replica(s)", cfg.WorkerMachineCount)
 	bullet(w, "node IP range: %s, gateway: %s/%s, DNS: %s", cfg.NodeIPRanges, cfg.Gateway, cfg.IPPrefix, cfg.DNSServers)
 	bullet(w, "CP sizing: %s sockets × %s cores, %s MiB, %s %s GB",
-		cfg.ControlPlaneNumSockets, cfg.ControlPlaneNumCores, cfg.ControlPlaneMemoryMiB,
-		cfg.ControlPlaneBootVolumeDevice, cfg.ControlPlaneBootVolumeSize)
+		cfg.Providers.Proxmox.ControlPlaneNumSockets, cfg.Providers.Proxmox.ControlPlaneNumCores, cfg.Providers.Proxmox.ControlPlaneMemoryMiB,
+		cfg.Providers.Proxmox.ControlPlaneBootVolumeDevice, cfg.Providers.Proxmox.ControlPlaneBootVolumeSize)
 	bullet(w, "Worker sizing: %s sockets × %s cores, %s MiB, %s %s GB",
-		cfg.WorkerNumSockets, cfg.WorkerNumCores, cfg.WorkerMemoryMiB,
-		cfg.WorkerBootVolumeDevice, cfg.WorkerBootVolumeSize)
-	cpTpl := firstNonEmptyStr(cfg.WorkloadControlPlaneTemplateID, cfg.ProxmoxTemplateID)
-	wkTpl := firstNonEmptyStr(cfg.WorkloadWorkerTemplateID, cfg.ProxmoxTemplateID)
-	bullet(w, "Proxmox templates: control-plane=%s, worker=%s (catch-all PROXMOX_TEMPLATE_ID=%s)", cpTpl, wkTpl, cfg.ProxmoxTemplateID)
-	if cfg.ProxmoxPool != "" {
-		bullet(w, "Proxmox pool: %q (auto-created via admin API; tags VMs for ACLs/UI grouping)", cfg.ProxmoxPool)
+		cfg.Providers.Proxmox.WorkerNumSockets, cfg.Providers.Proxmox.WorkerNumCores, cfg.Providers.Proxmox.WorkerMemoryMiB,
+		cfg.Providers.Proxmox.WorkerBootVolumeDevice, cfg.Providers.Proxmox.WorkerBootVolumeSize)
+	cpTpl := firstNonEmptyStr(cfg.WorkloadControlPlaneTemplateID, cfg.Providers.Proxmox.TemplateID)
+	wkTpl := firstNonEmptyStr(cfg.WorkloadWorkerTemplateID, cfg.Providers.Proxmox.TemplateID)
+	bullet(w, "Proxmox templates: control-plane=%s, worker=%s (catch-all PROXMOX_TEMPLATE_ID=%s)", cpTpl, wkTpl, cfg.Providers.Proxmox.TemplateID)
+	if cfg.Providers.Proxmox.Pool != "" {
+		bullet(w, "Proxmox pool: %q (auto-created via admin API; tags VMs for ACLs/UI grouping)", cfg.Providers.Proxmox.Pool)
 	}
 	bullet(w, "Cilium HCP: kpr=%s, ingress=%s, hubble=%s, LB-IPAM=%s, GatewayAPI=%s",
 		cfg.CiliumKubeProxyReplacement, cfg.CiliumIngress, cfg.CiliumHubble, cfg.CiliumLBIPAM, cfg.CiliumGatewayAPIEnabled)
-	if cfg.ProxmoxCSIEnabled {
+	if cfg.Providers.Proxmox.CSIEnabled {
 		bullet(w, "Proxmox CSI on workload: chart %s/%s, namespace %s, StorageClass %s (default: %s)",
-			cfg.ProxmoxCSIChartName, cfg.ProxmoxCSIChartVersion, cfg.ProxmoxCSINamespace, cfg.ProxmoxCSIStorageClassName, cfg.ProxmoxCSIDefaultClass)
+			cfg.Providers.Proxmox.CSIChartName, cfg.Providers.Proxmox.CSIChartVersion, cfg.Providers.Proxmox.CSINamespace, cfg.Providers.Proxmox.CSIStorageClassName, cfg.Providers.Proxmox.CSIDefaultClass)
 	} else {
 		skip(w, "Proxmox CSI disabled (--disable-proxmox-csi)")
 	}
@@ -210,25 +210,25 @@ func planPhase295Pivot(w *os.File, cfg *config.Config) {
 		skip(w, "PIVOT_ENABLED=false (kind remains the management cluster)")
 		return
 	}
-	bullet(w, "provision mgmt Cluster '%s/%s' on Proxmox (k8s %s)", cfg.MgmtClusterNamespace, cfg.MgmtClusterName, cfg.MgmtKubernetesVersion)
+	bullet(w, "provision mgmt Cluster '%s/%s' on Proxmox (k8s %s)", cfg.Mgmt.ClusterNamespace, cfg.Mgmt.ClusterName, cfg.Mgmt.KubernetesVersion)
 	bullet(w, "  CP: %s replica(s), VIP %s:%s, range %s",
-		cfg.MgmtControlPlaneMachineCount, cfg.MgmtControlPlaneEndpointIP, cfg.MgmtControlPlaneEndpointPort, cfg.MgmtNodeIPRanges)
+		cfg.Mgmt.ControlPlaneMachineCount, cfg.Mgmt.ControlPlaneEndpointIP, cfg.Mgmt.ControlPlaneEndpointPort, cfg.Mgmt.NodeIPRanges)
 	bullet(w, "  CP sizing: %s sockets × %s cores, %s MiB",
-		cfg.MgmtControlPlaneNumSockets, cfg.MgmtControlPlaneNumCores, cfg.MgmtControlPlaneMemoryMiB)
-	mgmtCPTpl := firstNonEmptyStr(cfg.MgmtControlPlaneTemplateID, cfg.ProxmoxTemplateID)
-	mgmtWkTpl := firstNonEmptyStr(cfg.MgmtWorkerTemplateID, cfg.ProxmoxTemplateID)
+		cfg.Providers.Proxmox.Mgmt.ControlPlaneNumSockets, cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores, cfg.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB)
+	mgmtCPTpl := firstNonEmptyStr(cfg.Providers.Proxmox.Mgmt.ControlPlaneTemplateID, cfg.Providers.Proxmox.TemplateID)
+	mgmtWkTpl := firstNonEmptyStr(cfg.Providers.Proxmox.Mgmt.WorkerTemplateID, cfg.Providers.Proxmox.TemplateID)
 	bullet(w, "  Proxmox templates: control-plane=%s, worker=%s", mgmtCPTpl, mgmtWkTpl)
 	bullet(w, "  Cilium: hubble=%s, LB-IPAM=%s; CSI: %v",
-		cfg.MgmtCiliumHubble, cfg.MgmtCiliumLBIPAM, cfg.MgmtProxmoxCSIEnabled)
-	if cfg.MgmtProxmoxPool != "" {
-		bullet(w, "  Proxmox pool: %q (auto-created)", cfg.MgmtProxmoxPool)
+		cfg.Mgmt.CiliumHubble, cfg.Mgmt.CiliumLBIPAM, cfg.Providers.Proxmox.Mgmt.CSIEnabled)
+	if cfg.Providers.Proxmox.Mgmt.Pool != "" {
+		bullet(w, "  Proxmox pool: %q (auto-created)", cfg.Providers.Proxmox.Mgmt.Pool)
 	}
 	bullet(w, "clusterctl init on mgmt (idempotent)")
 	if cfg.PivotDryRun {
 		bullet(w, "clusterctl move --dry-run (logs plan, no state moves) — exit here")
 	} else {
 		bullet(w, "clusterctl move kind → mgmt for namespaces: %s, %s, proxmox-bootstrap-system",
-			cfg.WorkloadClusterNamespace, cfg.MgmtClusterNamespace)
+			cfg.WorkloadClusterNamespace, cfg.Mgmt.ClusterNamespace)
 		bullet(w, "handoff proxmox-bootstrap-system Secrets kind → mgmt")
 		bullet(w, "VerifyParity (timeout: %s)", cfg.PivotVerifyTimeout)
 		bullet(w, "rebind kind-%s context to mgmt kubeconfig (subsequent phases target mgmt)", cfg.KindClusterName)
@@ -372,7 +372,7 @@ func planAllocations(w *os.File, cfg *config.Config) {
 	a := capacity.AllocationsFor(cfg)
 	bullet(w, "total worker capacity:    %d millicores, %d MiB (workers=%s × %s sockets × %s cores × %s MiB)",
 		a.TotalCPUMillicores, a.TotalMemoryMiB,
-		cfg.WorkerMachineCount, cfg.WorkerNumSockets, cfg.WorkerNumCores, cfg.WorkerMemoryMiB)
+		cfg.WorkerMachineCount, cfg.Providers.Proxmox.WorkerNumSockets, cfg.Providers.Proxmox.WorkerNumCores, cfg.Providers.Proxmox.WorkerMemoryMiB)
 	bullet(w, "system-apps reserve:      %d millicores, %d MiB",
 		a.SystemAppsCPUMillicores, a.SystemAppsMemoryMiB)
 	bullet(w, "  ├─ argocd (operator + server + repo + redis), kyverno, cert-manager,")

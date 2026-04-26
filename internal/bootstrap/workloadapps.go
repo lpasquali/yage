@@ -57,13 +57,13 @@ func ApplyWorkloadArgoCDApplications(cfg *config.Config) {
 		))
 	}
 
-	if cfg.ProxmoxCSIEnabled {
+	if cfg.Providers.Proxmox.CSIEnabled {
 		csix.LoadVarsFromConfig(cfg)
-		if cfg.ProxmoxCSIURL == "" {
-			cfg.ProxmoxCSIURL = proxmox.APIJSONURL(cfg)
+		if cfg.Providers.Proxmox.CSIURL == "" {
+			cfg.Providers.Proxmox.CSIURL = proxmox.APIJSONURL(cfg)
 		}
-		if cfg.ProxmoxCSIURL == "" || cfg.ProxmoxCSITokenID == "" ||
-			cfg.ProxmoxCSITokenSecret == "" || cfg.ProxmoxRegion == "" {
+		if cfg.Providers.Proxmox.CSIURL == "" || cfg.Providers.Proxmox.CSITokenID == "" ||
+			cfg.Providers.Proxmox.CSITokenSecret == "" || cfg.Providers.Proxmox.Region == "" {
 			logx.Die("Proxmox CSI credentials incomplete — cannot render in-cluster Argo Application.")
 		}
 		csix.ApplyConfigSecretToWorkload(cfg, func() (string, error) {
@@ -82,23 +82,23 @@ storageClass:
     fstype: "%s"
     annotations:
       storageclass.kubernetes.io/is-default-class: "%s"
-`, cfg.WorkloadClusterName, cfg.ProxmoxCSIConfigProvider,
-			cfg.ProxmoxCSIStorageClassName, cfg.ProxmoxCSIStorage,
-			cfg.ProxmoxCSIReclaimPolicy, cfg.ProxmoxCSIFsType, cfg.ProxmoxCSIDefaultClass)
-		oci := strings.TrimSuffix(cfg.ProxmoxCSIChartRepoURL, "/")
-		if !strings.HasSuffix(oci, "/"+cfg.ProxmoxCSIChartName) {
-			oci += "/" + cfg.ProxmoxCSIChartName
+`, cfg.WorkloadClusterName, cfg.Providers.Proxmox.CSIConfigProvider,
+			cfg.Providers.Proxmox.CSIStorageClassName, cfg.Providers.Proxmox.CSIStorage,
+			cfg.Providers.Proxmox.CSIReclaimPolicy, cfg.Providers.Proxmox.CSIFsType, cfg.Providers.Proxmox.CSIDefaultClass)
+		oci := strings.TrimSuffix(cfg.Providers.Proxmox.CSIChartRepoURL, "/")
+		if !strings.HasSuffix(oci, "/"+cfg.Providers.Proxmox.CSIChartName) {
+			oci += "/" + cfg.Providers.Proxmox.CSIChartName
 		}
 		var h1P, h1K, h2P, h2K string
-		if cfg.ProxmoxCSISmokeEnabled && cfg.ArgoWorkloadPostsyncHooksEnabled {
+		if cfg.Providers.Proxmox.CSISmokeEnabled && cfg.ArgoWorkloadPostsyncHooksEnabled {
 			h1P = postsync.FullRelpath(cfg, "proxmox-csi-pvc")
 			h2P = postsync.FullRelpath(cfg, "proxmox-csi-rollout")
 			h1K = postsync.SmokeRenderKustomizeBlock(cfg)
 			h2K = postsync.KustomizeBlockForJob(cfg, "proxmox-csi-rollout-smoketest")
 		}
 		sb.WriteString(wlargocd.HelmOCI(cfg,
-			cfg.WorkloadClusterName+"-proxmox-csi", cfg.ProxmoxCSINamespace,
-			oci, cfg.ProxmoxCSIChartVersion, "-2", csiValues,
+			cfg.WorkloadClusterName+"-proxmox-csi", cfg.Providers.Proxmox.CSINamespace,
+			oci, cfg.Providers.Proxmox.CSIChartVersion, "-2", csiValues,
 			h1P, h1K, h2P, h2K))
 	}
 
@@ -220,7 +220,7 @@ func WaitForWorkloadArgoCDApplicationsHealthy(cfg *config.Config) {
 	}
 	var apps []string
 	add(&apps, cfg.EnableWorkloadMetricsServer, "metrics-server")
-	add(&apps, cfg.ProxmoxCSIEnabled, "proxmox-csi")
+	add(&apps, cfg.Providers.Proxmox.CSIEnabled, "proxmox-csi")
 	add(&apps, cfg.KyvernoEnabled, "kyverno")
 	add(&apps, cfg.CertManagerEnabled, "cert-manager")
 	add(&apps, cfg.CrossplaneEnabled, "crossplane")

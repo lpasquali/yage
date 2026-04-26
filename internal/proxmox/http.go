@@ -73,7 +73,7 @@ func statusCode(u, authValue string, insecure bool) int {
 
 // ResolveRegionAndNodeFromPVEAuth ports
 // _resolve_proxmox_region_and_node_from_pve_auth_value (L3361-L3459).
-// Fills empty cfg.ProxmoxNode and cfg.ProxmoxRegion by calling
+// Fills empty cfg.Providers.Proxmox.Node and cfg.Providers.Proxmox.Region by calling
 //
 //	GET /api2/json/nodes           (for local/all nodes)
 //	GET /api2/json/cluster/status  (for cluster name)
@@ -82,16 +82,16 @@ func statusCode(u, authValue string, insecure bool) int {
 // accepts one without the prefix and adds it). Silent no-op when already
 // populated, URL is empty, or auth is empty.
 func ResolveRegionAndNodeFromPVEAuth(cfg *config.Config, authValue string) error {
-	if cfg.ProxmoxURL == "" || authValue == "" {
+	if cfg.Providers.Proxmox.URL == "" || authValue == "" {
 		return nil
 	}
-	if cfg.ProxmoxRegion != "" && cfg.ProxmoxNode != "" {
+	if cfg.Providers.Proxmox.Region != "" && cfg.Providers.Proxmox.Node != "" {
 		return nil
 	}
 	base := strings.TrimRight(APIJSONURL(cfg), "/")
-	insecure := sysinfo.IsTrue(cfg.ProxmoxAdminInsecure)
+	insecure := sysinfo.IsTrue(cfg.Providers.Proxmox.AdminInsecure)
 
-	if cfg.ProxmoxNode == "" {
+	if cfg.Providers.Proxmox.Node == "" {
 		var np struct {
 			Data []struct {
 				Node  string `json:"node"`
@@ -113,15 +113,15 @@ func ResolveRegionAndNodeFromPVEAuth(cfg *config.Config, authValue string) error
 			}
 			switch {
 			case len(locals) > 0:
-				cfg.ProxmoxNode = locals[0]
+				cfg.Providers.Proxmox.Node = locals[0]
 			case len(all) > 0:
 				// Sort for deterministic pick (bash uses sorted()).
-				cfg.ProxmoxNode = minString(all)
+				cfg.Providers.Proxmox.Node = minString(all)
 			}
 		}
 	}
 
-	if cfg.ProxmoxRegion == "" {
+	if cfg.Providers.Proxmox.Region == "" {
 		var cp struct {
 			Data []struct {
 				Type string `json:"type"`
@@ -131,21 +131,21 @@ func ResolveRegionAndNodeFromPVEAuth(cfg *config.Config, authValue string) error
 		if err := fetchJSON(base+"/cluster/status", authValue, insecure, &cp); err == nil {
 			for _, it := range cp.Data {
 				if it.Type == "cluster" && it.Name != "" {
-					cfg.ProxmoxRegion = it.Name
+					cfg.Providers.Proxmox.Region = it.Name
 					break
 				}
 			}
 		}
-		if cfg.ProxmoxRegion == "" && cfg.ProxmoxNode != "" {
-			cfg.ProxmoxRegion = cfg.ProxmoxNode
+		if cfg.Providers.Proxmox.Region == "" && cfg.Providers.Proxmox.Node != "" {
+			cfg.Providers.Proxmox.Region = cfg.Providers.Proxmox.Node
 		}
 	}
 
-	if cfg.ProxmoxRegion != "" {
-		logx.Log("Derived PROXMOX_REGION from Proxmox API: %s", cfg.ProxmoxRegion)
+	if cfg.Providers.Proxmox.Region != "" {
+		logx.Log("Derived PROXMOX_REGION from Proxmox API: %s", cfg.Providers.Proxmox.Region)
 	}
-	if cfg.ProxmoxNode != "" {
-		logx.Log("Derived PROXMOX_NODE from Proxmox API: %s", cfg.ProxmoxNode)
+	if cfg.Providers.Proxmox.Node != "" {
+		logx.Log("Derived PROXMOX_NODE from Proxmox API: %s", cfg.Providers.Proxmox.Node)
 	}
 	return nil
 }
@@ -153,10 +153,10 @@ func ResolveRegionAndNodeFromPVEAuth(cfg *config.Config, authValue string) error
 // ResolveRegionAndNodeFromAdminAPI ports
 // resolve_proxmox_region_and_node_from_admin_api (L3461-L3464).
 func ResolveRegionAndNodeFromAdminAPI(cfg *config.Config) error {
-	if cfg.ProxmoxAdminUsername == "" || cfg.ProxmoxAdminToken == "" {
+	if cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 		return nil
 	}
-	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.ProxmoxAdminUsername, cfg.ProxmoxAdminToken)
+	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.Providers.Proxmox.AdminUsername, cfg.Providers.Proxmox.AdminToken)
 	return ResolveRegionAndNodeFromPVEAuth(cfg, auth)
 }
 
@@ -165,11 +165,11 @@ func ResolveRegionAndNodeFromAdminAPI(cfg *config.Config) error {
 // Uses PROXMOX_TOKEN + PROXMOX_SECRET (the CAPI token), normalising the
 // secret first.
 func ResolveRegionAndNodeFromClusterctlAPI(cfg *config.Config) error {
-	if cfg.ProxmoxToken == "" || cfg.ProxmoxSecret == "" {
+	if cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Secret == "" {
 		return nil
 	}
-	sec := NormalizeTokenSecret(cfg.ProxmoxSecret, cfg.ProxmoxToken)
-	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.ProxmoxToken, sec)
+	sec := NormalizeTokenSecret(cfg.Providers.Proxmox.Secret, cfg.Providers.Proxmox.Token)
+	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.Providers.Proxmox.Token, sec)
 	return ResolveRegionAndNodeFromPVEAuth(cfg, auth)
 }
 
@@ -181,19 +181,19 @@ func ResolveRegionAndNodeFromClusterctlAPI(cfg *config.Config) error {
 //
 // Dies on any non-200 (matches bash `die` on 401/000/other).
 func CheckAdminAPIConnectivity(cfg *config.Config) {
-	if cfg.ProxmoxURL == "" {
+	if cfg.Providers.Proxmox.URL == "" {
 		logx.Die("PROXMOX_URL is required for OpenTofu identity bootstrap.")
 	}
-	if cfg.ProxmoxAdminUsername == "" {
+	if cfg.Providers.Proxmox.AdminUsername == "" {
 		logx.Die("PROXMOX_ADMIN_USERNAME is required for OpenTofu identity bootstrap.")
 	}
-	if cfg.ProxmoxAdminToken == "" {
+	if cfg.Providers.Proxmox.AdminToken == "" {
 		logx.Die("PROXMOX_ADMIN_TOKEN is required for OpenTofu identity bootstrap.")
 	}
 
 	base := HostBaseURL(cfg)
-	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.ProxmoxAdminUsername, cfg.ProxmoxAdminToken)
-	insecure := sysinfo.IsTrue(cfg.ProxmoxAdminInsecure)
+	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.Providers.Proxmox.AdminUsername, cfg.Providers.Proxmox.AdminToken)
+	insecure := sysinfo.IsTrue(cfg.Providers.Proxmox.AdminInsecure)
 
 	logx.Log("Validating Proxmox admin API credentials at %s...", base)
 	switch code := statusCode(base+"/api2/json/version", auth, insecure); code {
@@ -230,8 +230,8 @@ func ResolveAvailableClusterSetIDForRoles(cfg *config.Config) error {
 		return nil
 	}
 	base := strings.TrimRight(APIJSONURL(cfg), "/")
-	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.ProxmoxAdminUsername, cfg.ProxmoxAdminToken)
-	insecure := sysinfo.IsTrue(cfg.ProxmoxAdminInsecure)
+	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.Providers.Proxmox.AdminUsername, cfg.Providers.Proxmox.AdminToken)
+	insecure := sysinfo.IsTrue(cfg.Providers.Proxmox.AdminInsecure)
 
 	type rolesResp struct {
 		Data []struct {
@@ -289,10 +289,10 @@ func ResolveAvailableClusterSetIDForRoles(cfg *config.Config) error {
 		return false
 	}
 
-	csiPrefix := cfg.ProxmoxCSITokenPrefix
-	capiPrefix := cfg.ProxmoxCAPITokenPrefix
-	explicitCSIUser := strings.TrimSpace(cfg.ProxmoxCSIUserID)
-	explicitCAPIUser := strings.TrimSpace(cfg.ProxmoxCAPIUserID)
+	csiPrefix := cfg.Providers.Proxmox.CSITokenPrefix
+	capiPrefix := cfg.Providers.Proxmox.CAPITokenPrefix
+	explicitCSIUser := strings.TrimSpace(cfg.Providers.Proxmox.CSIUserID)
+	explicitCAPIUser := strings.TrimSpace(cfg.Providers.Proxmox.CAPIUserID)
 
 	var candidate int
 	fmt.Sscanf(cfg.ClusterSetID, "%d", &candidate)
@@ -337,24 +337,24 @@ func ResolveAvailableClusterSetIDForRoles(cfg *config.Config) error {
 			oldSuffix := DeriveIdentitySuffix(oldSetID)
 			oldCSIUser := UserIDWithSuffix(DefaultCSIUserBase, oldSuffix)
 			oldCAPIUser := UserIDWithSuffix(DefaultCAPIUserBase, oldSuffix)
-			oldCSITokenID := TokenIDForSet(oldCSIUser, cfg.ProxmoxCSITokenPrefix, oldSuffix)
-			oldCAPITokenID := TokenIDForSet(oldCAPIUser, cfg.ProxmoxCAPITokenPrefix, oldSuffix)
+			oldCSITokenID := TokenIDForSet(oldCSIUser, cfg.Providers.Proxmox.CSITokenPrefix, oldSuffix)
+			oldCAPITokenID := TokenIDForSet(oldCAPIUser, cfg.Providers.Proxmox.CAPITokenPrefix, oldSuffix)
 
 			logx.Warn("CLUSTER_SET_ID=%s is already in use in Proxmox identity resources; using CLUSTER_SET_ID=%s.", cfg.ClusterSetID, resolved)
 			cfg.ClusterSetID = resolved
-			cfg.ProxmoxIdentitySuffix = DeriveIdentitySuffix(cfg.ClusterSetID)
+			cfg.Providers.Proxmox.IdentitySuffix = DeriveIdentitySuffix(cfg.ClusterSetID)
 
-			if cfg.ProxmoxCSIUserID == "" || cfg.ProxmoxCSIUserID == oldCSIUser {
-				cfg.ProxmoxCSIUserID = UserIDWithSuffix(DefaultCSIUserBase, cfg.ProxmoxIdentitySuffix)
+			if cfg.Providers.Proxmox.CSIUserID == "" || cfg.Providers.Proxmox.CSIUserID == oldCSIUser {
+				cfg.Providers.Proxmox.CSIUserID = UserIDWithSuffix(DefaultCSIUserBase, cfg.Providers.Proxmox.IdentitySuffix)
 			}
-			if cfg.ProxmoxCAPIUserID == "" || cfg.ProxmoxCAPIUserID == oldCAPIUser {
-				cfg.ProxmoxCAPIUserID = UserIDWithSuffix(DefaultCAPIUserBase, cfg.ProxmoxIdentitySuffix)
+			if cfg.Providers.Proxmox.CAPIUserID == "" || cfg.Providers.Proxmox.CAPIUserID == oldCAPIUser {
+				cfg.Providers.Proxmox.CAPIUserID = UserIDWithSuffix(DefaultCAPIUserBase, cfg.Providers.Proxmox.IdentitySuffix)
 			}
-			if cfg.ProxmoxCSITokenID == "" || cfg.ProxmoxCSITokenID == oldCSITokenID {
-				cfg.ProxmoxCSITokenID = TokenID(cfg.ProxmoxCSIUserID, cfg.ProxmoxCSITokenPrefix, cfg.ProxmoxIdentitySuffix)
+			if cfg.Providers.Proxmox.CSITokenID == "" || cfg.Providers.Proxmox.CSITokenID == oldCSITokenID {
+				cfg.Providers.Proxmox.CSITokenID = TokenID(cfg.Providers.Proxmox.CSIUserID, cfg.Providers.Proxmox.CSITokenPrefix, cfg.Providers.Proxmox.IdentitySuffix)
 			}
-			if cfg.ProxmoxToken == "" || cfg.ProxmoxToken == oldCAPITokenID {
-				cfg.ProxmoxToken = TokenID(cfg.ProxmoxCAPIUserID, cfg.ProxmoxCAPITokenPrefix, cfg.ProxmoxIdentitySuffix)
+			if cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Token == oldCAPITokenID {
+				cfg.Providers.Proxmox.Token = TokenID(cfg.Providers.Proxmox.CAPIUserID, cfg.Providers.Proxmox.CAPITokenPrefix, cfg.Providers.Proxmox.IdentitySuffix)
 			}
 			RefreshDerivedIdentityTokenIDs(cfg)
 			RefreshDerivedCiliumClusterID(cfg)
@@ -375,17 +375,17 @@ func EnsurePool(cfg *config.Config, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return nil
 	}
-	if cfg.ProxmoxAdminUsername == "" || cfg.ProxmoxAdminToken == "" {
+	if cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 		return fmt.Errorf("EnsurePool %s: admin credentials missing (PROXMOX_ADMIN_USERNAME / PROXMOX_ADMIN_TOKEN)", name)
 	}
 	base := strings.TrimRight(HostBaseURL(cfg), "/")
 	if base == "" {
 		return fmt.Errorf("EnsurePool %s: PROXMOX_URL is empty", name)
 	}
-	auth := "PVEAPIToken=" + cfg.ProxmoxAdminUsername + "=" + cfg.ProxmoxAdminToken
+	auth := "PVEAPIToken=" + cfg.Providers.Proxmox.AdminUsername + "=" + cfg.Providers.Proxmox.AdminToken
 
 	// Idempotency probe: GET /pools/<name> — 200 means it exists.
-	if statusCode(base+"/api2/json/pools/"+name, auth, isInsecure(cfg.ProxmoxAdminInsecure)) == 200 {
+	if statusCode(base+"/api2/json/pools/"+name, auth, isInsecure(cfg.Providers.Proxmox.AdminInsecure)) == 200 {
 		return nil
 	}
 
@@ -397,7 +397,7 @@ func EnsurePool(cfg *config.Config, name string) error {
 	}
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	c := httpClient(isInsecure(cfg.ProxmoxAdminInsecure))
+	c := httpClient(isInsecure(cfg.Providers.Proxmox.AdminInsecure))
 	resp, err := c.Do(req)
 	if err != nil {
 		return err

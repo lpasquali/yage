@@ -66,51 +66,51 @@ func RenderK3sManifest(cfg *config.Config, mgmt bool) string {
 
 // k3sValues builds the env-style map os.Expand walks. Field selection
 // branches on mgmt: workload uses cfg.WorkloadClusterName,
-// cfg.ControlPlane*, cfg.Worker*; mgmt uses cfg.MgmtClusterName,
+// cfg.ControlPlane*, cfg.Worker*; mgmt uses cfg.Mgmt.ClusterName,
 // cfg.MgmtControlPlane*, and the same Worker* fields (mgmt usually has
-// 0 workers; if MgmtWorkerMachineCount > 0 the worker block lands on
+// 0 workers; if Mgmt.WorkerMachineCount > 0 the worker block lands on
 // the same VM template as the workload).
 func k3sValues(cfg *config.Config, mgmt bool) map[string]string {
 	v := map[string]string{
-		"PROXMOX_URL":                       cfg.ProxmoxURL,
-		"PROXMOX_REGION":                    cfg.ProxmoxRegion,
-		"PROXMOX_NODE":                      cfg.ProxmoxNode,
-		"PROXMOX_TEMPLATE_ID":               cfg.ProxmoxTemplateID,
-		"PROXMOX_SOURCENODE":                stringOrEmpty(cfg.ProxmoxSourceNode, cfg.ProxmoxNode),
-		"BRIDGE":                            cfg.ProxmoxBridge,
-		"PROXMOX_CLOUDINIT_STORAGE":         cfg.ProxmoxCloudinitStorage,
-		"PROXMOX_MEMORY_ADJUSTMENT":         cfg.ProxmoxMemoryAdjustment,
+		"PROXMOX_URL":                       cfg.Providers.Proxmox.URL,
+		"PROXMOX_REGION":                    cfg.Providers.Proxmox.Region,
+		"PROXMOX_NODE":                      cfg.Providers.Proxmox.Node,
+		"PROXMOX_TEMPLATE_ID":               cfg.Providers.Proxmox.TemplateID,
+		"PROXMOX_SOURCENODE":                stringOrEmpty(cfg.Providers.Proxmox.SourceNode, cfg.Providers.Proxmox.Node),
+		"BRIDGE":                            cfg.Providers.Proxmox.Bridge,
+		"PROXMOX_CLOUDINIT_STORAGE":         cfg.Providers.Proxmox.CloudinitStorage,
+		"PROXMOX_MEMORY_ADJUSTMENT":         cfg.Providers.Proxmox.MemoryAdjustment,
 		"DNS_SERVERS":                       cfg.DNSServers,
 		"VM_SSH_KEYS":                       readAuthorizedKeysOrConfig(cfg),
 		// Pool is the Proxmox pool tag VMs land in. Workload uses
-		// ProxmoxPool; mgmt overrides below.
-		"PROXMOX_POOL":                      cfg.ProxmoxPool,
+		// Providers.Proxmox.Pool; mgmt overrides below.
+		"PROXMOX_POOL":                      cfg.Providers.Proxmox.Pool,
 	}
 	if mgmt {
-		v["NAMESPACE"] = cfg.MgmtClusterNamespace
-		v["CLUSTER_NAME"] = cfg.MgmtClusterName
-		v["PROXMOX_POOL"] = cfg.MgmtProxmoxPool
-		v["KUBERNETES_VERSION"] = cfg.MgmtKubernetesVersion
-		v["CONTROL_PLANE_MACHINE_COUNT"] = cfg.MgmtControlPlaneMachineCount
-		v["WORKER_MACHINE_COUNT"] = cfg.MgmtWorkerMachineCount
-		v["CONTROL_PLANE_ENDPOINT_IP"] = cfg.MgmtControlPlaneEndpointIP
-		v["CONTROL_PLANE_ENDPOINT_PORT"] = cfg.MgmtControlPlaneEndpointPort
-		v["NODE_IP_RANGES"] = cfg.MgmtNodeIPRanges
+		v["NAMESPACE"] = cfg.Mgmt.ClusterNamespace
+		v["CLUSTER_NAME"] = cfg.Mgmt.ClusterName
+		v["PROXMOX_POOL"] = cfg.Providers.Proxmox.Mgmt.Pool
+		v["KUBERNETES_VERSION"] = cfg.Mgmt.KubernetesVersion
+		v["CONTROL_PLANE_MACHINE_COUNT"] = cfg.Mgmt.ControlPlaneMachineCount
+		v["WORKER_MACHINE_COUNT"] = cfg.Mgmt.WorkerMachineCount
+		v["CONTROL_PLANE_ENDPOINT_IP"] = cfg.Mgmt.ControlPlaneEndpointIP
+		v["CONTROL_PLANE_ENDPOINT_PORT"] = cfg.Mgmt.ControlPlaneEndpointPort
+		v["NODE_IP_RANGES"] = cfg.Mgmt.NodeIPRanges
 		v["GATEWAY"] = cfg.Gateway
 		v["IP_PREFIX"] = cfg.IPPrefix
 		v["ALLOWED_NODES"] = cfg.AllowedNodes
-		v["CONTROL_PLANE_BOOT_VOLUME_DEVICE"] = cfg.MgmtControlPlaneBootVolumeDevice
-		v["CONTROL_PLANE_BOOT_VOLUME_SIZE"] = cfg.MgmtControlPlaneBootVolumeSize
-		v["CONTROL_PLANE_NUM_SOCKETS"] = cfg.MgmtControlPlaneNumSockets
-		v["CONTROL_PLANE_NUM_CORES"] = cfg.MgmtControlPlaneNumCores
-		v["CONTROL_PLANE_MEMORY_MIB"] = cfg.MgmtControlPlaneMemoryMiB
+		v["CONTROL_PLANE_BOOT_VOLUME_DEVICE"] = cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeDevice
+		v["CONTROL_PLANE_BOOT_VOLUME_SIZE"] = cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize
+		v["CONTROL_PLANE_NUM_SOCKETS"] = cfg.Providers.Proxmox.Mgmt.ControlPlaneNumSockets
+		v["CONTROL_PLANE_NUM_CORES"] = cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores
+		v["CONTROL_PLANE_MEMORY_MIB"] = cfg.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB
 		// Mgmt has no separate worker sizing; reuse workload's worker
 		// fields (the worker block likely has 0 replicas anyway).
-		v["WORKER_BOOT_VOLUME_DEVICE"] = cfg.WorkerBootVolumeDevice
-		v["WORKER_BOOT_VOLUME_SIZE"] = cfg.WorkerBootVolumeSize
-		v["WORKER_NUM_SOCKETS"] = cfg.WorkerNumSockets
-		v["WORKER_NUM_CORES"] = cfg.WorkerNumCores
-		v["WORKER_MEMORY_MIB"] = cfg.WorkerMemoryMiB
+		v["WORKER_BOOT_VOLUME_DEVICE"] = cfg.Providers.Proxmox.WorkerBootVolumeDevice
+		v["WORKER_BOOT_VOLUME_SIZE"] = cfg.Providers.Proxmox.WorkerBootVolumeSize
+		v["WORKER_NUM_SOCKETS"] = cfg.Providers.Proxmox.WorkerNumSockets
+		v["WORKER_NUM_CORES"] = cfg.Providers.Proxmox.WorkerNumCores
+		v["WORKER_MEMORY_MIB"] = cfg.Providers.Proxmox.WorkerMemoryMiB
 	} else {
 		v["NAMESPACE"] = cfg.WorkloadClusterNamespace
 		v["CLUSTER_NAME"] = cfg.WorkloadClusterName
@@ -123,16 +123,16 @@ func k3sValues(cfg *config.Config, mgmt bool) map[string]string {
 		v["GATEWAY"] = cfg.Gateway
 		v["IP_PREFIX"] = cfg.IPPrefix
 		v["ALLOWED_NODES"] = cfg.AllowedNodes
-		v["CONTROL_PLANE_BOOT_VOLUME_DEVICE"] = cfg.ControlPlaneBootVolumeDevice
-		v["CONTROL_PLANE_BOOT_VOLUME_SIZE"] = cfg.ControlPlaneBootVolumeSize
-		v["CONTROL_PLANE_NUM_SOCKETS"] = cfg.ControlPlaneNumSockets
-		v["CONTROL_PLANE_NUM_CORES"] = cfg.ControlPlaneNumCores
-		v["CONTROL_PLANE_MEMORY_MIB"] = cfg.ControlPlaneMemoryMiB
-		v["WORKER_BOOT_VOLUME_DEVICE"] = cfg.WorkerBootVolumeDevice
-		v["WORKER_BOOT_VOLUME_SIZE"] = cfg.WorkerBootVolumeSize
-		v["WORKER_NUM_SOCKETS"] = cfg.WorkerNumSockets
-		v["WORKER_NUM_CORES"] = cfg.WorkerNumCores
-		v["WORKER_MEMORY_MIB"] = cfg.WorkerMemoryMiB
+		v["CONTROL_PLANE_BOOT_VOLUME_DEVICE"] = cfg.Providers.Proxmox.ControlPlaneBootVolumeDevice
+		v["CONTROL_PLANE_BOOT_VOLUME_SIZE"] = cfg.Providers.Proxmox.ControlPlaneBootVolumeSize
+		v["CONTROL_PLANE_NUM_SOCKETS"] = cfg.Providers.Proxmox.ControlPlaneNumSockets
+		v["CONTROL_PLANE_NUM_CORES"] = cfg.Providers.Proxmox.ControlPlaneNumCores
+		v["CONTROL_PLANE_MEMORY_MIB"] = cfg.Providers.Proxmox.ControlPlaneMemoryMiB
+		v["WORKER_BOOT_VOLUME_DEVICE"] = cfg.Providers.Proxmox.WorkerBootVolumeDevice
+		v["WORKER_BOOT_VOLUME_SIZE"] = cfg.Providers.Proxmox.WorkerBootVolumeSize
+		v["WORKER_NUM_SOCKETS"] = cfg.Providers.Proxmox.WorkerNumSockets
+		v["WORKER_NUM_CORES"] = cfg.Providers.Proxmox.WorkerNumCores
+		v["WORKER_MEMORY_MIB"] = cfg.Providers.Proxmox.WorkerMemoryMiB
 	}
 	// Defensive: ensure CONTROL_PLANE_ENDPOINT_PORT has a value (the
 	// template doesn't carry a default). Same for IP_PREFIX.
@@ -166,7 +166,7 @@ func readAuthorizedKeysOrConfig(cfg *config.Config) string {
 }
 
 // MaterializeK3sManifest renders the K3s flavor and writes it to
-// destPath (typically cfg.CAPIManifest or cfg.MgmtCAPIManifest).
+// destPath (typically cfg.CAPIManifest or cfg.Mgmt.CAPIManifest).
 // Returns nil on success.
 func MaterializeK3sManifest(cfg *config.Config, mgmt bool, destPath string) error {
 	body := RenderK3sManifest(cfg, mgmt)

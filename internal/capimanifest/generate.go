@@ -59,27 +59,27 @@ func TryFillWorkloadInputsFromManagement(cfg *config.Config) {
 		return
 	}
 
-	if cfg.ProxmoxTemplateID == "" {
+	if cfg.Providers.Proxmox.TemplateID == "" {
 		idRE := regexp.MustCompile(`^[0-9]+$`)
 		for _, item := range pmtList.Items {
 			id, _, _ := unstructuredString(item.Object, "spec", "template", "spec", "templateID")
 			id = strings.TrimSpace(id)
 			if id != "" && idRE.MatchString(id) {
-				cfg.ProxmoxTemplateID = id
+				cfg.Providers.Proxmox.TemplateID = id
 				logx.Log("Set PROXMOX_TEMPLATE_ID=%s from an existing ProxmoxMachineTemplate on %s.", id, mctx)
 				break
 			}
 		}
 	}
 
-	if cfg.ProxmoxNode == "" {
+	if cfg.Providers.Proxmox.Node == "" {
 		for _, item := range pmtList.Items {
 			node, _, _ := unstructuredString(item.Object, "spec", "template", "spec", "sourceNode")
 			node = strings.TrimSpace(node)
 			if node != "" {
-				cfg.ProxmoxNode = node
+				cfg.Providers.Proxmox.Node = node
 				if !cfg.AllowedNodesExplicit && cfg.AllowedNodes == "" {
-					cfg.AllowedNodes = cfg.ProxmoxNode
+					cfg.AllowedNodes = cfg.Providers.Proxmox.Node
 				}
 				logx.Log("Set PROXMOX_NODE from ProxmoxMachineTemplate sourceNode on %s.", mctx)
 				break
@@ -266,16 +266,16 @@ func GenerateWorkloadManifestIfMissing(
 	}
 
 	var missing []string
-	if cfg.ProxmoxURL == "" {
+	if cfg.Providers.Proxmox.URL == "" {
 		missing = append(missing, "PROXMOX_URL")
 	}
-	if cfg.ProxmoxRegion == "" {
+	if cfg.Providers.Proxmox.Region == "" {
 		missing = append(missing, "PROXMOX_REGION")
 	}
-	if cfg.ProxmoxNode == "" {
+	if cfg.Providers.Proxmox.Node == "" {
 		missing = append(missing, "PROXMOX_NODE")
 	}
-	if cfg.ProxmoxTemplateID == "" {
+	if cfg.Providers.Proxmox.TemplateID == "" {
 		missing = append(missing, "PROXMOX_TEMPLATE_ID")
 	}
 	if len(missing) > 0 {
@@ -292,8 +292,8 @@ func GenerateWorkloadManifestIfMissing(
 		logx.Log("%s not found — generating workload cluster manifest with clusterctl...", cfg.CAPIManifest)
 	}
 
-	if cfg.ProxmoxCSIURL == "" {
-		cfg.ProxmoxCSIURL = proxmox.APIJSONURL(cfg)
+	if cfg.Providers.Proxmox.CSIURL == "" {
+		cfg.Providers.Proxmox.CSIURL = proxmox.APIJSONURL(cfg)
 	}
 
 	// K3s mode renders an embedded template (k3s_template.yaml). Upstream
@@ -323,10 +323,10 @@ func GenerateWorkloadManifestIfMissing(
 		logx.Die("clusterctl config is not available after bootstrap_sync_clusterctl_config_file (set PROXMOX_URL, PROXMOX_TOKEN, PROXMOX_SECRET, or CLUSTERCTL_CFG).")
 	}
 
-	bridge := cfg.ProxmoxBridge
-	sourceNode := cfg.ProxmoxSourceNode
+	bridge := cfg.Providers.Proxmox.Bridge
+	sourceNode := cfg.Providers.Proxmox.SourceNode
 	if sourceNode == "" {
-		sourceNode = cfg.ProxmoxNode
+		sourceNode = cfg.Providers.Proxmox.Node
 	}
 	sshKeys := cfg.VMSSHKeys
 	if sshKeys == "" {
@@ -354,12 +354,12 @@ func GenerateWorkloadManifestIfMissing(
 	// (K3s mode short-circuits above; reaching here means kubeadm.)
 	cmd := exec.Command("clusterctl", args...)
 	cmd.Env = append(os.Environ(),
-		"PROXMOX_URL="+cfg.ProxmoxURL,
-		"PROXMOX_REGION="+cfg.ProxmoxRegion,
-		"PROXMOX_NODE="+cfg.ProxmoxNode,
-		"PROXMOX_TEMPLATE_ID="+cfg.ProxmoxTemplateID,
-		"PROXMOX_POOL="+cfg.ProxmoxPool,
-		"TEMPLATE_VMID="+cfg.ProxmoxTemplateID,
+		"PROXMOX_URL="+cfg.Providers.Proxmox.URL,
+		"PROXMOX_REGION="+cfg.Providers.Proxmox.Region,
+		"PROXMOX_NODE="+cfg.Providers.Proxmox.Node,
+		"PROXMOX_TEMPLATE_ID="+cfg.Providers.Proxmox.TemplateID,
+		"PROXMOX_POOL="+cfg.Providers.Proxmox.Pool,
+		"TEMPLATE_VMID="+cfg.Providers.Proxmox.TemplateID,
 		"BRIDGE="+bridge,
 		"PROXMOX_SOURCENODE="+sourceNode,
 		"VM_SSH_KEYS="+sshKeys,
@@ -369,12 +369,12 @@ func GenerateWorkloadManifestIfMissing(
 		"IP_PREFIX="+cfg.IPPrefix,
 		"DNS_SERVERS="+cfg.DNSServers,
 		"ALLOWED_NODES="+cfg.AllowedNodes,
-		"PROXMOX_CLOUDINIT_STORAGE="+cfg.ProxmoxCloudinitStorage,
-		"BOOT_VOLUME_DEVICE="+cfg.WorkerBootVolumeDevice,
-		"BOOT_VOLUME_SIZE="+cfg.WorkerBootVolumeSize,
-		"NUM_SOCKETS="+cfg.WorkerNumSockets,
-		"NUM_CORES="+cfg.WorkerNumCores,
-		"MEMORY_MIB="+cfg.WorkerMemoryMiB,
+		"PROXMOX_CLOUDINIT_STORAGE="+cfg.Providers.Proxmox.CloudinitStorage,
+		"BOOT_VOLUME_DEVICE="+cfg.Providers.Proxmox.WorkerBootVolumeDevice,
+		"BOOT_VOLUME_SIZE="+cfg.Providers.Proxmox.WorkerBootVolumeSize,
+		"NUM_SOCKETS="+cfg.Providers.Proxmox.WorkerNumSockets,
+		"NUM_CORES="+cfg.Providers.Proxmox.WorkerNumCores,
+		"MEMORY_MIB="+cfg.Providers.Proxmox.WorkerMemoryMiB,
 	)
 	out, err := os.Create(tmpPath)
 	if err != nil {

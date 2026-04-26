@@ -33,10 +33,10 @@ func configYAMLHeader(cfg *config.Config) string {
 # VM_SSH_KEYS holds workload SSH *public* keys (comma-separated); they are not API secrets but are persisted for reproducible clusterctl runs.
 
 `,
-		cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapSecretNamespace,
-		cfg.ProxmoxBootstrapCAPMOXSecretName,
-		cfg.ProxmoxBootstrapCSISecretName,
-		cfg.ProxmoxBootstrapAdminSecretName, cfg.ProxmoxBootstrapAdminSecretKey,
+		cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapSecretNamespace,
+		cfg.Providers.Proxmox.BootstrapCAPMOXSecretName,
+		cfg.Providers.Proxmox.BootstrapCSISecretName,
+		cfg.Providers.Proxmox.BootstrapAdminSecretName, cfg.Providers.Proxmox.BootstrapAdminSecretKey,
 	)
 }
 
@@ -54,8 +54,8 @@ func configYAMLHeader(cfg *config.Config) string {
 //  4. capmox-system/capmox-manager-credentials — last-chance fallback
 //     for PROXMOX_URL/TOKEN/SECRET.
 //
-// Sets ProxmoxBootstrapKindSecretUsed=true when any Secret contributed
-// data, and ProxmoxKindCAPMOXActive=true when the capmox-system
+// Sets Providers.Proxmox.BootstrapKindSecretUsed=true when any Secret contributed
+// data, and Providers.Proxmox.KindCAPMOXActive=true when the capmox-system
 // Secret was the one that filled URL/token/secret.
 func MergeProxmoxBootstrapSecretsFromKind(cfg *config.Config) {
 	ctx, ok := kubectlx.ResolveBootstrapContext(cfg)
@@ -66,61 +66,61 @@ func MergeProxmoxBootstrapSecretsFromKind(cfg *config.Config) {
 	// --- 1. config.yaml ---
 	if applyConfigYAML(cfg, ctx) {
 		logx.Log("Merged bootstrap state from %s/%s (config.yaml: snapshot keys overlay in-cluster; CLI --*-explicit take precedence) on %s.",
-			cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapConfigSecretName, ctx)
-		cfg.ProxmoxBootstrapKindSecretUsed = true
+			cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapConfigSecretName, ctx)
+		cfg.Providers.Proxmox.BootstrapKindSecretUsed = true
 	}
 
 	// --- 2. credentials ---
 	var capmoxJSON, csiJSON, legacyJSON string
-	if cfg.ProxmoxBootstrapSecretName != "" {
-		legacyJSON = getSecretJSON(ctx, cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapSecretName)
+	if cfg.Providers.Proxmox.BootstrapSecretName != "" {
+		legacyJSON = getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapSecretName)
 	} else {
-		capmoxJSON = getSecretJSON(ctx, cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapCAPMOXSecretName)
-		csiJSON = getSecretJSON(ctx, cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapCSISecretName)
+		capmoxJSON = getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapCAPMOXSecretName)
+		csiJSON = getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapCSISecretName)
 		if capmoxJSON == "" && csiJSON == "" {
 			// Fallback to the pre-split Secret name.
-			legacyJSON = getSecretJSON(ctx, cfg.ProxmoxBootstrapSecretNamespace, "proxmox-bootstrap-credentials")
+			legacyJSON = getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, "proxmox-bootstrap-credentials")
 		}
 	}
 	if legacyJSON != "" {
 		if fillFromCredsJSON(cfg, legacyJSON, true) {
 			logx.Log("Filled unset values from cluster API secrets on %s (legacy or migration combined Secret).", ctx)
-			cfg.ProxmoxBootstrapKindSecretUsed = true
+			cfg.Providers.Proxmox.BootstrapKindSecretUsed = true
 		}
 	}
-	if cfg.ProxmoxBootstrapSecretName == "" && capmoxJSON != "" {
+	if cfg.Providers.Proxmox.BootstrapSecretName == "" && capmoxJSON != "" {
 		if fillFromCredsJSON(cfg, capmoxJSON, true) {
 			logx.Log("Filled unset values from %s/%s on %s.",
-				cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapCAPMOXSecretName, ctx)
-			cfg.ProxmoxBootstrapKindSecretUsed = true
+				cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapCAPMOXSecretName, ctx)
+			cfg.Providers.Proxmox.BootstrapKindSecretUsed = true
 		}
 	}
-	if cfg.ProxmoxBootstrapSecretName == "" && csiJSON != "" {
+	if cfg.Providers.Proxmox.BootstrapSecretName == "" && csiJSON != "" {
 		if fillFromCSIJSON(cfg, csiJSON) {
 			logx.Log("Filled unset values from %s/%s on %s.",
-				cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapCSISecretName, ctx)
-			cfg.ProxmoxBootstrapKindSecretUsed = true
+				cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapCSISecretName, ctx)
+			cfg.Providers.Proxmox.BootstrapKindSecretUsed = true
 		}
 	}
 
 	// --- 3. admin Secret (skip when same as legacy or same name already merged) ---
-	if cfg.ProxmoxBootstrapAdminSecretName != "" &&
-		(cfg.ProxmoxBootstrapSecretName == "" ||
-			cfg.ProxmoxBootstrapAdminSecretName != cfg.ProxmoxBootstrapSecretName) {
-		j := getSecretJSON(ctx, cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapAdminSecretName)
+	if cfg.Providers.Proxmox.BootstrapAdminSecretName != "" &&
+		(cfg.Providers.Proxmox.BootstrapSecretName == "" ||
+			cfg.Providers.Proxmox.BootstrapAdminSecretName != cfg.Providers.Proxmox.BootstrapSecretName) {
+		j := getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName)
 		if j != "" && fillFromAdminJSON(cfg, j) {
 			logx.Log("Filled unset values from %s/%s (OpenTofu / admin) on %s.",
-				cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapAdminSecretName, ctx)
-			cfg.ProxmoxBootstrapKindSecretUsed = true
+				cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName, ctx)
+			cfg.Providers.Proxmox.BootstrapKindSecretUsed = true
 		}
 	}
 
 	// --- 4. capmox-system/capmox-manager-credentials fallback ---
-	if cfg.ProxmoxURL == "" || cfg.ProxmoxToken == "" || cfg.ProxmoxSecret == "" {
+	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Secret == "" {
 		j := getSecretJSON(ctx, "capmox-system", "capmox-manager-credentials")
 		if j != "" && fillFromCapmoxManagerJSON(cfg, j) {
 			logx.Log("Filled unset CAPI Proxmox API values from capmox-system/capmox-manager-credentials on %s.", ctx)
-			cfg.ProxmoxKindCAPMOXActive = true
+			cfg.Providers.Proxmox.KindCAPMOXActive = true
 		}
 	}
 
@@ -135,7 +135,7 @@ func MergeProxmoxBootstrapSecretsFromKind(cfg *config.Config) {
 // legacy-key migrations, then overlays via Config.ApplySnapshotKV.
 // Returns true when something was applied.
 func applyConfigYAML(cfg *config.Config, ctx string) bool {
-	raw := getSecretJSON(ctx, cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapConfigSecretName)
+	raw := getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapConfigSecretName)
 	if raw == "" {
 		return false
 	}
@@ -339,59 +339,59 @@ func fillEmptyFromMap(cfg *config.Config, kv map[string]string) bool {
 	for k, v := range kv {
 		switch k {
 		case "PROXMOX_URL":
-			assign(&cfg.ProxmoxURL, v)
+			assign(&cfg.Providers.Proxmox.URL, v)
 		case "PROXMOX_TOKEN":
-			assign(&cfg.ProxmoxToken, v)
+			assign(&cfg.Providers.Proxmox.Token, v)
 		case "PROXMOX_SECRET":
-			assign(&cfg.ProxmoxSecret, v)
+			assign(&cfg.Providers.Proxmox.Secret, v)
 		case "PROXMOX_REGION":
-			assign(&cfg.ProxmoxRegion, v)
+			assign(&cfg.Providers.Proxmox.Region, v)
 		case "PROXMOX_NODE":
-			assign(&cfg.ProxmoxNode, v)
+			assign(&cfg.Providers.Proxmox.Node, v)
 		case "PROXMOX_SOURCENODE":
-			assign(&cfg.ProxmoxSourceNode, v)
+			assign(&cfg.Providers.Proxmox.SourceNode, v)
 		case "PROXMOX_TEMPLATE_ID":
-			assign(&cfg.ProxmoxTemplateID, v)
+			assign(&cfg.Providers.Proxmox.TemplateID, v)
 		case "PROXMOX_BRIDGE":
-			assign(&cfg.ProxmoxBridge, v)
+			assign(&cfg.Providers.Proxmox.Bridge, v)
 		case "PROXMOX_CSI_URL":
-			assign(&cfg.ProxmoxCSIURL, v)
+			assign(&cfg.Providers.Proxmox.CSIURL, v)
 		case "PROXMOX_CSI_TOKEN_ID":
-			assign(&cfg.ProxmoxCSITokenID, v)
+			assign(&cfg.Providers.Proxmox.CSITokenID, v)
 		case "PROXMOX_CSI_TOKEN_SECRET":
-			assign(&cfg.ProxmoxCSITokenSecret, v)
+			assign(&cfg.Providers.Proxmox.CSITokenSecret, v)
 		case "PROXMOX_CSI_USER_ID":
-			assign(&cfg.ProxmoxCSIUserID, v)
+			assign(&cfg.Providers.Proxmox.CSIUserID, v)
 		case "PROXMOX_CSI_TOKEN_PREFIX":
-			assign(&cfg.ProxmoxCSITokenPrefix, v)
+			assign(&cfg.Providers.Proxmox.CSITokenPrefix, v)
 		case "PROXMOX_CSI_INSECURE":
-			assign(&cfg.ProxmoxCSIInsecure, v)
+			assign(&cfg.Providers.Proxmox.CSIInsecure, v)
 		case "PROXMOX_CSI_STORAGE_CLASS_NAME":
-			assign(&cfg.ProxmoxCSIStorageClassName, v)
+			assign(&cfg.Providers.Proxmox.CSIStorageClassName, v)
 		case "PROXMOX_CSI_STORAGE":
-			assign(&cfg.ProxmoxCSIStorage, v)
+			assign(&cfg.Providers.Proxmox.CSIStorage, v)
 		case "PROXMOX_CSI_RECLAIM_POLICY":
-			assign(&cfg.ProxmoxCSIReclaimPolicy, v)
+			assign(&cfg.Providers.Proxmox.CSIReclaimPolicy, v)
 		case "PROXMOX_CSI_FSTYPE":
-			assign(&cfg.ProxmoxCSIFsType, v)
+			assign(&cfg.Providers.Proxmox.CSIFsType, v)
 		case "PROXMOX_CSI_DEFAULT_CLASS":
-			assign(&cfg.ProxmoxCSIDefaultClass, v)
+			assign(&cfg.Providers.Proxmox.CSIDefaultClass, v)
 		case "PROXMOX_CSI_TOPOLOGY_LABELS":
-			assign(&cfg.ProxmoxCSITopologyLabels, v)
+			assign(&cfg.Providers.Proxmox.CSITopologyLabels, v)
 		case "PROXMOX_TOPOLOGY_REGION":
-			assign(&cfg.ProxmoxTopologyRegion, v)
+			assign(&cfg.Providers.Proxmox.TopologyRegion, v)
 		case "PROXMOX_TOPOLOGY_ZONE":
-			assign(&cfg.ProxmoxTopologyZone, v)
+			assign(&cfg.Providers.Proxmox.TopologyZone, v)
 		case "PROXMOX_CAPI_USER_ID":
-			assign(&cfg.ProxmoxCAPIUserID, v)
+			assign(&cfg.Providers.Proxmox.CAPIUserID, v)
 		case "PROXMOX_CAPI_TOKEN_PREFIX":
-			assign(&cfg.ProxmoxCAPITokenPrefix, v)
+			assign(&cfg.Providers.Proxmox.CAPITokenPrefix, v)
 		case "PROXMOX_ADMIN_USERNAME":
-			assign(&cfg.ProxmoxAdminUsername, v)
+			assign(&cfg.Providers.Proxmox.AdminUsername, v)
 		case "PROXMOX_ADMIN_TOKEN":
-			assign(&cfg.ProxmoxAdminToken, v)
+			assign(&cfg.Providers.Proxmox.AdminToken, v)
 		case "PROXMOX_ADMIN_INSECURE":
-			assign(&cfg.ProxmoxAdminInsecure, v)
+			assign(&cfg.Providers.Proxmox.AdminInsecure, v)
 		}
 	}
 	return assigned
@@ -405,7 +405,7 @@ func ApplyBootstrapConfigToManagementCluster(cfg *config.Config) error {
 		logx.Warn("Skipping bootstrap config Secret apply — no kind management context in kubeconfig (set KIND_CLUSTER_NAME / --kind-cluster-name or kind export kubeconfig).")
 		return nil
 	}
-	key := cfg.ProxmoxBootstrapConfigSecretKey
+	key := cfg.Providers.Proxmox.BootstrapConfigSecretKey
 	if key == "" {
 		key = "config.yaml"
 	}
@@ -417,18 +417,18 @@ func ApplyBootstrapConfigToManagementCluster(cfg *config.Config) error {
 	}
 	bg := context.Background()
 
-	if err := cli.EnsureNamespace(bg, cfg.ProxmoxBootstrapSecretNamespace); err != nil {
+	if err := cli.EnsureNamespace(bg, cfg.Providers.Proxmox.BootstrapSecretNamespace); err != nil {
 		return err
 	}
 
 	// Server-side apply the Secret (idempotent equivalent of
 	// `kubectl create secret generic ... --dry-run=client -o yaml | kubectl apply -f -`).
-	if err := applySecret(bg, cli, cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapConfigSecretName,
+	if err := applySecret(bg, cli, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapConfigSecretName,
 		map[string][]byte{key: []byte(body)}, nil); err != nil {
-		logx.Die("Failed to apply %s on management cluster: %v", cfg.ProxmoxBootstrapConfigSecretName, err)
+		logx.Die("Failed to apply %s on management cluster: %v", cfg.Providers.Proxmox.BootstrapConfigSecretName, err)
 	}
 	logx.Log("Updated bootstrap config Secret %s/%s on %s (key %s: non-secret snapshot + file header; API tokens are in capmox/csi/admin Secrets in that namespace — never in this file).",
-		cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapConfigSecretName, kctx, key)
+		cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapConfigSecretName, kctx, key)
 	return nil
 }
 
@@ -440,7 +440,7 @@ func TryLoadBootstrapConfigFromKind(cfg *config.Config) {
 	if !ok {
 		return
 	}
-	raw := getSecretJSON(ctx, cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapConfigSecretName)
+	raw := getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapConfigSecretName)
 	if raw == "" {
 		logx.Warn("Bootstrap config secret not found or empty on %s. Will use env/CLI and save config after kind is up.", ctx)
 		return

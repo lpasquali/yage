@@ -6,7 +6,7 @@
 // estimator. Hetzner has no managed-Kubernetes service we model
 // today (CAPHV is unmanaged-only — the user's Hetzner Robot or a
 // managed-K8s partner is out of scope), so unlike AWS there's no
-// AWSMode-equivalent switch.
+// Providers.AWS.Mode-equivalent switch.
 //
 // What's wired:
 //
@@ -227,7 +227,7 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 }
 
 // PatchManifest is a no-op for Hetzner today. Future: map
-// cfg.ControlPlaneNumCores / Memory to a Hetzner instance type
+// cfg.Providers.Proxmox.ControlPlaneNumCores / Memory to a Hetzner instance type
 // (cx22 / cx32 / ccx33 …) and patch
 // HCloudMachineTemplate.spec.template.spec.type.
 func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {

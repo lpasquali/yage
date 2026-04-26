@@ -24,13 +24,13 @@ import (
 )
 
 // LoadVarsFromConfig ports load_csi_vars_from_config. Fills empty
-// cfg.ProxmoxCSI{URL,TokenID,TokenSecret} and cfg.ProxmoxRegion from the
+// cfg.ProxmoxCSI{URL,TokenID,TokenSecret} and cfg.Providers.Proxmox.Region from the
 // on-disk PROXMOX_CSI_CONFIG YAML when that file exists.
 func LoadVarsFromConfig(cfg *config.Config) {
-	if cfg.ProxmoxCSIConfig == "" {
+	if cfg.Providers.Proxmox.CSIConfig == "" {
 		return
 	}
-	raw, err := os.ReadFile(cfg.ProxmoxCSIConfig)
+	raw, err := os.ReadFile(cfg.Providers.Proxmox.CSIConfig)
 	if err != nil {
 		return
 	}
@@ -50,24 +50,24 @@ func LoadVarsFromConfig(cfg *config.Config) {
 		}
 		return ""
 	}
-	if cfg.ProxmoxCSIURL == "" {
-		cfg.ProxmoxCSIURL = find("url")
+	if cfg.Providers.Proxmox.CSIURL == "" {
+		cfg.Providers.Proxmox.CSIURL = find("url")
 	}
-	if cfg.ProxmoxCSITokenID == "" {
-		cfg.ProxmoxCSITokenID = find("token_id")
+	if cfg.Providers.Proxmox.CSITokenID == "" {
+		cfg.Providers.Proxmox.CSITokenID = find("token_id")
 	}
-	if cfg.ProxmoxCSITokenSecret == "" {
-		cfg.ProxmoxCSITokenSecret = find("token_secret")
+	if cfg.Providers.Proxmox.CSITokenSecret == "" {
+		cfg.Providers.Proxmox.CSITokenSecret = find("token_secret")
 	}
-	if cfg.ProxmoxRegion == "" {
-		cfg.ProxmoxRegion = find("region")
+	if cfg.Providers.Proxmox.Region == "" {
+		cfg.Providers.Proxmox.Region = find("region")
 	}
 }
 
 // ApplyConfigSecretToWorkload ports
 // apply_proxmox_csi_config_secret_to_workload_cluster
 // (L6096-L6140). Pushes a Secret named <cluster>-proxmox-csi-config into
-// cfg.ProxmoxCSINamespace on the workload, and mirrors the same content
+// cfg.Providers.Proxmox.CSINamespace on the workload, and mirrors the same content
 // under the short name proxmox-csi-config.
 func ApplyConfigSecretToWorkload(cfg *config.Config, writeWorkloadKubeconfig func() (string, error)) {
 	wk, err := writeWorkloadKubeconfig()
@@ -82,8 +82,8 @@ func ApplyConfigSecretToWorkload(cfg *config.Config, writeWorkloadKubeconfig fun
 	}
 	bg := context.Background()
 
-	if err := cli.EnsureNamespace(bg, cfg.ProxmoxCSINamespace); err != nil {
-		logx.Die("Failed to ensure namespace %s on the workload.", cfg.ProxmoxCSINamespace)
+	if err := cli.EnsureNamespace(bg, cfg.Providers.Proxmox.CSINamespace); err != nil {
+		logx.Die("Failed to ensure namespace %s on the workload.", cfg.Providers.Proxmox.CSINamespace)
 	}
 
 	cfgYAML := fmt.Sprintf(`features:
@@ -95,26 +95,26 @@ clusters:
     token_secret: "%s"
     region: "%s"
 `,
-		cfg.ProxmoxCSIConfigProvider,
-		cfg.ProxmoxCSIURL,
-		cfg.ProxmoxCSIInsecure,
-		cfg.ProxmoxCSITokenID,
-		cfg.ProxmoxCSITokenSecret,
-		cfg.ProxmoxRegion,
+		cfg.Providers.Proxmox.CSIConfigProvider,
+		cfg.Providers.Proxmox.CSIURL,
+		cfg.Providers.Proxmox.CSIInsecure,
+		cfg.Providers.Proxmox.CSITokenID,
+		cfg.Providers.Proxmox.CSITokenSecret,
+		cfg.Providers.Proxmox.Region,
 	)
 
 	secretName := cfg.WorkloadClusterName + "-proxmox-csi-config"
-	if err := applyConfigSecret(bg, cli, cfg.ProxmoxCSINamespace, secretName, cfgYAML); err != nil {
+	if err := applyConfigSecret(bg, cli, cfg.Providers.Proxmox.CSINamespace, secretName, cfgYAML); err != nil {
 		logx.Die("Failed to apply Proxmox CSI config Secret on workload cluster: %v", err)
 	}
 	// Mirror under the short name used by workload-app-of-apps default path.
 	if secretName != "proxmox-csi-config" {
-		if err := applyConfigSecret(bg, cli, cfg.ProxmoxCSINamespace, "proxmox-csi-config", cfgYAML); err != nil {
+		if err := applyConfigSecret(bg, cli, cfg.Providers.Proxmox.CSINamespace, "proxmox-csi-config", cfgYAML); err != nil {
 			logx.Die("Failed to apply proxmox-csi-config alias Secret on workload cluster: %v", err)
 		}
 	}
 	logx.Log("Applied %s (and proxmox-csi-config when names differ) — Proxmox API credentials in %s; Argo Application will not embed them.",
-		secretName, cfg.ProxmoxCSINamespace)
+		secretName, cfg.Providers.Proxmox.CSINamespace)
 }
 
 // applyConfigSecret server-side-applies a generic Secret holding a

@@ -21,20 +21,20 @@ import (
 // Cloud Billing API key" rather than fabricating a number.
 
 // EstimateMonthlyCostUSD computes a GCP bill against the live
-// Cloud Billing Catalog. Switches on cfg.GCPMode:
+// Cloud Billing Catalog. Switches on cfg.Providers.GCP.Mode:
 //   - "unmanaged" (default): self-managed Kubernetes on GCE.
 //   - "gke": GKE Standard managed control plane (live-priced) +
 //     GCE worker nodes.
 func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
-	region := orDefault(cfg.GCPRegion, "us-central1")
-	mode := orDefault(cfg.GCPMode, "unmanaged")
+	region := orDefault(cfg.Providers.GCP.Region, "us-central1")
+	mode := orDefault(cfg.Providers.GCP.Mode, "unmanaged")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
-	cpType := orDefault(cfg.GCPControlPlaneMachineType, "n2-standard-2")
-	wkType := orDefault(cfg.GCPNodeMachineType, "n2-standard-2")
+	cpType := orDefault(cfg.Providers.GCP.ControlPlaneMachineType, "n2-standard-2")
+	wkType := orDefault(cfg.Providers.GCP.NodeMachineType, "n2-standard-2")
 
-	cpDiskGB := atoiOr(cfg.ControlPlaneBootVolumeSize, 30)
-	wkDiskGB := atoiOr(cfg.WorkerBootVolumeSize, 40)
+	cpDiskGB := atoiOr(cfg.Providers.Proxmox.ControlPlaneBootVolumeSize, 30)
+	wkDiskGB := atoiOr(cfg.Providers.Proxmox.WorkerBootVolumeSize, 40)
 
 	pdBalanced, err := pricing.Fetch("gcp", "pd:balanced", region)
 	if err != nil {
@@ -102,13 +102,13 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	}
 
 	if cfg.PivotEnabled {
-		mcp := atoiOr(cfg.MgmtControlPlaneMachineCount, 1)
+		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mgmtType := "e2-medium"
 		mgmtPrice, err := liveGCEMonthly(mgmtType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: gcp mgmt %s/%s: %v", provider.ErrNotApplicable, mgmtType, region, err)
 		}
-		mgmtDisk := atoiOr(cfg.MgmtControlPlaneBootVolumeSize, 30)
+		mgmtDisk := atoiOr(cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize, 30)
 		items = append(items, provider.CostItem{
 			Name:           fmt.Sprintf("mgmt control-plane (%s)", mgmtType),
 			UnitUSDMonthly: mgmtPrice,
@@ -133,7 +133,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		total += it.SubtotalUSD
 	}
 
-	tierLabel := orDefault(cfg.GCPOverheadTier, "prod")
+	tierLabel := orDefault(cfg.Providers.GCP.OverheadTier, "prod")
 	noteBase := fmt.Sprintf("region %s, %s overhead tier (Cloud NAT/LB/Cloud Logging/Cloud DNS/egress).", region, tierLabel)
 	note := ""
 	switch mode {
@@ -197,7 +197,7 @@ func overheadDefaults(tier string) overheadCounts {
 }
 
 func addServiceOverhead(items []provider.CostItem, cfg *config.Config, region string) ([]provider.CostItem, error) {
-	tier := orDefault(cfg.GCPOverheadTier, "prod")
+	tier := orDefault(cfg.Providers.GCP.OverheadTier, "prod")
 	d := overheadDefaults(tier)
 
 	add := func(name string, qty int, unitMonthly float64) {

@@ -49,13 +49,13 @@ func stateFile() string { return filepath.Join(StateDir(), "terraform.tfstate") 
 
 // WriteEmbeddedFiles ports write_embedded_terraform_files. Creates
 // StateDir and writes the identity HCL to the configured filename
-// (cfg.ProxmoxIdentityTF, default: proxmox-identity.tf).
+// (cfg.Providers.Proxmox.IdentityTF, default: proxmox-identity.tf).
 func WriteEmbeddedFiles(cfg *config.Config) error {
 	dir := StateDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	name := cfg.ProxmoxIdentityTF
+	name := cfg.Providers.Proxmox.IdentityTF
 	if name == "" {
 		name = "proxmox-identity.tf"
 	}
@@ -93,9 +93,9 @@ func InstallBPGProvider(cfg *config.Config) error {
 func tofuEnv(cfg *config.Config) []string {
 	return append(
 		os.Environ(),
-		"PROXMOX_VE_ENDPOINT="+cfg.ProxmoxURL,
-		"PROXMOX_VE_API_TOKEN="+cfg.ProxmoxAdminUsername+"="+cfg.ProxmoxAdminToken,
-		"PROXMOX_VE_INSECURE="+cfg.ProxmoxAdminInsecure,
+		"PROXMOX_VE_ENDPOINT="+cfg.Providers.Proxmox.URL,
+		"PROXMOX_VE_API_TOKEN="+cfg.Providers.Proxmox.AdminUsername+"="+cfg.Providers.Proxmox.AdminToken,
+		"PROXMOX_VE_INSECURE="+cfg.Providers.Proxmox.AdminInsecure,
 	)
 }
 
@@ -113,11 +113,11 @@ func runTofu(cfg *config.Config, args ...string) error {
 // applyVars returns the standard -var flag set.
 func applyVars(cfg *config.Config) []string {
 	return []string{
-		"-var", "cluster_set_id=" + cfg.ProxmoxIdentitySuffix,
-		"-var", "csi_user_id=" + cfg.ProxmoxCSIUserID,
-		"-var", "csi_token_prefix=" + cfg.ProxmoxCSITokenPrefix,
-		"-var", "capi_user_id=" + cfg.ProxmoxCAPIUserID,
-		"-var", "capi_token_prefix=" + cfg.ProxmoxCAPITokenPrefix,
+		"-var", "cluster_set_id=" + cfg.Providers.Proxmox.IdentitySuffix,
+		"-var", "csi_user_id=" + cfg.Providers.Proxmox.CSIUserID,
+		"-var", "csi_token_prefix=" + cfg.Providers.Proxmox.CSITokenPrefix,
+		"-var", "capi_user_id=" + cfg.Providers.Proxmox.CAPIUserID,
+		"-var", "capi_token_prefix=" + cfg.Providers.Proxmox.CAPITokenPrefix,
 	}
 }
 
@@ -247,12 +247,12 @@ func ResolveRecreateContext(cfg *config.Config) {
 		if cfg.ClusterSetID == "" {
 			cfg.ClusterSetID = csID
 		}
-		cfg.ProxmoxCSIUserID = csiUser
-		cfg.ProxmoxCSITokenPrefix = csiPfx
-		cfg.ProxmoxCAPIUserID = capiUser
-		cfg.ProxmoxCAPITokenPrefix = capiPfx
-		if cfg.ProxmoxIdentitySuffix == "" {
-			cfg.ProxmoxIdentitySuffix = proxmox.DeriveIdentitySuffix(cfg.ClusterSetID)
+		cfg.Providers.Proxmox.CSIUserID = csiUser
+		cfg.Providers.Proxmox.CSITokenPrefix = csiPfx
+		cfg.Providers.Proxmox.CAPIUserID = capiUser
+		cfg.Providers.Proxmox.CAPITokenPrefix = capiPfx
+		if cfg.Providers.Proxmox.IdentitySuffix == "" {
+			cfg.Providers.Proxmox.IdentitySuffix = proxmox.DeriveIdentitySuffix(cfg.ClusterSetID)
 		}
 		logx.Log("Re-creation: identity from OpenTofu state (%s): cluster_set_id var=%s.", StateDir(), csID)
 		return
@@ -261,10 +261,10 @@ func ResolveRecreateContext(cfg *config.Config) {
 	if !proxmox.InferIdentityFromTokenIDs(cfg) {
 		logx.Die("Cannot resolve identity: restore %s or set PROXMOX_CSI_TOKEN_ID + PROXMOX_TOKEN to existing token *names* (user@pve!prefix-suffix) from Kubernetes Secrets.", stateFile())
 	}
-	if cfg.ProxmoxIdentitySuffix == "" {
+	if cfg.Providers.Proxmox.IdentitySuffix == "" {
 		logx.Die("Recreate: PROXMOX_IDENTITY_SUFFIX is empty after inference.")
 	}
-	logx.Log("Re-creation: inferred Proxmox identity suffix %s from token id format.", cfg.ProxmoxIdentitySuffix)
+	logx.Log("Re-creation: inferred Proxmox identity suffix %s from token id format.", cfg.Providers.Proxmox.IdentitySuffix)
 }
 
 // RecreateIdentities ports recreate_proxmox_identities_terraform
@@ -280,14 +280,14 @@ func RecreateIdentities(cfg *config.Config) error {
 	}
 	// ensure_proxmox_admin_config lives in the orchestrator, not here —
 	// callers should have run it before.
-	if cfg.ProxmoxURL == "" || cfg.ProxmoxAdminUsername == "" || cfg.ProxmoxAdminToken == "" {
+	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 		logx.Die("Recreate: need PROXMOX_URL, PROXMOX_ADMIN_USERNAME, PROXMOX_ADMIN_TOKEN (set env, kind Secret %s/%s, or PROXMOX_ADMIN_CONFIG to a legacy file).",
-			cfg.ProxmoxBootstrapSecretNamespace, cfg.ProxmoxBootstrapAdminSecretName)
+			cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName)
 	}
 	ResolveRecreateContext(cfg)
 	proxmox.ValidateClusterSetIDFormat(cfg)
-	if cfg.ProxmoxIdentitySuffix == "" {
-		cfg.ProxmoxIdentitySuffix = proxmox.DeriveIdentitySuffix(cfg.ClusterSetID)
+	if cfg.Providers.Proxmox.IdentitySuffix == "" {
+		cfg.Providers.Proxmox.IdentitySuffix = proxmox.DeriveIdentitySuffix(cfg.ClusterSetID)
 	}
 	proxmox.RefreshDerivedIdentityUserIDs(cfg)
 	proxmox.CheckAdminAPIConnectivity(cfg)
@@ -297,7 +297,7 @@ func RecreateIdentities(cfg *config.Config) error {
 	if err := runTofu(cfg, "init", "-upgrade"); err != nil {
 		return err
 	}
-	if sysinfo.IsTrue(boolStr(cfg.ProxmoxIdentityRecreateStateRm)) {
+	if sysinfo.IsTrue(boolStr(cfg.Providers.Proxmox.IdentityRecreateStateRm)) {
 		if err := StateRmAll(cfg); err != nil {
 			return err
 		}
@@ -307,7 +307,7 @@ func RecreateIdentities(cfg *config.Config) error {
 		}
 	} else {
 		var targets []string
-		scope := cfg.ProxmoxIdentityRecreateScope
+		scope := cfg.Providers.Proxmox.IdentityRecreateScope
 		if scope == "" {
 			scope = "both"
 		}
@@ -355,7 +355,7 @@ func RecreateIdentities(cfg *config.Config) error {
 // (L3284-L3290). After capmox-system and its webhook exist, re-push
 // in-cluster creds and restart the CAPMOX controller.
 func RecreateResyncCapmox(cfg *config.Config) {
-	if !cfg.RecreateProxmoxIdentities {
+	if !cfg.Providers.Proxmox.RecreateIdentities {
 		return
 	}
 	logx.Log("Re-syncing in-cluster CAPI/capmox credentials after Proxmox provider is installed (recreate mode)...")
@@ -366,11 +366,11 @@ func RecreateResyncCapmox(cfg *config.Config) {
 
 // RecreateIdentitiesWorkloadCSISecrets ports
 // recreate_identities_workload_csi_secrets (bash L3293-L3309). No-op
-// unless cfg.RecreateProxmoxIdentities is true. Applies the updated CSI
+// unless cfg.Providers.Proxmox.RecreateIdentities is true. Applies the updated CSI
 // config Secret to the workload, optionally restarts the CSI controller,
 // and final-syncs bootstrap config to kind.
 func RecreateIdentitiesWorkloadCSISecrets(cfg *config.Config) {
-	if !cfg.RecreateProxmoxIdentities {
+	if !cfg.Providers.Proxmox.RecreateIdentities {
 		return
 	}
 	if cfg.CAPIManifest != "" {
@@ -378,8 +378,8 @@ func RecreateIdentitiesWorkloadCSISecrets(cfg *config.Config) {
 		if err == nil && fi.Size() > 0 {
 			capimanifest.DiscoverWorkloadClusterIdentity(cfg, cfg.CAPIManifest)
 			if cfg.WorkloadClusterName != "" && cfg.WorkloadClusterNamespace != "" &&
-				cfg.ProxmoxCSIURL != "" && cfg.ProxmoxCSITokenID != "" &&
-				cfg.ProxmoxCSITokenSecret != "" && cfg.ProxmoxRegion != "" {
+				cfg.Providers.Proxmox.CSIURL != "" && cfg.Providers.Proxmox.CSITokenID != "" &&
+				cfg.Providers.Proxmox.CSITokenSecret != "" && cfg.Providers.Proxmox.Region != "" {
 				ctx := "kind-" + cfg.KindClusterName
 				csix.ApplyConfigSecretToWorkload(cfg, func() (string, error) {
 					return writeWorkloadKubeconfigToTemp(cfg, ctx)
@@ -393,7 +393,7 @@ func RecreateIdentitiesWorkloadCSISecrets(cfg *config.Config) {
 	} else {
 		logx.Warn("Skipping workload CSI config — no readable CAPI_MANIFEST; update %s-proxmox-csi-config on the workload by hand or pass --capi-manifest.", cfg.WorkloadClusterName)
 	}
-	if cfg.ProxmoxCSIEnabled {
+	if cfg.Providers.Proxmox.CSIEnabled {
 		kindsync.RolloutRestartProxmoxCSIOnWorkload(cfg)
 	}
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
@@ -449,13 +449,13 @@ func DestroyIdentity(cfg *config.Config) error {
 	if !shell.CommandExists("tofu") {
 		logx.Die("OpenTofu (tofu) is required to destroy existing Proxmox identity resources during purge.")
 	}
-	if cfg.ProxmoxURL == "" {
+	if cfg.Providers.Proxmox.URL == "" {
 		logx.Die("Cannot purge OpenTofu identities: PROXMOX_URL is required.")
 	}
-	if cfg.ProxmoxAdminUsername == "" {
+	if cfg.Providers.Proxmox.AdminUsername == "" {
 		logx.Die("Cannot purge OpenTofu identities: PROXMOX_ADMIN_USERNAME is required.")
 	}
-	if cfg.ProxmoxAdminToken == "" {
+	if cfg.Providers.Proxmox.AdminToken == "" {
 		logx.Die("Cannot purge OpenTofu identities: PROXMOX_ADMIN_TOKEN is required.")
 	}
 

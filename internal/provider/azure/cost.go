@@ -21,20 +21,20 @@ import (
 // dimension is unreachable — the orchestrator surfaces "Azure
 // estimate unavailable" rather than fabricate a number.
 //
-// Switches on cfg.AzureMode:
+// Switches on cfg.Providers.Azure.Mode:
 //   - "unmanaged" (default): self-managed Kubernetes on Azure VMs.
 //   - "aks": AKS-managed control plane (priced as a flat-fee SKU
 //     in the Retail Prices catalog) plus worker VMs.
 func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
-	region := orDefault(cfg.AzureLocation, "eastus")
-	mode := orDefault(cfg.AzureMode, "unmanaged")
+	region := orDefault(cfg.Providers.Azure.Location, "eastus")
+	mode := orDefault(cfg.Providers.Azure.Mode, "unmanaged")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
-	cpType := orDefault(cfg.AzureControlPlaneMachineType, "Standard_D2s_v3")
-	wkType := orDefault(cfg.AzureNodeMachineType, "Standard_D2s_v3")
+	cpType := orDefault(cfg.Providers.Azure.ControlPlaneMachineType, "Standard_D2s_v3")
+	wkType := orDefault(cfg.Providers.Azure.NodeMachineType, "Standard_D2s_v3")
 
-	cpDiskGB := atoiOr(cfg.ControlPlaneBootVolumeSize, 128)
-	wkDiskGB := atoiOr(cfg.WorkerBootVolumeSize, 128)
+	cpDiskGB := atoiOr(cfg.Providers.Proxmox.ControlPlaneBootVolumeSize, 128)
+	wkDiskGB := atoiOr(cfg.Providers.Proxmox.WorkerBootVolumeSize, 128)
 
 	premiumSSDGB, err := pricing.AzureManagedDiskUSDPerGBMonth(region, "Premium SSD Managed Disks")
 	if err != nil {
@@ -110,13 +110,13 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	}
 
 	if cfg.PivotEnabled {
-		mcp := atoiOr(cfg.MgmtControlPlaneMachineCount, 1)
+		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mgmtType := "Standard_B2s"
 		mgmtPrice, err := liveVMMonthly(mgmtType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: azure mgmt %s/%s: %v", provider.ErrNotApplicable, mgmtType, region, err)
 		}
-		mgmtDisk := atoiOr(cfg.MgmtControlPlaneBootVolumeSize, 64)
+		mgmtDisk := atoiOr(cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize, 64)
 		items = append(items, provider.CostItem{
 			Name:           fmt.Sprintf("mgmt control-plane (%s)", mgmtType),
 			UnitUSDMonthly: mgmtPrice,
@@ -142,7 +142,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		total += it.SubtotalUSD
 	}
 
-	tierLabel := orDefault(cfg.AzureOverheadTier, "prod")
+	tierLabel := orDefault(cfg.Providers.Azure.OverheadTier, "prod")
 	noteBase := fmt.Sprintf("region %s, %s overhead tier (NAT GW/LB/Public IP/Log Analytics/DNS/egress).", region, tierLabel)
 	note := ""
 	switch mode {
@@ -210,7 +210,7 @@ func azureOverheadDefaults(tier string) azureOverheadCounts {
 }
 
 func addAzureServiceOverhead(items []provider.CostItem, cfg *config.Config, region string) ([]provider.CostItem, error) {
-	tier := orDefault(cfg.AzureOverheadTier, "prod")
+	tier := orDefault(cfg.Providers.Azure.OverheadTier, "prod")
 	d := azureOverheadDefaults(tier)
 
 	if d.natGateways > 0 {

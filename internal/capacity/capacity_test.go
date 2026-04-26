@@ -17,15 +17,15 @@ func tinyHost() *HostCapacity {
 
 func defaultishCfg() *config.Config {
 	c := &config.Config{}
-	c.ControlPlaneNumSockets = "1"
-	c.ControlPlaneNumCores = "2"
-	c.ControlPlaneMemoryMiB = "4096"
-	c.ControlPlaneBootVolumeSize = "40"
+	c.Providers.Proxmox.ControlPlaneNumSockets = "1"
+	c.Providers.Proxmox.ControlPlaneNumCores = "2"
+	c.Providers.Proxmox.ControlPlaneMemoryMiB = "4096"
+	c.Providers.Proxmox.ControlPlaneBootVolumeSize = "40"
 	c.ControlPlaneMachineCount = "1"
-	c.WorkerNumSockets = "1"
-	c.WorkerNumCores = "2"
-	c.WorkerMemoryMiB = "4096"
-	c.WorkerBootVolumeSize = "40"
+	c.Providers.Proxmox.WorkerNumSockets = "1"
+	c.Providers.Proxmox.WorkerNumCores = "2"
+	c.Providers.Proxmox.WorkerMemoryMiB = "4096"
+	c.Providers.Proxmox.WorkerBootVolumeSize = "40"
 	c.WorkerMachineCount = "2"
 	return c
 }
@@ -108,8 +108,8 @@ func TestAllocationsOverReserved(t *testing.T) {
 func TestPivotAddsMgmt(t *testing.T) {
 	cfg := defaultishCfg()
 	cfg.PivotEnabled = true
-	cfg.MgmtControlPlaneMachineCount = "1"
-	cfg.MgmtWorkerMachineCount = "0"
+	cfg.Mgmt.ControlPlaneMachineCount = "1"
+	cfg.Mgmt.WorkerMachineCount = "0"
 	p := PlanForK3s(cfg)
 	hasMgmt := false
 	for _, it := range p.Items {

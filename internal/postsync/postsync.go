@@ -204,8 +204,8 @@ func SmokeKubectlOCITag(cfg *config.Config) string {
 
 // SmokeRenderKustomizeBlock ports proxmox_csi_smoke_render_kustomize_block.
 func SmokeRenderKustomizeBlock(cfg *config.Config) string {
-	ns := cfg.ProxmoxCSINamespace
-	sc := cfg.ProxmoxCSIStorageClassName
+	ns := cfg.Providers.Proxmox.CSINamespace
+	sc := cfg.Providers.Proxmox.CSIStorageClassName
 	img := ResolveKubectlImage(cfg)
 	return fmt.Sprintf(`    kustomize:
       namespace: %s

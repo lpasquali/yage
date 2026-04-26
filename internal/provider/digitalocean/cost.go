@@ -14,11 +14,11 @@ import (
 // balancers are not folded in yet (overhead-tier wiring would mirror
 // AWS/Azure/GCP — TODO when needed).
 func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
-	region := orDefault(cfg.DigitalOceanRegion, "nyc3")
+	region := orDefault(cfg.Providers.DigitalOcean.Region, "nyc3")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
-	cpType := orDefault(cfg.DigitalOceanControlPlaneSize, "s-2vcpu-4gb")
-	wkType := orDefault(cfg.DigitalOceanNodeSize, "s-2vcpu-4gb")
+	cpType := orDefault(cfg.Providers.DigitalOcean.ControlPlaneSize, "s-2vcpu-4gb")
+	wkType := orDefault(cfg.Providers.DigitalOcean.NodeSize, "s-2vcpu-4gb")
 
 	items := []provider.CostItem{}
 	if cp > 0 {

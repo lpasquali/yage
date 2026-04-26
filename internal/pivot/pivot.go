@@ -32,7 +32,7 @@ import (
 // (InstallCAPIOnManagement, MoveCAPIState, VerifyParity) can keep
 // using it.
 //
-// Inputs read: cfg.MgmtClusterName/Namespace, cfg.MgmtKubernetesVersion,
+// Inputs read: cfg.Mgmt.ClusterName/Namespace, cfg.Mgmt.KubernetesVersion,
 // cfg.MgmtControlPlane*, cfg.ClusterctlCfg (set by the kind init phase),
 // cfg.KindClusterName (kubeconfig context lookup).
 func EnsureManagementCluster(cfg *config.Config) (string, error) {
@@ -93,7 +93,7 @@ func EnsureManagementCluster(cfg *config.Config) (string, error) {
 		return "", fmt.Errorf("apply mgmt Cilium HelmChartProxy: %w", err)
 	}
 	logx.Log("Applied HelmChartProxy %s-caaph-cilium for management cluster (Cilium delivered to mgmt by CAAPH).",
-		cfg.MgmtClusterName)
+		cfg.Mgmt.ClusterName)
 
 	// Live-patch the labels on the existing mgmt Cluster object too
 	// so CAAPH picks the labels up immediately (the manifest patch
@@ -105,16 +105,16 @@ func EnsureManagementCluster(cfg *config.Config) (string, error) {
 	// 4) Wait for the mgmt cluster to come Available. Same poll loop
 	//    used for the workload cluster (60-minute ceiling).
 	logx.Log("Waiting for management cluster %s/%s Available…",
-		cfg.MgmtClusterNamespace, cfg.MgmtClusterName)
+		cfg.Mgmt.ClusterNamespace, cfg.Mgmt.ClusterName)
 	if err := waitClusterAvailable(cli, context.Background(),
-		cfg.MgmtClusterNamespace, cfg.MgmtClusterName, 60*time.Minute); err != nil {
+		cfg.Mgmt.ClusterNamespace, cfg.Mgmt.ClusterName, 60*time.Minute); err != nil {
 		return "", fmt.Errorf("management cluster did not become Available: %w", err)
 	}
-	logx.Log("Management cluster %s reached Available=True.", cfg.MgmtClusterName)
+	logx.Log("Management cluster %s reached Available=True.", cfg.Mgmt.ClusterName)
 
 	// 5) Fetch the kubeconfig Secret. CAPI writes
 	//    <name>-kubeconfig in the same namespace as the Cluster.
-	kcfgPath, err := fetchManagementKubeconfig(cli, cfg.MgmtClusterNamespace, cfg.MgmtClusterName)
+	kcfgPath, err := fetchManagementKubeconfig(cli, cfg.Mgmt.ClusterNamespace, cfg.Mgmt.ClusterName)
 	if err != nil {
 		return "", fmt.Errorf("fetch mgmt kubeconfig: %w", err)
 	}
@@ -158,7 +158,7 @@ func VerifyParity(cfg *config.Config, mgmtKubeconfig string) error {
 		"proxmox-bootstrap-csi-credentials",
 		"proxmox-bootstrap-admin-credentials",
 	}
-	bsNS := cfg.ProxmoxBootstrapSecretNamespace
+	bsNS := cfg.Providers.Proxmox.BootstrapSecretNamespace
 	if bsNS == "" {
 		bsNS = "proxmox-bootstrap-system"
 	}
@@ -348,19 +348,19 @@ func maybeBase64(b []byte) bool {
 // wrote into the manifest. Same shape as
 // caaph.PatchClusterCAAPHHelmLabels' live-patch tail.
 func patchLiveMgmtClusterLabels(cfg *config.Config, kindCli *k8sclient.Client) error {
-	if cfg.MgmtClusterName == "" || cfg.MgmtClusterNamespace == "" {
+	if cfg.Mgmt.ClusterName == "" || cfg.Mgmt.ClusterNamespace == "" {
 		return nil
 	}
-	port := cfg.MgmtControlPlaneEndpointPort
+	port := cfg.Mgmt.ControlPlaneEndpointPort
 	if port == "" {
 		port = "6443"
 	}
 	patchLabels := map[string]string{"caaph": "enabled"}
-	if cfg.MgmtCiliumClusterID != "" {
-		patchLabels["caaph.cilium.cluster-id"] = cfg.MgmtCiliumClusterID
+	if cfg.Mgmt.CiliumClusterID != "" {
+		patchLabels["caaph.cilium.cluster-id"] = cfg.Mgmt.CiliumClusterID
 	}
-	if cfg.MgmtControlPlaneEndpointIP != "" {
-		patchLabels["caaph.cilium.k8s-service-host"] = cfg.MgmtControlPlaneEndpointIP
+	if cfg.Mgmt.ControlPlaneEndpointIP != "" {
+		patchLabels["caaph.cilium.k8s-service-host"] = cfg.Mgmt.ControlPlaneEndpointIP
 	}
 	patchLabels["caaph.cilium.k8s-service-port"] = port
 
@@ -372,8 +372,8 @@ func patchLiveMgmtClusterLabels(cfg *config.Config, kindCli *k8sclient.Client) e
 	}
 	bg := context.Background()
 	_, err = kindCli.Dynamic.Resource(mapping.Resource).
-		Namespace(cfg.MgmtClusterNamespace).
-		Patch(bg, cfg.MgmtClusterName, "application/merge-patch+json", body, metav1.PatchOptions{
+		Namespace(cfg.Mgmt.ClusterNamespace).
+		Patch(bg, cfg.Mgmt.ClusterName, "application/merge-patch+json", body, metav1.PatchOptions{
 			FieldManager: k8sclient.FieldManager,
 		})
 	return err

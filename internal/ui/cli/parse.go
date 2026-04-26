@@ -561,10 +561,10 @@ func Parse(c *config.Config, argv []string) {
 		case "--infra-provider", "--infrastructure-provider":
 			// Sets the active infrastructure provider. Mirrors the
 			// INFRA_PROVIDER env var (which Load() reads at startup).
-			// usage.txt has long referenced --infrastructure-provider as
-			// if it existed — this commit makes it real.
+			// No silent default — main() rejects an empty value and
+			// directs the user at --xapiri or this flag (§18).
 			c.InfraProvider = strings.ToLower(strings.TrimSpace(shiftVal(a)))
-			c.InfraProviderDefaulted = false // explicit choice — silence the §18 notice
+			c.InfraProviderDefaulted = false // explicit choice
 		case "-h", "--help":
 			PrintUsage(nil)
 			os.Exit(0)

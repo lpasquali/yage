@@ -354,10 +354,11 @@ func registered() []string {
 
 // For is a convenience: reads cfg.InfraProvider and returns the
 // matching implementation. Errors when the named provider isn't
-// registered or cfg.InfraProvider is empty (the §18 legacy
-// "" → "proxmox" fallback was dropped — config.Load() already
-// defaults to "proxmox" with a one-line stderr notice; reaching
-// For() with an empty name now means a programming error).
+// registered or cfg.InfraProvider is empty. There is no silent
+// default — main() rejects an empty InfraProvider before reaching
+// the orchestrator (see docs/abstraction-plan.md §18 and
+// cmd/yage/main.go), so reaching For() with name == "" indicates
+// a programming error in a code path that bypassed main().
 //
 // When cfg.Airgapped is true and the resolved provider needs the
 // internet (any cloud provider — see AirgapCompatible), For()

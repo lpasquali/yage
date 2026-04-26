@@ -75,15 +75,6 @@ func main() {
 	})
 	pricing.SetAirgapped(cfg.Airgapped)
 
-	// One-liner when the active infrastructure provider was
-	// silently defaulted (no INFRA_PROVIDER env, no --infra-provider
-	// flag). yage was Proxmox-only originally; in the multi-cloud
-	// era this default is a vestige that surprises new users. See
-	// docs/abstraction-plan.md §18.
-	if cfg.InfraProviderDefaulted {
-		fmt.Fprintln(os.Stderr, "ℹ INFRA_PROVIDER not set — defaulting to 'proxmox'. Pick one explicitly with --infra-provider <name> (proxmox, aws, azure, gcp, hetzner, openstack, vsphere, capd, …) or set INFRA_PROVIDER=<name>.")
-	}
-
 	// Warn when --airgapped is set without an internal image
 	// mirror — clusterctl will then try to pull CAPI provider
 	// images from the public registries and fail. See §17 follow-up.
@@ -91,6 +82,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "⚠ --airgapped is set but --image-registry-mirror is empty; clusterctl will try to pull CAPI provider images from public registries and likely fail. Set --image-registry-mirror <host/path> or YAGE_IMAGE_REGISTRY_MIRROR.")
 	}
 
+	// Pre-orchestrator escape hatches — neither needs InfraProvider:
+	//   --xapiri   walks the user through on-prem/cloud and sets it
+	//   --print-pricing-setup is informational, not a deploy
 	if cfg.Xapiri {
 		os.Exit(xapiri.Run(os.Stdout, cfg))
 	}
@@ -106,5 +100,19 @@ func main() {
 		}
 		return
 	}
+
+	// No silent default. yage was Proxmox-only originally; in the
+	// multi-cloud era a silent fallback is a footgun. The user
+	// must opt into a provider explicitly — or run --xapiri to
+	// pick one through the TUI. See docs/abstraction-plan.md §18.
+	if cfg.InfraProvider == "" {
+		fmt.Fprintln(os.Stderr, "✗ no infrastructure provider selected.")
+		fmt.Fprintln(os.Stderr, "  Pick one with --infra-provider <name> or INFRA_PROVIDER=<name>")
+		fmt.Fprintln(os.Stderr, "  (proxmox, aws, azure, gcp, hetzner, openstack, vsphere, capd,")
+		fmt.Fprintln(os.Stderr, "   digitalocean, linode, oci, ibmcloud), or run `yage --xapiri`")
+		fmt.Fprintln(os.Stderr, "  to be walked through on-prem vs cloud and pick interactively.")
+		os.Exit(2)
+	}
+
 	os.Exit(orchestrator.Run(cfg))
 }

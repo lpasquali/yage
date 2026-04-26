@@ -1,4 +1,4 @@
-package proxmox
+package pveapi
 
 import (
 	"crypto/tls"

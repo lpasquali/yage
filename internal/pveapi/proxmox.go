@@ -1,11 +1,25 @@
-// Package proxmox ports Proxmox identity / token / URL helpers from
-// the original bash port. Pure-logic helpers (no HTTP, no exec) live here.
-// HTTP-backed helpers (resolve_available_cluster_set_id_for_roles,
-// _resolve_proxmox_region_and_node_from_pve_auth_value) are stubbed until
-// their calling phases are ported — they need the management cluster /
-// Proxmox API to be reachable, so adding them without the orchestration
-// around them would not be useful.
-package proxmox
+// Package pveapi is the low-level Proxmox VE HTTP client and helper
+// suite (URL parsing, token shape, region/node decoding, identity
+// hashing). It is the *implementation* layer that the Provider
+// abstraction (internal/provider/proxmox) sits on top of.
+//
+// The package was previously named `proxmox` and lived at
+// `internal/proxmox/`. That name collided with `internal/provider/
+// proxmox/` (the Provider plugin), so importing files routinely
+// aliased it to `pveapi`. Renamed to make that the canonical name.
+//
+// Direct importers fall in two camps:
+//   - `internal/provider/proxmox/`: the Provider plugin uses these
+//     helpers to satisfy the Provider interface.
+//   - Orchestrator-side packages (`internal/bootstrap`, `kindsync`,
+//     `caaph`, `capimanifest`, `opentofux`): use the helpers
+//     directly during phases that haven't yet moved behind the
+//     Provider interface.
+//
+// As phases B–E land, the orchestrator-side direct imports should
+// shrink — eventually only the Provider plugin should reach into
+// pveapi.
+package pveapi
 
 import (
 	"crypto/rand"

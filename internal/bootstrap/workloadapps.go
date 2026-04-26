@@ -16,7 +16,7 @@ import (
 	"github.com/lpasquali/yage/internal/k8sclient"
 	"github.com/lpasquali/yage/internal/logx"
 	"github.com/lpasquali/yage/internal/postsync"
-	"github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/pveapi"
 	"github.com/lpasquali/yage/internal/wlargocd"
 )
 
@@ -60,7 +60,7 @@ func ApplyWorkloadArgoCDApplications(cfg *config.Config) {
 	if cfg.Providers.Proxmox.CSIEnabled {
 		csix.LoadVarsFromConfig(cfg)
 		if cfg.Providers.Proxmox.CSIURL == "" {
-			cfg.Providers.Proxmox.CSIURL = proxmox.APIJSONURL(cfg)
+			cfg.Providers.Proxmox.CSIURL = pveapi.APIJSONURL(cfg)
 		}
 		if cfg.Providers.Proxmox.CSIURL == "" || cfg.Providers.Proxmox.CSITokenID == "" ||
 			cfg.Providers.Proxmox.CSITokenSecret == "" || cfg.Providers.Proxmox.Region == "" {

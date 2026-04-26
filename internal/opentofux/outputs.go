@@ -7,7 +7,7 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/kindsync"
 	"github.com/lpasquali/yage/internal/logx"
-	"github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/pveapi"
 )
 
 // GenerateConfigsFromOutputs ports generate_configs_from_terraform_outputs
@@ -16,16 +16,16 @@ import (
 // CSITokenID,CSITokenSecret,CSIURL}, refreshes derived identity token
 // IDs, and syncs the state to kind + local files.
 func GenerateConfigsFromOutputs(cfg *config.Config) {
-	csiAPIURL := proxmox.APIJSONURL(cfg)
+	csiAPIURL := pveapi.APIJSONURL(cfg)
 	capiTokenID := GetOutput("capi_token_id")
 	capiTokenSec := GetOutput("capi_token_secret")
 	csiTokenID := GetOutput("csi_token_id")
 	csiTokenSec := GetOutput("csi_token_secret")
 
-	capiTokenSec = proxmox.NormalizeTokenSecret(capiTokenSec, capiTokenID)
-	csiTokenSec = proxmox.NormalizeTokenSecret(csiTokenSec, csiTokenID)
-	proxmox.ValidateTokenSecret("OpenTofu capi_token_secret", capiTokenSec)
-	proxmox.ValidateTokenSecret("OpenTofu csi_token_secret", csiTokenSec)
+	capiTokenSec = pveapi.NormalizeTokenSecret(capiTokenSec, capiTokenID)
+	csiTokenSec = pveapi.NormalizeTokenSecret(csiTokenSec, csiTokenID)
+	pveapi.ValidateTokenSecret("OpenTofu capi_token_secret", capiTokenSec)
+	pveapi.ValidateTokenSecret("OpenTofu csi_token_secret", csiTokenSec)
 
 	cfg.Providers.Proxmox.Token = capiTokenID
 	cfg.Providers.Proxmox.Secret = capiTokenSec
@@ -34,7 +34,7 @@ func GenerateConfigsFromOutputs(cfg *config.Config) {
 	if cfg.Providers.Proxmox.CSIURL == "" {
 		cfg.Providers.Proxmox.CSIURL = csiAPIURL
 	}
-	proxmox.RefreshDerivedIdentityTokenIDs(cfg)
+	pveapi.RefreshDerivedIdentityTokenIDs(cfg)
 
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
 	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
@@ -52,7 +52,7 @@ func GenerateConfigsFromOutputs(cfg *config.Config) {
 // and syncs bootstrap state to kind, plus logs a summary of which
 // Secrets hold what.
 func WriteClusterctlConfigIfMissing(cfg *config.Config) {
-	proxmox.RefreshDerivedIdentityTokenIDs(cfg)
+	pveapi.RefreshDerivedIdentityTokenIDs(cfg)
 	if cfg.ClusterctlCfgFilePresent() {
 		return
 	}
@@ -82,7 +82,7 @@ func WriteClusterctlConfigIfMissing(cfg *config.Config) {
 // yet exist AND PersistLocalSecrets is true. Writes the proxmox-csi
 // Helm values YAML with the current cfg.ProxmoxCSI* fields.
 func WriteCSIConfigIfMissing(cfg *config.Config) {
-	proxmox.RefreshDerivedIdentityTokenIDs(cfg)
+	pveapi.RefreshDerivedIdentityTokenIDs(cfg)
 	if cfg.Providers.Proxmox.CSIConfig == "" {
 		return
 	}
@@ -93,7 +93,7 @@ func WriteCSIConfigIfMissing(cfg *config.Config) {
 		return
 	}
 	if cfg.Providers.Proxmox.CSIURL == "" {
-		cfg.Providers.Proxmox.CSIURL = proxmox.APIJSONURL(cfg)
+		cfg.Providers.Proxmox.CSIURL = pveapi.APIJSONURL(cfg)
 	}
 	if cfg.Providers.Proxmox.CSITokenID == "" || cfg.Providers.Proxmox.CSITokenSecret == "" || cfg.Providers.Proxmox.Region == "" {
 		return

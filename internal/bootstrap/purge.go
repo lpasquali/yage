@@ -22,7 +22,7 @@ import (
 	"github.com/lpasquali/yage/internal/kindsync"
 	"github.com/lpasquali/yage/internal/logx"
 	"github.com/lpasquali/yage/internal/opentofux"
-	"github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/pveapi"
 	"github.com/lpasquali/yage/internal/shell"
 )
 
@@ -503,4 +503,4 @@ func nonEmptyLines(s string) []string {
 }
 
 var _ = kindsync.SyncBootstrapConfigToKind
-var _ = proxmox.APIJSONURL
+var _ = pveapi.APIJSONURL

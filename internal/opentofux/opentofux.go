@@ -33,7 +33,7 @@ import (
 	"github.com/lpasquali/yage/internal/csix"
 	"github.com/lpasquali/yage/internal/kindsync"
 	"github.com/lpasquali/yage/internal/logx"
-	"github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/pveapi"
 	"github.com/lpasquali/yage/internal/shell"
 	"github.com/lpasquali/yage/internal/sysinfo"
 )
@@ -252,13 +252,13 @@ func ResolveRecreateContext(cfg *config.Config) {
 		cfg.Providers.Proxmox.CAPIUserID = capiUser
 		cfg.Providers.Proxmox.CAPITokenPrefix = capiPfx
 		if cfg.Providers.Proxmox.IdentitySuffix == "" {
-			cfg.Providers.Proxmox.IdentitySuffix = proxmox.DeriveIdentitySuffix(cfg.ClusterSetID)
+			cfg.Providers.Proxmox.IdentitySuffix = pveapi.DeriveIdentitySuffix(cfg.ClusterSetID)
 		}
 		logx.Log("Re-creation: identity from OpenTofu state (%s): cluster_set_id var=%s.", StateDir(), csID)
 		return
 	}
 	logx.Warn("No OpenTofu state at %s — inferring from PROXMOX_CSI_TOKEN_ID and PROXMOX_TOKEN (CAPI) in env/kind.", stateFile())
-	if !proxmox.InferIdentityFromTokenIDs(cfg) {
+	if !pveapi.InferIdentityFromTokenIDs(cfg) {
 		logx.Die("Cannot resolve identity: restore %s or set PROXMOX_CSI_TOKEN_ID + PROXMOX_TOKEN to existing token *names* (user@pve!prefix-suffix) from Kubernetes Secrets.", stateFile())
 	}
 	if cfg.Providers.Proxmox.IdentitySuffix == "" {
@@ -285,12 +285,12 @@ func RecreateIdentities(cfg *config.Config) error {
 			cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName)
 	}
 	ResolveRecreateContext(cfg)
-	proxmox.ValidateClusterSetIDFormat(cfg)
+	pveapi.ValidateClusterSetIDFormat(cfg)
 	if cfg.Providers.Proxmox.IdentitySuffix == "" {
-		cfg.Providers.Proxmox.IdentitySuffix = proxmox.DeriveIdentitySuffix(cfg.ClusterSetID)
+		cfg.Providers.Proxmox.IdentitySuffix = pveapi.DeriveIdentitySuffix(cfg.ClusterSetID)
 	}
-	proxmox.RefreshDerivedIdentityUserIDs(cfg)
-	proxmox.CheckAdminAPIConnectivity(cfg)
+	pveapi.RefreshDerivedIdentityUserIDs(cfg)
+	pveapi.CheckAdminAPIConnectivity(cfg)
 	if err := WriteEmbeddedFiles(cfg); err != nil {
 		return err
 	}

@@ -138,20 +138,20 @@ func PlanFor(cfg *config.Config) Plan {
 	wcp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wwk := atoiOr(cfg.WorkerMachineCount, 0)
 	add("workload control-plane", wcp,
-		cfg.ControlPlaneNumSockets, cfg.ControlPlaneNumCores,
-		cfg.ControlPlaneMemoryMiB, cfg.ControlPlaneBootVolumeSize)
+		cfg.Providers.Proxmox.ControlPlaneNumSockets, cfg.Providers.Proxmox.ControlPlaneNumCores,
+		cfg.Providers.Proxmox.ControlPlaneMemoryMiB, cfg.Providers.Proxmox.ControlPlaneBootVolumeSize)
 	add("workload worker", wwk,
-		cfg.WorkerNumSockets, cfg.WorkerNumCores,
-		cfg.WorkerMemoryMiB, cfg.WorkerBootVolumeSize)
+		cfg.Providers.Proxmox.WorkerNumSockets, cfg.Providers.Proxmox.WorkerNumCores,
+		cfg.Providers.Proxmox.WorkerMemoryMiB, cfg.Providers.Proxmox.WorkerBootVolumeSize)
 	if cfg.PivotEnabled {
-		mcp := atoiOr(cfg.MgmtControlPlaneMachineCount, 1)
-		mwk := atoiOr(cfg.MgmtWorkerMachineCount, 0)
+		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
+		mwk := atoiOr(cfg.Mgmt.WorkerMachineCount, 0)
 		add("mgmt control-plane", mcp,
-			cfg.MgmtControlPlaneNumSockets, cfg.MgmtControlPlaneNumCores,
-			cfg.MgmtControlPlaneMemoryMiB, cfg.MgmtControlPlaneBootVolumeSize)
+			cfg.Providers.Proxmox.Mgmt.ControlPlaneNumSockets, cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores,
+			cfg.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB, cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize)
 		add("mgmt worker", mwk,
-			cfg.WorkerNumSockets, cfg.WorkerNumCores,
-			cfg.WorkerMemoryMiB, cfg.WorkerBootVolumeSize)
+			cfg.Providers.Proxmox.WorkerNumSockets, cfg.Providers.Proxmox.WorkerNumCores,
+			cfg.Providers.Proxmox.WorkerMemoryMiB, cfg.Providers.Proxmox.WorkerBootVolumeSize)
 	}
 	return p
 }
@@ -183,8 +183,8 @@ func PlanForK3s(cfg *config.Config) Plan {
 	add("workload control-plane (k3s)", wcp, K3sCPCores, K3sCPMemMiB, K3sCPDiskGB)
 	add("workload worker (k3s)", wwk, K3sCPCores, K3sWorkerMem, K3sWorkerDisk)
 	if cfg.PivotEnabled {
-		mcp := atoiOr(cfg.MgmtControlPlaneMachineCount, 1)
-		mwk := atoiOr(cfg.MgmtWorkerMachineCount, 0)
+		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
+		mwk := atoiOr(cfg.Mgmt.WorkerMachineCount, 0)
 		add("mgmt control-plane (k3s)", mcp, K3sCPCores, K3sCPMemMiB, K3sCPDiskGB)
 		add("mgmt worker (k3s)", mwk, K3sCPCores, K3sWorkerMem, K3sWorkerDisk)
 	}

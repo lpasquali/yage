@@ -18,7 +18,7 @@ import (
 	"github.com/lpasquali/yage/internal/csix"
 	"github.com/lpasquali/yage/internal/opentofux"
 	"github.com/lpasquali/yage/internal/provider"
-	pveapi "github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/pveapi"
 )
 
 func init() {

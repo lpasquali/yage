@@ -20,7 +20,7 @@ import (
 
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/provider"
-	pveapi "github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/pveapi"
 )
 
 // Inventory returns the cloud-correct picture of "what's there +
@@ -190,7 +190,7 @@ func fetchHostCapacity(cfg *config.Config) (*hostCapacity, error) {
 		} `json:"data"`
 	}
 	if err := fetchJSON(storageURL, auth, insecure, &storageEnv); err == nil {
-		want := strings.TrimSpace(cfg.ProxmoxCSIStorage)
+		want := strings.TrimSpace(cfg.Providers.Proxmox.CSIStorage)
 		// Avoid double-counting shared storage across nodes.
 		seen := map[string]bool{}
 		for _, s := range storageEnv.Data {
@@ -280,14 +280,14 @@ func fetchExistingUsage(cfg *config.Config) (*existingUsage, error) {
 
 func authForCfg(cfg *config.Config) (auth string, insecure bool, base string, err error) {
 	switch {
-	case cfg.ProxmoxAdminToken != "" && cfg.ProxmoxAdminUsername != "":
-		auth = "PVEAPIToken=" + cfg.ProxmoxAdminUsername + "=" + cfg.ProxmoxAdminToken
-	case cfg.ProxmoxToken != "" && cfg.ProxmoxSecret != "":
-		auth = "PVEAPIToken=" + cfg.ProxmoxToken + "=" + cfg.ProxmoxSecret
+	case cfg.Providers.Proxmox.AdminToken != "" && cfg.Providers.Proxmox.AdminUsername != "":
+		auth = "PVEAPIToken=" + cfg.Providers.Proxmox.AdminUsername + "=" + cfg.Providers.Proxmox.AdminToken
+	case cfg.Providers.Proxmox.Token != "" && cfg.Providers.Proxmox.Secret != "":
+		auth = "PVEAPIToken=" + cfg.Providers.Proxmox.Token + "=" + cfg.Providers.Proxmox.Secret
 	default:
 		return "", false, "", fmt.Errorf("no Proxmox credentials available (set --admin-username/--admin-token or --proxmox-token/--proxmox-secret)")
 	}
-	switch strings.ToLower(strings.TrimSpace(cfg.ProxmoxAdminInsecure)) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Providers.Proxmox.AdminInsecure)) {
 	case "true", "1", "yes", "y", "on":
 		insecure = true
 	}
@@ -328,8 +328,8 @@ func allowedSet(cfg *config.Config) map[string]struct{} {
 			m[raw] = struct{}{}
 		}
 	}
-	if len(m) == 0 && cfg.ProxmoxNode != "" {
-		m[cfg.ProxmoxNode] = struct{}{}
+	if len(m) == 0 && cfg.Providers.Proxmox.Node != "" {
+		m[cfg.Providers.Proxmox.Node] = struct{}{}
 	}
 	return m
 }

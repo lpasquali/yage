@@ -14,7 +14,7 @@ import (
 	"github.com/lpasquali/yage/internal/k8sclient"
 	"github.com/lpasquali/yage/internal/kubectlx"
 	"github.com/lpasquali/yage/internal/logx"
-	"github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/pveapi"
 	"github.com/lpasquali/yage/internal/shell"
 )
 
@@ -115,7 +115,7 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 
 	// Derive PROXMOX_CSI_URL from PROXMOX_URL when not set — bash L979-L982.
 	if cfg.Providers.Proxmox.URL != "" && cfg.Providers.Proxmox.CSIURL == "" {
-		cfg.Providers.Proxmox.CSIURL = proxmox.APIJSONURL(cfg)
+		cfg.Providers.Proxmox.CSIURL = pveapi.APIJSONURL(cfg)
 		env["PROXMOX_CSI_URL"] = cfg.Providers.Proxmox.CSIURL
 	}
 

@@ -135,34 +135,34 @@ flowchart LR
     end
 
     subgraph midtier[Mid-tier]
-        caaph[internal/caaph]
+        caaph[internal/capi/caaph]
         manifest[internal/capi/manifest]
-        kindsync[internal/kindsync]
+        kindsync[internal/cluster/kindsync]
         argocd[internal/capi/argocd]
         csi[internal/capi/csi]
-        kindp[internal/kind]
-        installer[internal/installer]
-        opentofux[internal/opentofux]
+        kindp[internal/cluster/kind]
+        installer[internal/platform/installer]
+        opentofux[internal/platform/opentofux]
     end
 
     subgraph leaves[Leaves]
         configp[internal/config]
-        logx[internal/logx]
-        shell[internal/shell]
-        sysinfo[internal/sysinfo]
-        versionx[internal/versionx]
-        yamlx[internal/yamlx]
-        proxmox[internal/proxmox]
-        promptx[internal/promptx]
-        helmvalues[internal/helmvalues]
-        wlargocd[internal/wlargocd]
-        postsync[internal/postsync]
+        logx[internal/ui/logx]
+        shell[internal/platform/shell]
+        sysinfo[internal/platform/sysinfo]
+        versionx[internal/util/versionx]
+        yamlx[internal/util/yamlx]
+        proxmox[internal/provider/proxmox + pveapi]
+        promptx[internal/ui/promptx]
+        helmvalues[internal/capi/helmvalues]
+        wlargocd[internal/capi/wlargocd]
+        postsync[internal/capi/postsync]
         cilium[internal/capi/cilium]
         kubectl[internal/platform/kubectl]
-        clip[internal/cli]
+        clip[internal/ui/cli]
     end
 
-    foundation[internal/k8sclient]
+    foundation[internal/platform/k8sclient]
 
     bootstrap --> caaph
     bootstrap --> capimanifest

@@ -1,4 +1,6 @@
-# Built binary at repo root (do not ignore cmd/bootstrap-capi/ source dir).
+# Built binary at repo root (do not ignore cmd/yage/ source dir).
+/yage
+/yage-bin
 /bootstrap-capi
 /bootstrap-capi-bin
 /dist/
@@ -7,3 +9,6 @@
 *.out
 .env
 bin
+
+# Claude Code agent worktrees (transient — never commit)
+.claude/

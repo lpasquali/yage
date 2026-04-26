@@ -1498,3 +1498,187 @@ back. *Recommendation: ship without rollback. Pivot rollback is a
 separate operational feature; the abstraction doesn't make it
 harder OR easier to add later.*
 
+---
+
+## 13. Per-provider interface validation (7 providers)
+
+After §10–§12 locked the spec, we ran a per-provider validation
+pass: seven Explore agents in parallel, each reading one provider's
+existing code (`internal/provider/<name>/`) and sketching concrete
+implementations of every §10 method, flagging awkwardness. Providers
+covered:
+
+- **Proxmox** — the reference implementation
+- **AWS, GCP, Azure** — hyperscale with quota-API-driven capacity
+- **Hetzner** — minimal hyperscale (count-based quota)
+- **OpenStack** — federated/private (per-tenant flat quota)
+- **vSphere** — virt-style (multi-level hierarchy)
+
+This section is the synthesis: what fit cleanly, what didn't, and
+the decisions taken in response.
+
+### 13.1 Per-provider fit summary
+
+| Provider     | `Inventory` | `EnsureScope` | `EnsureIdentity` | `KindSyncFields` | `Purge` | `PivotTarget` | Standout finding |
+|--------------|---|---|---|---|---|---|---|
+| Proxmox      | ✓ flat-pool | ✓ pool          | ✓ Terraform/BPG | ✓ ~25 fields | ✓ Real cleanup | ✓ BPG-mgmt | Kubeconfig path threading needed |
+| OpenStack    | ✓ flat per-project | ⚠ N/A | ⚠ N/A | ✓ ~7 fields | ⚠ no-op | ⚠ N/A | Quota = policy, not hardware |
+| Hetzner      | ✗ count-based | ⚠ N/A | ⚠ N/A | ✓ ~3 fields | ⚠ no-op | ⚠ N/A | "3 of 10 servers used" → Notes only |
+| AWS          | ✗ per-family | ⚠ N/A | ⚠ N/A | ✓ ~7 fields | ⚠ no-op | ⚠ N/A | t3 vs m5 quota distinction lost in flat shape |
+| GCP          | ✗ per-family + CUDs | ⚠ N/A | ⚠ N/A | ✓ ~6 fields | ⚠ no-op | ⚠ N/A | Project boundary; Committed-Use Discounts untracked |
+| Azure        | ✗ per-SKU-family | ⚠ N/A | ✗ 3 identity models | ✓ ~9 fields | ⚠ partial | ⚠ N/A | SP / Managed Identity / Workload Identity needs discriminator |
+| vSphere      | ✗ multi-level | ✗ Folder vs Pool | ⚠ N/A | ✓ ~8 fields | ⚠ near-empty | ⚠ N/A | CSI timing breaks orchestrator phases |
+
+Legend: ✓ fits cleanly · ⚠ fits via `ErrNotApplicable` (interface accommodates) · ✗ structural mismatch.
+
+### 13.2 What fit cleanly across all 7 providers
+
+- **`TemplateVars`** — flat `map[string]string` works everywhere.
+  AWS needs ~5 keys, Proxmox ~25, vSphere ~10. No exceptions.
+- **`KindSyncFields`** — same: flat map mirrors the destination
+  Secret schema. 3–25 entries per provider; orchestrator wraps under
+  `<provider>.<key>`.
+- **`DescribeIdentity` / `DescribeWorkload` / `DescribePivot`** —
+  the 3-method `PlanWriter` seam handles every provider.
+  `ErrNotApplicable` from any of them cleanly skips that section.
+- **`PivotTarget`** — only Proxmox has one; everyone else
+  `ErrNotApplicable`. Healthy opt-in.
+- **`Purge`** — for non-Proxmox, mostly no-op (yage doesn't create
+  cleanup-worthy state on hyperscale). Pattern works.
+- **`ClusterctlInitArgs`, `K3sTemplate`, `PatchManifest`,
+  `EstimateMonthlyCostUSD`** — already-existing methods, every
+  provider handles them. No changes.
+
+### 13.3 Where the interface needs accommodation
+
+#### A. `Inventory` / `ResourceTotals` — three distinct quota models (4 of 7 don't fit flat shape)
+
+§10's `ResourceTotals{Cores, MemoryMiB, StorageGiB}` assumes
+capacity collapses to a flat triple. Reality:
+
+- **Flat quota** (fits): Proxmox (host hardware), OpenStack (per-project Keystone quota)
+- **Per-family quota** (doesn't fit): AWS (t3 / m5 / c5…), GCP (N1 / N2 / T2D… + CUDs), Azure (Standard_D / B…)
+- **Count-based quota** (doesn't fit): Hetzner (10 servers per project)
+- **Multi-level hierarchical** (doesn't fit): vSphere (DC > Cluster > Host, separate Datastores, Resource Pools as soft quotas)
+
+Not all clouds compute "cores available" the same way. AWS Service
+Quotas on the t3 family are independent of m5; "30 cores left" is
+meaningless without "in which family." vSphere Resource Pools are
+*soft* quotas — they don't reserve hardware. Hetzner's bottleneck
+is server count, not resource volume.
+
+#### B. Storage-class breakdown gestured at, not specified
+
+The `ResourceTotals.StorageGiB` field is flat; the comment alludes
+to "per-storage-class breakdown when the provider has multiple
+backends" but doesn't define the schema. Real clouds need this:
+
+- **AWS**: gp3 / io2 / standard / sc1
+- **GCP**: pd-balanced / pd-ssd / pd-standard
+- **OpenStack**: Cinder backends (fast / slow / archive)
+- **vSphere**: multiple Datastores per cluster
+
+#### C. `EnsureScope` is two concepts in vSphere
+
+vSphere has Folder (filesystem grouping) AND Resource Pool (soft
+quota tree) — distinct mechanisms. Proxmox has just pool. AWS has
+IAM group. GCP has Project (heavyweight, operator-owned). The
+single `EnsureScope(cfg)` paints over this; vSphere has to pick one
+(or do both internally).
+
+#### D. Multi-identity-model clouds need a discriminator
+
+Azure has Service Principal / Managed Identity / Workload Identity
+(three valid paths). GCP has Service Account JSON / ADC / Workload
+Identity. Today both return `ErrNotApplicable`; a real implementation
+would need a `cfg.<Provider>IdentityModel` field. The interface
+doesn't surface this.
+
+#### E. Kubeconfig threading for `PivotTarget` (Proxmox)
+
+`PivotTarget` returns `KubeconfigPath`. The mgmt cluster's
+kubeconfig file is created by the orchestrator's
+`EnsureManagementCluster()`, not by the provider — provider can't
+know the temp file path until told. Solution: thread
+`cfg.MgmtKubeconfigPath` set after `EnsureManagementCluster`, read
+by `PivotTarget`.
+
+#### F. `EnsureCSISecret` timing assumption (vSphere)
+
+vSphere CSI needs the workload cluster's UUID, which doesn't exist
+until after `clusterctl` finishes. Today's orchestrator phases don't
+fit this — Phase 2.9 happens before the cluster is "alive" in the
+vSphere CSI sense. Not an interface bug; an orchestrator-phase
+assumption that's Proxmox-centric. Calls for either a "post-cluster-
+ready" CSI hook in the orchestrator or a two-stage CSI install for
+vSphere.
+
+### 13.4 Decisions taken (locked into the spec)
+
+These are now baked into §10–§12. This list is the rationale.
+
+1. **`Inventory`: `ErrNotApplicable` is the explicit path for clouds
+   where preflight isn't expressible as flat resource arithmetic.**
+   Proxmox and OpenStack populate `Inventory` cleanly. AWS, GCP,
+   Azure, Hetzner, vSphere return `ErrNotApplicable`. Capacity
+   preflight becomes a Proxmox+OpenStack feature; everyone else
+   relies on `EstimateMonthlyCostUSD` and `DescribeWorkload` to
+   convey "shape and price" without budget gating.
+
+   *Rejected alternative*: extend `ResourceTotals` with `PerFamily
+   map[string]ResourceTotals` and `Commitments ResourceTotals`.
+   Would over-engineer for an ergonomic that 5 of 7 clouds
+   wouldn't populate. The `Notes []string` field is the escape
+   hatch when a provider has something to say but can't express it
+   as Total/Used/Available.
+
+2. **Add `StorageByClass map[string]int64` to `ResourceTotals`.**
+   Cheap, cleanly extensible, immediately useful for OpenStack,
+   AWS, GCP, vSphere. `StorageGiB` stays as the aggregate.
+
+3. **`EnsureScope` stays a single method.** vSphere will pick one
+   semantic (Folder, since that's what CAPV's manifest expects);
+   Resource Pool stays operator-managed unless someone implements
+   it later. Per-provider semantics documented in the §10
+   docstring rather than splitting the method. Splitting would be
+   premature complexity for the 1.5 providers (Proxmox + maybe
+   vSphere) where it matters.
+
+4. **Identity-model discriminator deferred.** No provider implements
+   multiple identity models today; all return `ErrNotApplicable`
+   for `EnsureIdentity` except Proxmox. When Azure (or GCP) ships
+   a real `EnsureIdentity`, it adds `cfg.AzureIdentityModel` then.
+   Don't add the discriminator pre-emptively.
+
+5. **`cfg.MgmtKubeconfigPath` added to `Config`** to thread the
+   kubeconfig from `EnsureManagementCluster()` to `PivotTarget()`.
+   Documented in §12.
+
+### 13.5 Carry-overs (orchestration concerns, not interface)
+
+Surfaced by validation but not fixable in the Provider interface
+alone:
+
+- **vSphere CSI timing**: orchestrator may need a "post-cluster-ready"
+  hook for CSI install on clouds where the CSI driver needs live
+  cluster identity. Defer to a Phase E.5 follow-up.
+
+- **`kindsync.fillEmptyFromMap()` is hardcoded for Proxmox fields**.
+  As `KindSyncFields()` lands in Phase D, the sync code should
+  iterate over the provider's returned map rather than switching on
+  a fixed list. Mechanical refactor; not a spec issue.
+
+- **Config gaps for AWS, Azure, GCP, vSphere**: `TemplateVars`
+  references fields that don't exist in `internal/config/config.go`
+  yet. Phase C creates them; `KindSyncFields` reads them.
+  Sequencing point — AWS/Azure/GCP/vSphere `TemplateVars` +
+  `KindSyncFields` can't ship until Phase C lands.
+
+### 13.6 Methodology note
+
+Each agent received the same template prompt: read §10–§12 and the
+provider's `internal/provider/<name>/` package, then sketch concrete
+Go for every interface method, flagging awkwardness with file:line
+citations. ~800–1200 words per report. The agents did not modify
+code. This section is the synthesis.
+

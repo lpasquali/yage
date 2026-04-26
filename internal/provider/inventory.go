@@ -15,16 +15,22 @@ package provider
 // vSphere the provider returns ErrNotApplicable instead because
 // preflight isn't expressible as flat ResourceTotals.
 //
+// Hosts is the typed list of compute hosts / AZs / zones the
+// totals were aggregated over (Proxmox: cluster nodes; vSphere:
+// ESXi hosts; AWS/GCP/Azure: AZs in the active region). Empty for
+// providers where the concept doesn't apply, or when the provider
+// returned ErrNotApplicable.
+//
 // Notes is the escape hatch for providers that have something to
 // say but can't express it as Total/Used/Available — e.g. Hetzner:
-// "3 of 10 servers used", or "quota raise pending". The Proxmox
-// implementation also uses it to surface the list of cluster nodes
-// the totals were aggregated over.
+// "3 of 10 servers used", or "quota raise pending". Notes are
+// human-display-only; the orchestrator never parses them.
 type Inventory struct {
 	Total     ResourceTotals // host hardware totals (informational)
 	Used      ResourceTotals // running workload (informational, drives plan output)
 	Available ResourceTotals // cloud-correct headroom — what preflight checks
-	Notes     []string       // provider advisories
+	Hosts     []string       // typed compute-host / AZ list
+	Notes     []string       // provider advisories (human-display only)
 }
 
 // ResourceTotals is a flat CPU + memory + storage triple. Storage

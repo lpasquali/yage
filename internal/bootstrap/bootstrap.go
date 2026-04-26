@@ -1056,34 +1056,18 @@ func preflightCapacity(cfg *config.Config) error {
 	return nil
 }
 
-// hostCapacityFromInventory translates a provider.Inventory's Total
-// (and any "allowed nodes: …" Notes entry) into the
+// hostCapacityFromInventory translates a provider.Inventory into the
 // capacity.HostCapacity shape that capacity.CheckCombined /
 // capacity.WouldFitAsK3s consume. Lives here rather than in the
 // capacity package so capacity stays free of the provider import.
 func hostCapacityFromInventory(inv *provider.Inventory) *capacity.HostCapacity {
-	hc := &capacity.HostCapacity{
+	return &capacity.HostCapacity{
 		CPUCores:  inv.Total.Cores,
 		MemoryMiB: inv.Total.MemoryMiB,
 		StorageGB: inv.Total.StorageGiB,
 		StorageBy: inv.Total.StorageByClass,
+		Nodes:     append([]string(nil), inv.Hosts...),
 	}
-	for _, n := range inv.Notes {
-		// Proxmox's Inventory emits "allowed nodes: pve1,pve2,…" as
-		// the first Note so the preflight log can keep its
-		// nodes=[…] field.
-		if strings.HasPrefix(n, "allowed nodes: ") {
-			raw := strings.TrimPrefix(n, "allowed nodes: ")
-			for _, part := range strings.Split(raw, ",") {
-				part = strings.TrimSpace(part)
-				if part != "" {
-					hc.Nodes = append(hc.Nodes, part)
-				}
-			}
-			break
-		}
-	}
-	return hc
 }
 
 // existingUsageFromInventory translates inv.Used into the

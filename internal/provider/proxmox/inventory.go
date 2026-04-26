@@ -67,12 +67,7 @@ func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
 		StorageGiB: total.StorageGiB - usedTotals.StorageGiB,
 	}
 
-	notes := []string{
-		// Always surface the node list so dry-run / preflight can
-		// report "host (allowed nodes [pve1 pve2]): …" without
-		// dropping into a Proxmox-specific field shape.
-		"allowed nodes: " + strings.Join(hc.Nodes, ","),
-	}
+	var notes []string
 	if used.VMCount > 0 {
 		notes = append(notes, fmt.Sprintf("existing VMs: %d (cores %d, mem %d MiB, disk %d GB)",
 			used.VMCount, used.CPUCores, used.MemoryMiB, used.StorageGB))
@@ -93,6 +88,7 @@ func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
 		Total:     total,
 		Used:      usedTotals,
 		Available: avail,
+		Hosts:     append([]string(nil), hc.Nodes...), // typed pass-through
 		Notes:     notes,
 	}, nil
 }

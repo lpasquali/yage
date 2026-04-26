@@ -1218,7 +1218,13 @@ type Inventory struct {
     Total     ResourceTotals  // host hardware totals (informational)
     Used      ResourceTotals  // running workload (informational, drives plan output)
     Available ResourceTotals  // cloud-correct headroom — what preflight checks
-    Notes     []string        // provider advisories ("3/5 nodes drained", "quota raise pending")
+    Hosts     []string        // typed compute-host / AZ / zone list (Proxmox:
+                              //   nodes, vSphere: ESXi hosts, AWS/GCP/Azure:
+                              //   AZs in scope). Empty when not applicable.
+                              //   Orchestrator reads this directly; never
+                              //   parses Notes for typed data.
+    Notes     []string        // provider advisories ("3/5 nodes drained",
+                              //   "quota raise pending"). Human-display only.
 }
 
 type ResourceTotals struct {

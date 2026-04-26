@@ -14,6 +14,7 @@ import (
 
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
+	"github.com/lpasquali/yage/internal/provider"
 	"github.com/lpasquali/yage/internal/platform/kubectl"
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
@@ -298,103 +299,26 @@ func fillFromCapmoxManagerJSON(cfg *config.Config, secJSON string) bool {
 	return fillEmptyFromMap(cfg, out)
 }
 
-// fillEmptyFromMap assigns non-empty kv values to cfg fields *only* when
-// the current cfg value is empty. Unknown keys and keys matching a
-// currently-non-empty field are ignored. Returns true when at least one
-// assignment happened.
+// fillEmptyFromMap dispatches to the active provider's
+// AbsorbConfigYAML method (Phase D / §11). Was a 30-case switch
+// over PROXMOX_* keys before the kindsync rewrite — that body
+// moved to internal/provider/proxmox/state.go where it belongs.
 //
-// The schema here is narrower than Config.Snapshot(): we also accept
-// credentials fields (PROXMOX_TOKEN, PROXMOX_SECRET, PROXMOX_CSI_TOKEN_*,
-// PROXMOX_ADMIN_*) which are never in the config.yaml snapshot.
+// Per-provider absorber implementations populate empty cfg fields
+// from non-empty kv values; the orchestrator's caller (config.go,
+// creds-JSON, csi-JSON, admin-JSON envelope readers) hands the
+// merged map here regardless of which provider is active. Cost-
+// only providers inherit a no-op via MinStub.
+//
+// Returns true when at least one assignment happened.
 func fillEmptyFromMap(cfg *config.Config, kv map[string]string) bool {
-	assigned := false
-	assign := func(cur *string, v string) {
-		if *cur == "" && v != "" {
-			*cur = v
-			assigned = true
-		}
+	prov, err := provider.For(cfg)
+	if err != nil {
+		// No provider resolved (unknown name, airgapped + cloud).
+		// Nothing to absorb; caller continues with cfg unchanged.
+		return false
 	}
-	assignBool := func(cur *bool, v string, explicit bool) {
-		if explicit {
-			return
-		}
-		// Only overwrite when bool-like; bash's `os.environ.get(k, "") ==
-		// ""` test is not a 1:1 match for bools, but since these flags
-		// default to true in config.Load(), we treat "false" as meaningful
-		// only when it actually appears.
-		if v == "" {
-			return
-		}
-		switch strings.ToLower(v) {
-		case "true", "1", "yes", "on":
-			*cur = true
-			assigned = true
-		case "false", "0", "no", "off":
-			*cur = false
-			assigned = true
-		}
-	}
-	_ = assignBool // retained for future bool credentials keys
-
-	for k, v := range kv {
-		switch k {
-		case "PROXMOX_URL":
-			assign(&cfg.Providers.Proxmox.URL, v)
-		case "PROXMOX_TOKEN":
-			assign(&cfg.Providers.Proxmox.Token, v)
-		case "PROXMOX_SECRET":
-			assign(&cfg.Providers.Proxmox.Secret, v)
-		case "PROXMOX_REGION":
-			assign(&cfg.Providers.Proxmox.Region, v)
-		case "PROXMOX_NODE":
-			assign(&cfg.Providers.Proxmox.Node, v)
-		case "PROXMOX_SOURCENODE":
-			assign(&cfg.Providers.Proxmox.SourceNode, v)
-		case "PROXMOX_TEMPLATE_ID":
-			assign(&cfg.Providers.Proxmox.TemplateID, v)
-		case "PROXMOX_BRIDGE":
-			assign(&cfg.Providers.Proxmox.Bridge, v)
-		case "PROXMOX_CSI_URL":
-			assign(&cfg.Providers.Proxmox.CSIURL, v)
-		case "PROXMOX_CSI_TOKEN_ID":
-			assign(&cfg.Providers.Proxmox.CSITokenID, v)
-		case "PROXMOX_CSI_TOKEN_SECRET":
-			assign(&cfg.Providers.Proxmox.CSITokenSecret, v)
-		case "PROXMOX_CSI_USER_ID":
-			assign(&cfg.Providers.Proxmox.CSIUserID, v)
-		case "PROXMOX_CSI_TOKEN_PREFIX":
-			assign(&cfg.Providers.Proxmox.CSITokenPrefix, v)
-		case "PROXMOX_CSI_INSECURE":
-			assign(&cfg.Providers.Proxmox.CSIInsecure, v)
-		case "PROXMOX_CSI_STORAGE_CLASS_NAME":
-			assign(&cfg.Providers.Proxmox.CSIStorageClassName, v)
-		case "PROXMOX_CSI_STORAGE":
-			assign(&cfg.Providers.Proxmox.CSIStorage, v)
-		case "PROXMOX_CSI_RECLAIM_POLICY":
-			assign(&cfg.Providers.Proxmox.CSIReclaimPolicy, v)
-		case "PROXMOX_CSI_FSTYPE":
-			assign(&cfg.Providers.Proxmox.CSIFsType, v)
-		case "PROXMOX_CSI_DEFAULT_CLASS":
-			assign(&cfg.Providers.Proxmox.CSIDefaultClass, v)
-		case "PROXMOX_CSI_TOPOLOGY_LABELS":
-			assign(&cfg.Providers.Proxmox.CSITopologyLabels, v)
-		case "PROXMOX_TOPOLOGY_REGION":
-			assign(&cfg.Providers.Proxmox.TopologyRegion, v)
-		case "PROXMOX_TOPOLOGY_ZONE":
-			assign(&cfg.Providers.Proxmox.TopologyZone, v)
-		case "PROXMOX_CAPI_USER_ID":
-			assign(&cfg.Providers.Proxmox.CAPIUserID, v)
-		case "PROXMOX_CAPI_TOKEN_PREFIX":
-			assign(&cfg.Providers.Proxmox.CAPITokenPrefix, v)
-		case "PROXMOX_ADMIN_USERNAME":
-			assign(&cfg.Providers.Proxmox.AdminUsername, v)
-		case "PROXMOX_ADMIN_TOKEN":
-			assign(&cfg.Providers.Proxmox.AdminToken, v)
-		case "PROXMOX_ADMIN_INSECURE":
-			assign(&cfg.Providers.Proxmox.AdminInsecure, v)
-		}
-	}
-	return assigned
+	return prov.AbsorbConfigYAML(cfg, kv)
 }
 
 // ApplyBootstrapConfigToManagementCluster ports

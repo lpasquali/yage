@@ -49,6 +49,13 @@ func (MinStub) KindSyncFields(cfg *config.Config) map[string]string {
 	return nil
 }
 
+// AbsorbConfigYAML default: nothing to absorb. Providers that ship
+// a real Secret schema (Proxmox today) override this; everyone else
+// receives the kindsync map and ignores it.
+func (MinStub) AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bool {
+	return false
+}
+
 // Purger default: no cleanup needed. Returns nil (NOT
 // ErrNotApplicable) — the orchestrator's --purge flow can call
 // this safely on every provider.

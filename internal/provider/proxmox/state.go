@@ -120,6 +120,81 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// AbsorbConfigYAML is the reverse direction of KindSyncFields:
+// reads the Proxmox-flavored uppercase keys (PROXMOX_*) the kind-
+// side bootstrap Secret + creds/csi/admin JSON envelopes use, and
+// fills empty cfg fields with non-empty values. Was the body of
+// kindsync.fillEmptyFromMap before Phase D.7; lives here now so
+// kindsync can dispatch to the active provider generically. See §11.
+func (p *Provider) AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bool {
+	assigned := false
+	assign := func(cur *string, v string) {
+		if *cur == "" && v != "" {
+			*cur = v
+			assigned = true
+		}
+	}
+	for k, v := range kv {
+		switch k {
+		case "PROXMOX_URL":
+			assign(&cfg.Providers.Proxmox.URL, v)
+		case "PROXMOX_TOKEN":
+			assign(&cfg.Providers.Proxmox.Token, v)
+		case "PROXMOX_SECRET":
+			assign(&cfg.Providers.Proxmox.Secret, v)
+		case "PROXMOX_REGION":
+			assign(&cfg.Providers.Proxmox.Region, v)
+		case "PROXMOX_NODE":
+			assign(&cfg.Providers.Proxmox.Node, v)
+		case "PROXMOX_SOURCENODE":
+			assign(&cfg.Providers.Proxmox.SourceNode, v)
+		case "PROXMOX_TEMPLATE_ID":
+			assign(&cfg.Providers.Proxmox.TemplateID, v)
+		case "PROXMOX_BRIDGE":
+			assign(&cfg.Providers.Proxmox.Bridge, v)
+		case "PROXMOX_CSI_URL":
+			assign(&cfg.Providers.Proxmox.CSIURL, v)
+		case "PROXMOX_CSI_TOKEN_ID":
+			assign(&cfg.Providers.Proxmox.CSITokenID, v)
+		case "PROXMOX_CSI_TOKEN_SECRET":
+			assign(&cfg.Providers.Proxmox.CSITokenSecret, v)
+		case "PROXMOX_CSI_USER_ID":
+			assign(&cfg.Providers.Proxmox.CSIUserID, v)
+		case "PROXMOX_CSI_TOKEN_PREFIX":
+			assign(&cfg.Providers.Proxmox.CSITokenPrefix, v)
+		case "PROXMOX_CSI_INSECURE":
+			assign(&cfg.Providers.Proxmox.CSIInsecure, v)
+		case "PROXMOX_CSI_STORAGE_CLASS_NAME":
+			assign(&cfg.Providers.Proxmox.CSIStorageClassName, v)
+		case "PROXMOX_CSI_STORAGE":
+			assign(&cfg.Providers.Proxmox.CSIStorage, v)
+		case "PROXMOX_CSI_RECLAIM_POLICY":
+			assign(&cfg.Providers.Proxmox.CSIReclaimPolicy, v)
+		case "PROXMOX_CSI_FSTYPE":
+			assign(&cfg.Providers.Proxmox.CSIFsType, v)
+		case "PROXMOX_CSI_DEFAULT_CLASS":
+			assign(&cfg.Providers.Proxmox.CSIDefaultClass, v)
+		case "PROXMOX_CSI_TOPOLOGY_LABELS":
+			assign(&cfg.Providers.Proxmox.CSITopologyLabels, v)
+		case "PROXMOX_TOPOLOGY_REGION":
+			assign(&cfg.Providers.Proxmox.TopologyRegion, v)
+		case "PROXMOX_TOPOLOGY_ZONE":
+			assign(&cfg.Providers.Proxmox.TopologyZone, v)
+		case "PROXMOX_CAPI_USER_ID":
+			assign(&cfg.Providers.Proxmox.CAPIUserID, v)
+		case "PROXMOX_CAPI_TOKEN_PREFIX":
+			assign(&cfg.Providers.Proxmox.CAPITokenPrefix, v)
+		case "PROXMOX_ADMIN_USERNAME":
+			assign(&cfg.Providers.Proxmox.AdminUsername, v)
+		case "PROXMOX_ADMIN_TOKEN":
+			assign(&cfg.Providers.Proxmox.AdminToken, v)
+		case "PROXMOX_ADMIN_INSECURE":
+			assign(&cfg.Providers.Proxmox.AdminInsecure, v)
+		}
+	}
+	return assigned
+}
+
 // PivotTarget returns the destination kubeconfig + namespaces for
 // clusterctl move (Phase E / §12). Proxmox is the only provider
 // today that ships a real pivot target — the BPG-managed mgmt

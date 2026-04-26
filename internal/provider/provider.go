@@ -212,15 +212,31 @@ type PivotTarget struct {
 // that iterates over the provider's returned map). See §11.
 type KindSyncer interface {
 	// KindSyncFields returns the provider's bare-key map of fields
-	// to persist. The orchestrator wraps them with a "<provider>."
-	// prefix when writing to the Secret so multiple providers'
-	// fields can coexist. Conventions:
+	// to persist (forward direction: cfg → Secret). The orchestrator
+	// wraps them with a "<provider>." prefix when writing to the
+	// Secret so multiple providers' fields can coexist. Conventions:
 	//   - lowercase snake_case keys
 	//   - empty values omitted
 	//   - bools stringified as "true" / "false"
 	//   - sensitive fields returned same as non-sensitive (k8s
 	//     encrypts at rest)
 	KindSyncFields(cfg *config.Config) map[string]string
+
+	// AbsorbConfigYAML is the reverse direction (Secret → cfg). The
+	// orchestrator's kindsync layer reads the provider's section
+	// of the bootstrap Secret + per-credential JSON envelopes and
+	// hands the merged key/value map here; the provider populates
+	// any empty cfg fields it recognizes. Returns true when at
+	// least one assignment happened.
+	//
+	// Today's Proxmox impl handles the legacy PROXMOX_* uppercase
+	// key set written by historical config.yaml / creds.json /
+	// csi.json / admin.json envelopes. Providers added since
+	// Phase D follow the new lowercase bare-key convention
+	// (matches KindSyncFields output) once the orchestrator's
+	// generic Secret-as-source-of-truth path lands in §16
+	// commit 2.
+	AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bool
 }
 
 // Purger is composed into Provider so cleanup paths (--purge) can

@@ -575,6 +575,20 @@ type Config struct {
 	// See docs/abstraction-plan.md §17.
 	Airgapped bool
 
+	// ImageRegistryMirror, when non-empty, prefixes every CAPI
+	// provider image reference passed to `clusterctl init` so the
+	// images come from an internal mirror instead of the public
+	// registries (registry.k8s.io, ghcr.io, quay.io). Required
+	// in airgapped deployments; warning fires when --airgapped is
+	// set without this. Format: a host/path prefix without a
+	// trailing slash, e.g. "harbor.internal/yage-mirror" — yage
+	// rewrites "registry.k8s.io/cluster-api/core" to
+	// "harbor.internal/yage-mirror/cluster-api/core".
+	//
+	// CLI flag: --image-registry-mirror. Env: YAGE_IMAGE_REGISTRY_MIRROR.
+	// See docs/abstraction-plan.md §17 follow-up.
+	ImageRegistryMirror string
+
 	// InfraProviderDefaulted is true when the user neither set the
 	// INFRA_PROVIDER env var nor passed --infra-provider — i.e.
 	// the runtime is using the legacy "proxmox" default. main()
@@ -883,6 +897,7 @@ func Load() *Config {
 	c.HardwareKWHRateUSD = envFloat("HARDWARE_KWH_RATE_USD", 0.15)
 	c.HardwareSupportUSDMonth = envFloat("HARDWARE_SUPPORT_USD_MONTH", 0)
 	c.Airgapped = envBool("YAGE_AIRGAPPED", false)
+	c.ImageRegistryMirror = strings.TrimRight(getenv("YAGE_IMAGE_REGISTRY_MIRROR", ""), "/")
 
 	// Cost-estimation credentials and currency preferences (§16).
 	// Each YAGE_X spelling wins over the vendor-native fallback.

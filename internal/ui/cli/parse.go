@@ -321,6 +321,10 @@ func Parse(c *config.Config, argv []string) {
 			// Disable every internet-requiring path (cloud providers,
 			// pricing fetchers, geo + FX). On-prem only. See §17.
 			c.Airgapped = true
+		case "--image-registry-mirror":
+			// Internal-mirror prefix for CAPI provider images (used
+			// in airgapped deployments). See §17 follow-up.
+			c.ImageRegistryMirror = strings.TrimRight(strings.TrimSpace(shiftVal(a)), "/")
 		case "--allow-resource-overcommit":
 			c.AllowResourceOvercommit = true
 		case "--overcommit-tolerance-pct":

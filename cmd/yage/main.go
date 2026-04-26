@@ -65,6 +65,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "ℹ INFRA_PROVIDER not set — defaulting to 'proxmox'. Pick one explicitly with --infra-provider <name> (proxmox, aws, azure, gcp, hetzner, openstack, vsphere, capd, …) or set INFRA_PROVIDER=<name>.")
 	}
 
+	// Warn when --airgapped is set without an internal image
+	// mirror — clusterctl will then try to pull CAPI provider
+	// images from the public registries and fail. See §17 follow-up.
+	if cfg.Airgapped && cfg.ImageRegistryMirror == "" {
+		fmt.Fprintln(os.Stderr, "⚠ --airgapped is set but --image-registry-mirror is empty; clusterctl will try to pull CAPI provider images from public registries and likely fail. Set --image-registry-mirror <host/path> or YAGE_IMAGE_REGISTRY_MIRROR.")
+	}
+
 	if cfg.Xapiri {
 		os.Exit(xapiri.Run(os.Stdout, cfg))
 	}

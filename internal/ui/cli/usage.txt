@@ -44,6 +44,11 @@ OPTIONS
                                       GCP, Hetzner, DigitalOcean, Linode, OCI, IBM Cloud). Only on-prem
                                       providers (Proxmox, OpenStack, vSphere, CAPD) remain selectable.
                                       Env: YAGE_AIRGAPPED.
+        --image-registry-mirror URL   Prefix passed to `clusterctl init` so CAPI provider images come
+                                      from an internal mirror instead of the public registries
+                                      (registry.k8s.io, ghcr.io). Required in airgapped deployments;
+                                      yage warns when --airgapped is set without this. Format: host/path
+                                      with no trailing slash. Env: YAGE_IMAGE_REGISTRY_MIRROR.
         --hardware-cost-usd N         Self-hosted TCO (Proxmox / vSphere): full cluster capex in USD.
                                       Required to enable the cost estimate for self-hosted providers
                                       — without it they return ErrNotApplicable. Amortized straight-

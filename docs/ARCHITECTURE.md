@@ -460,6 +460,23 @@ The realm CR is at
 applied as wave 10 by the `keycloak-realm` Application; the
 `keycloak-realm-operator` (wave 9, opt-in) reconciles it into Keycloak.
 
+## Persistence model
+
+yage's persistence policy: **state lives in kind Secrets, not on
+local disk.** Config, provider credentials, kindsync handoff data,
+and OpenTofu identity outputs all round-trip through Secrets in
+the `yage-system` namespace on the local kind cluster. The same
+state is what the eventual pivot moves to a managed cluster.
+
+Local disk is used only for **encrypted kind cluster backup/restore
+archives** (`--kind-backup` writes a tar.gz; `--kind-restore` reads
+one), and even those default to passphrase-encrypted on creation.
+
+The implication for tooling: yage is reproducible across machines
+as long as the operator can re-create the kind cluster — there are
+no `~/.yage/*` config files to copy, no per-host state. Run history
+is in the kind cluster's Secrets; run output is in your shell.
+
 ## Config flow / kind-Secret persistence (diagram 5)
 
 ```mermaid

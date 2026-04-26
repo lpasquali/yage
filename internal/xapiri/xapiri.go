@@ -5,8 +5,11 @@
 // yage runs xapiri to get help from the spirits to create a
 // visionary deployment — an interactive walkthrough that surfaces
 // every config knob, validates choices against the active provider,
-// and writes the result to disk before any state is changed on the
-// target cloud.
+// and persists the result to a Secret in the local kind cluster
+// (yage-system namespace) before any state is changed on the target
+// cloud. yage stores its config and provider credentials in kind
+// Secrets; local disk is used only for encrypted kind cluster
+// backup/restore archives.
 //
 // This package is currently a stub: Run prints a notice and exits.
 // The full TUI is planned but not yet wired.

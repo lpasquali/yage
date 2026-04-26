@@ -225,13 +225,13 @@ diffs reviewable.
 ### Phase D — Generic kindsync + Purge
 
 **Goal:** `kindsync` becomes provider-aware. The kind Secret
-namespace becomes `bootstrap-config-system`; per-provider Secret
+namespace becomes `yage-system`; per-provider Secret
 data inside has a `provider:` discriminator.
 
 Steps:
 
 1. Rename Secret namespace `proxmox-bootstrap-system` →
-   `bootstrap-config-system` (with back-compat read of the old name
+   `yage-system` (with back-compat read of the old name
    for one release).
 2. Generic Secret schema: `provider`, `cluster_name`, `cluster_id`,
    `kubernetes_version`, plus a per-provider blob.
@@ -690,7 +690,7 @@ few days; bisectable if anything breaks.
 
 **Mitigation plan for D:**
 
-1. v1: read `proxmox-bootstrap-system` (old) AND `bootstrap-config-system`
+1. v1: read `proxmox-bootstrap-system` (old) AND `yage-system`
    (new); write to BOTH.
 2. v2 (one release later): write only to new; still read old.
 3. v3: drop old read.
@@ -1372,7 +1372,7 @@ the kind-side handoff Secret. The orchestrator wraps these under a
 fields it owns:
 
 ```yaml
-# Secret/bootstrap-config-system/bootstrap-config (after Phase D)
+# Secret/yage-system/bootstrap-config (after Phase D)
 data:
   # Universal fields (orchestrator-owned)
   provider:           "proxmox"
@@ -1898,7 +1898,7 @@ interface. Secret namespace becomes provider-neutral.
 - `Purger.Purge(cfg) error` — idempotent, NotFound swallowed
 - `ClusterAPIPlumbing.TemplateVars(cfg) map[string]string`
 - Secret namespace `proxmox-bootstrap-system` →
-  `bootstrap-config-system` (no dual-write window in prototype
+  `yage-system` (no dual-write window in prototype
   phase per §13.4 deferral)
 - Generic Secret schema: `provider`, `cluster_name`, `cluster_id`,
   `kubernetes_version` + provider-prefixed namespace

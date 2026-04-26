@@ -2456,4 +2456,219 @@ no log spam in the steady state.
   creds gets a different default than they expected). Recommend
   not doing this.
 
+---
+
+## 19. Parallelization plan — remaining work
+
+After Phases A–E and §15–§18 landed, eight items remain. This
+section plans how to execute them with maximum parallelism. It's
+NOT just a TODO list — it's a wave-by-wave dispatch plan that
+respects file-conflict and logical-dependency constraints.
+
+### 19.1 The eight items
+
+| # | Item | Effort | Where it lives |
+|---|---|---|---|
+| 1 | xapiri TUI implementation | half-day | `internal/ui/xapiri/` |
+| 2 | Config-tree gaps for AWS/Azure/GCP/OpenStack/vSphere | ~5h total | `internal/config/config.go` (5 sub-configs) |
+| 3 | §16 commit 2: read `cfg.Cost.Credentials` from Secret | 2h | `internal/cluster/kindsync/` write path |
+| 4 | E.5 CAPD-as-target test | 30m | `internal/capi/pivot/*_test.go` (new) |
+| 5 | Snapshot goldens (full text-equality) | 30m | `internal/orchestrator/plan_snapshot_test.go` + golden files |
+| 6 | `--image-registry-mirror` for airgapped clusterctl | 1h | `config.go` + `cli/parse.go` + `orchestrator/bootstrap.go` + `usage.txt` |
+| 7 | Identity-model discriminator (`cfg.AzureIdentityModel`) | 1h | `config.go` + `provider/azure/state.go` + `provider/gcp/state.go` |
+| 8 | Drop `provider.For()` legacy `"" → "proxmox"` fallback | 5m | `provider/provider.go` |
+
+### 19.2 Conflict matrix
+
+Which items touch which shared files. A row's items can run in
+parallel only if no two items have a `✓` in the same column.
+
+|  | config.go | kindsync | provider.go | parse.go | usage.txt | bootstrap.go | xapiri/ | orch tests |
+|---|---|---|---|---|---|---|---|---|
+| 1 xapiri | maybe | - | - | - | maybe | - | ✓ | - |
+| 2 Config gaps | ✓ | - | - | - | - | - | - | - |
+| 3 §16 c2 | - | ✓ | - | - | - | maybe | - | - |
+| 4 E.5 test | - | - | - | - | - | - | - | - (own file) |
+| 5 Goldens | - | - | - | - | - | - | - | ✓ |
+| 6 Image mirror | ✓ | - | - | ✓ | ✓ | ✓ | - | - |
+| 7 Identity disc | ✓ | - | - | - | - | - | - | - |
+| 8 Drop fallback | - | - | ✓ | - | - | - | - | - |
+
+**config.go is the central conflict point** — items 2, 6, 7 all
+touch it. Either serialize them or batch-edit in one agent.
+
+### 19.3 Logical dependencies
+
+- **#3 (§16 commit 2)** depends on the **bootstrap-config Secret
+  write path** existing — kindsync today writes the OLD config.yaml
+  schema; reading `cost.*` from a Secret means writing it first.
+  This is NOT in the eight items above. Adding as item 3a:
+
+  - **3a**: implement `kindsync.WriteBootstrapConfigSecret` that
+    emits the new `yage-system/bootstrap-config` Secret with
+    universal fields + `<provider>.<key>` prefixed map from
+    `Provider.KindSyncFields()` + `cost.<key>` prefixed map from
+    `cfg.Cost.Credentials`. ~2h. Same kindsync file as #3.
+
+  Net: items 3 + 3a are sequential and live in the same agent.
+
+- **#7 (identity discriminator)** is only useful when Azure/GCP
+  ship a real `EnsureIdentity` that branches on the model. Today
+  both return `ErrNotApplicable`. This is **deferred** until those
+  providers actually need it — keep it in §13.4 #4 carry-over,
+  drop from execution wave.
+
+- **#1 (xapiri TUI)** wants to know about ALL config knobs, so it
+  has soft dependencies on #2 (new fields appear), #6 (new flag
+  appears), #7 (new discriminator). The xapiri walkthrough should
+  EITHER land last (after the others) OR be designed in a way
+  where the new fields auto-appear (e.g., reflection over
+  `cfg.Providers.<active>` struct tags). Going with the latter:
+  xapiri reads the active provider's struct via reflection so new
+  fields auto-surface. This decouples xapiri from #2/#6.
+
+- **#8 (drop legacy fallback)** is a single-line change but it
+  WILL surface user breakage if anyone has scripts that rely on
+  the silent default. Should soak the §18 notice for "a while"
+  first. Defer to a follow-up; don't run in this wave.
+
+After applying these: 5 truly executable items in parallel
+(#1, #2+#6+#7, #3+3a, #4, #5). #7 deferred. #8 deferred.
+
+### 19.4 Wave plan
+
+**Wave 1 — fully parallel, no shared-file conflicts:**
+
+| Track | Items | Files | Effort |
+|---|---|---|---|
+| **A** | #1 xapiri TUI | `internal/ui/xapiri/*` (new files for prompt flows) | half-day |
+| **B** | #3 + #3a kindsync write path + read cost.* from Secret | `internal/cluster/kindsync/*` | 4h |
+| **C** | #4 E.5 CAPD test | `internal/capi/pivot/capd_test.go` (new) | 30m |
+| **D** | #5 snapshot goldens | `internal/orchestrator/plan_*_golden_test.go` + `testdata/` | 30m |
+| **E** | #2 + #6 + (#7 if user wants pre-emptive) — single config.go agent | `config.go` + `parse.go` + `bootstrap.go` + `usage.txt` | 6–7h |
+
+5 agents in flight. Track E owns config.go entirely so no
+serialization needed inside it.
+
+**Wave 2 — after Wave 1 lands:**
+
+- xapiri picks up any new config knobs from Wave 1 (re-runs its
+  reflection). Already captured in design above.
+- #8 drop legacy fallback (whenever user decides §18 notice has
+  soaked).
+- #7 identity discriminator (whenever a real provider needs it).
+
+### 19.5 Risk: agent harness routing bug
+
+Two prior agents in this session (Phase B + Phase D) had their
+`Edit`/`Write` calls land in the main repo instead of their isolated
+worktrees. Phase C's agent reported the same hiccup. Net failure
+rate observed: 3 of 4 agents leaked. This is the dominant
+execution risk.
+
+Mitigations, in increasing order of paranoia:
+
+1. **Explicit absolute paths in every agent prompt.** Phase C's
+   agent worked around the bug by passing fully-qualified worktree
+   paths to every `Edit` call. Bake this into the agent template:
+   "every read/edit MUST use the absolute worktree path
+   `/home/ubuntu/Devel/yage/.claude/worktrees/agent-<id>/...`."
+
+2. **Single-track-at-a-time fallback.** If Wave 1 launches and any
+   agent leaks, abort the rest and finish in main directly (the
+   pattern this session has been using since the second leak).
+
+3. **Pre-flight verification.** After dispatch, the orchestrator
+   (me) checks `git status` in main every ~2 minutes. If untracked
+   files appear in directories the active agents shouldn't touch,
+   stop.
+
+4. **Track-isolation by directory.** Each agent's prompt explicitly
+   forbids touching files outside its track's directories. That
+   way even if a leak happens the blast radius is bounded to that
+   track's files.
+
+Recommend (1)+(4) for this wave. (2) and (3) are reactive
+fallbacks if (1)+(4) fail.
+
+### 19.6 Per-track Definition of Done
+
+**Track A (xapiri TUI):**
+- `bin/yage --xapiri` walks through identity → workload sizing →
+  cluster shape → CSI → addons (~7 sections).
+- Validates choices against the active provider (e.g., AWS region
+  must be a known region; Proxmox node must be in cluster nodes).
+- Writes the result to `Secret/yage-system/bootstrap-config` (or
+  prints to stdout if no kind cluster is reachable yet).
+- No new tests required beyond compile (TUI testing is its own
+  rabbit hole; defer).
+
+**Track B (§16 commit 2 + 3a):**
+- `kindsync.WriteBootstrapConfigSecret(cfg)` emits the new schema
+  to `yage-system/bootstrap-config` with universal +
+  `<provider>.<key>` + `cost.<key>` keys.
+- `kindsync.MergeBootstrapConfigFromKind(cfg)` reads it back —
+  cost.* keys populate `cfg.Cost.Credentials` before
+  `pricing.SetCredentials()` runs in main.go.
+- New tests: round-trip (write → read → match) for Proxmox and
+  for cost.* keys.
+
+**Track C (E.5):**
+- `internal/capi/pivot/capd_test.go` exercises `MoveCAPIState`
+  with a fake CAPD `PivotTarget` returning a kind kubeconfig.
+- Asserts `clusterctl move` is called with the right namespaces.
+
+**Track D (snapshot goldens):**
+- `testdata/plan/proxmox.golden`, `aws.golden`, `hetzner.golden`,
+  `aws-eks.golden`, `proxmox-pivot.golden` — full text-equality
+  fixtures.
+- Test reads each golden and compares full dry-run output.
+- `BOOTSTRAP_CAPI_PRICING_DISABLED=true` (now `YAGE_PRICING_DISABLED`)
+  so live API flakiness doesn't break snapshots.
+
+**Track E (config-tree + image mirror):**
+- `cfg.Providers.{AWS,Azure,GCP,OpenStack,Vsphere}.*` grow the
+  fields that §13.5 flagged: AWS `RoleARN`, Azure
+  `SubscriptionID/TenantID/ResourceGroup/VNetName/SubnetName/ClientID`,
+  GCP `Network/ImageFamily`, OpenStack
+  `Cloud/ProjectName/Region/FailureDomain/ImageName/Flavors`,
+  vSphere
+  `Server/Datacenter/Folder/ResourcePool/Datastore/Network/Template/TLSThumbprint`.
+- Each new field has env-var loader + CLI flag parser + entry in
+  usage.txt.
+- `cfg.ImageRegistryMirror string` + `--image-registry-mirror` CLI
+  flag + `YAGE_IMAGE_REGISTRY_MIRROR` env. When non-empty, the
+  orchestrator's `clusterctl init` args prepend
+  `--core <mirror>/cluster-api:vX.Y.Z`,
+  `--bootstrap <mirror>/...`, `--infrastructure <mirror>/...`
+  (per CAPI's own override flags).
+- Per-provider `TemplateVars` updated to read the new fields.
+- New `TestEnvVarBackcompat` cases for each new field.
+- `--airgapped` warns when `--image-registry-mirror` isn't set
+  ("you almost certainly need to point at an internal registry").
+
+### 19.7 Sequencing
+
+```
+Wave 1 (all parallel, ~half-day wall-clock):
+  ┌──────────────────────────────────────────┐
+  │ A: xapiri TUI                            │
+  │ B: §16 commit 2 + 3a (kindsync)          │
+  │ C: E.5 CAPD test                         │
+  │ D: snapshot goldens                      │
+  │ E: config gaps + image-registry-mirror   │
+  └──────────────────────────────────────────┘
+                    │
+                    ▼
+Wave 2 (sequential, smaller):
+  - #8 drop legacy fallback (whenever user OKs)
+  - #7 identity discriminator (whenever needed)
+```
+
+After Wave 1, every item from §13.5 carry-overs and §17/§18
+follow-ups is closed except #7 + #8 (both deliberate deferrals).
+yage's interface design hits the "perfect" target the user named
+upfront.
+
+
 

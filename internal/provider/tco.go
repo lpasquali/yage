@@ -9,7 +9,6 @@
 package provider
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/lpasquali/yage/internal/config"
@@ -93,8 +92,3 @@ func TCOEstimate(cfg *config.Config, providerLabel string) (CostEstimate, error)
 		Note:            note,
 	}, nil
 }
-
-// SelfHostedNotConfigured is the error sentinel callers can check
-// for to detect "user didn't supply the TCO inputs". Returned wrapped
-// from TCOEstimate when HardwareCostUSD is zero. Use errors.Is.
-var SelfHostedNotConfigured = errors.New("self-hosted TCO not configured")

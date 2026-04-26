@@ -1,4 +1,4 @@
-module github.com/lpasquali/bootstrap-capi
+module github.com/lpasquali/yage
 
 go 1.26.0
 

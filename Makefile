@@ -1,17 +1,17 @@
-# bootstrap-capi — build, test, and pull in local toolchain + module deps
+# yage — build, test, and pull in local toolchain + module deps
 #
 # Quick start:   make deps && make
 # System packages (Debian/Ubuntu):  make system-deps
 #
 # Variables (override: make VAR=value):
 #   GO      — go binary (default: go)
-#   OUT     — path to built binary (default: bin/bootstrap-capi)
+#   OUT     — path to built binary (default: bin/yage)
 #   GOPROXY — e.g. direct or https://proxy.golang.org
 
 SHELL      := /bin/sh
 GO         ?= go
-OUT        ?= bin/bootstrap-capi
-MODULE     := ./cmd/bootstrap-capi
+OUT        ?= bin/yage
+MODULE     := ./cmd/yage
 GOMINOR    := 23
 
 export GOTOOLCHAIN ?= auto
@@ -22,7 +22,7 @@ export GOPROXY     ?=
 all: build
 
 help:
-	@echo "bootstrap-capi Makefile"
+	@echo "yage Makefile"
 	@echo ""
 	@echo "  make deps         — verify Go, tidy modules, download + verify (run first on a new clone)"
 	@echo "  make build        — compile to $(OUT)"

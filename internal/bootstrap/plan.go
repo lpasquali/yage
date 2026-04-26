@@ -19,13 +19,13 @@ import (
 
 	"errors"
 
-	"github.com/lpasquali/bootstrap-capi/internal/capacity"
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/cost"
-	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
-	"github.com/lpasquali/bootstrap-capi/internal/pricing"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
+	"github.com/lpasquali/yage/internal/capacity"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/cost"
+	"github.com/lpasquali/yage/internal/k8sclient"
+	"github.com/lpasquali/yage/internal/pricing"
+	"github.com/lpasquali/yage/internal/provider"
+	"github.com/lpasquali/yage/internal/shell"
 )
 
 // PrintPlan writes a structured "would do" plan to stdout based on cfg.
@@ -36,7 +36,7 @@ func PrintPlan(cfg *config.Config) {
 	hr := strings.Repeat("─", 76)
 
 	fmt.Fprintln(w, hr)
-	fmt.Fprintln(w, "📝 DRY-RUN PLAN — bootstrap-capi would perform the following actions")
+	fmt.Fprintln(w, "📝 DRY-RUN PLAN — yage would perform the following actions")
 	fmt.Fprintln(w, hr)
 
 	planStandalone(w, cfg)

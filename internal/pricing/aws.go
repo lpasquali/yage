@@ -124,7 +124,7 @@ func (a *awsFetcher) downloadBulk(service, region string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("aws bulk: %w", err)

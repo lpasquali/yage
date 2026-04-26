@@ -2,7 +2,7 @@
 // HelmChartProxy rendering + apply for Cilium, plus the Argo CD Operator
 // + ArgoCD CR installation on the workload cluster.
 //
-// Bash source map (bootstrap-capi.sh):
+// Bash source map (yage.sh):
 //   - patch_capi_cluster_caaph_helm_labels                     ~L5362-5429
 //   - caaph_print_helmchartproxy_cilium_yaml                   ~L5433-5513
 //   - apply_workload_cilium_helmchartproxy                     ~L5515-5533
@@ -31,13 +31,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/lpasquali/bootstrap-capi/internal/ciliumx"
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
-	"github.com/lpasquali/bootstrap-capi/internal/sysinfo"
+	"github.com/lpasquali/yage/internal/ciliumx"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/k8sclient"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/shell"
+	"github.com/lpasquali/yage/internal/sysinfo"
 )
 
 // PatchClusterCAAPHHelmLabels ports patch_capi_cluster_caaph_helm_labels.
@@ -390,7 +390,7 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfi
 	// kubectl shell-out; everything else in this function uses k8sclient.
 	if err := shell.Run("kubectl", "--kubeconfig", wk, "apply",
 		"--server-side", "--force-conflicts",
-		"--field-manager=bootstrap-capi-argocd-operator",
+		"--field-manager=yage-argocd-operator",
 		"-k", opURL); err != nil {
 		logx.Die("Failed to apply Argo CD Operator (network, ref %s, or kubectl that supports --server-side; need >= 1.18).",
 			cfg.ArgoCDOperatorVersion)

@@ -10,18 +10,18 @@ import (
 	"time"
 )
 
-// "Taller" is bootstrap-capi's internal placeholder currency.
+// "Taller" is yage's internal placeholder currency.
 // It IS whatever currency makes sense for the human running the
 // program — by default the local currency where the host runs
 // (geo-detected via IP), overridable via env to anything they
-// prefer. Every monetary number bootstrap-capi displays is
+// prefer. Every monetary number yage displays is
 // converted from each vendor's *native* currency (AWS/Azure/GCP
 // price in USD, Hetzner in EUR) into the active taller via a
 // LIVE FX rate fetched from a free, auth-less endpoint.
 //
 // Resolution order for the active taller currency code:
-//   1. env BOOTSTRAP_CAPI_TALLER_CURRENCY  (explicit override)
-//   2. env BOOTSTRAP_CAPI_CURRENCY         (legacy alias)
+//   1. env YAGE_TALLER_CURRENCY  (explicit override)
+//   2. env YAGE_CURRENCY         (legacy alias)
 //   3. IP geolocation → ISO country → currency  (default)
 //   4. "USD" fallback if both geolocation and the FX API fail
 //
@@ -43,7 +43,7 @@ const (
 
 // countryToCurrency maps the ISO-3166 alpha-2 country code returned
 // by the geo-IP API to the ISO-4217 currency code. Only the codes
-// most likely to host a bootstrap-capi user are listed; anything
+// most likely to host a yage user are listed; anything
 // missing falls back to USD with a notice in the dry-run header.
 var countryToCurrency = map[string]string{
 	"US": "USD", "CA": "CAD", "MX": "MXN", "BR": "BRL", "AR": "ARS",
@@ -94,12 +94,12 @@ var (
 func resolveTallerCurrency() (string, string) {
 	tallerOnce.Do(func() {
 		// Step 1: explicit override.
-		if v := strings.ToUpper(strings.TrimSpace(os.Getenv("BOOTSTRAP_CAPI_TALLER_CURRENCY"))); v != "" {
+		if v := strings.ToUpper(strings.TrimSpace(os.Getenv("YAGE_TALLER_CURRENCY"))); v != "" {
 			tallerCurrency = v
 			tallerNote = "taller currency: " + v + " (env override)"
 			return
 		}
-		if v := strings.ToUpper(strings.TrimSpace(os.Getenv("BOOTSTRAP_CAPI_CURRENCY"))); v != "" {
+		if v := strings.ToUpper(strings.TrimSpace(os.Getenv("YAGE_CURRENCY"))); v != "" {
 			tallerCurrency = v
 			tallerNote = "taller currency: " + v + " (legacy env override)"
 			return
@@ -151,7 +151,7 @@ func TallerSymbol() string {
 func detectCountryCode() (string, error) {
 	c := &http.Client{Timeout: 5 * time.Second}
 	req, _ := http.NewRequest("GET", tallerGeoEndpoint, nil)
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := c.Do(req)
 	if err != nil {
 		return "", err
@@ -221,7 +221,7 @@ func saveFXToDiskCache(rates map[string]float64) {
 func fetchFXLive() (map[string]float64, error) {
 	c := &http.Client{Timeout: 10 * time.Second}
 	req, _ := http.NewRequest("GET", tallerFXEndpoint, nil)
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err

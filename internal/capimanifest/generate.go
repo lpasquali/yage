@@ -14,15 +14,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/k8sclient"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/proxmox"
 )
 
 // TryFillWorkloadInputsFromManagement ports
 // try_fill_workload_manifest_inputs_from_management_cluster
-// (bootstrap-capi.sh L5024-L5147). Best-effort fill from the management
+// (yage.sh L5024-L5147). Best-effort fill from the management
 // cluster: pulls PROXMOX_TEMPLATE_ID / PROXMOX_NODE from existing
 // ProxmoxMachineTemplates, and network + DNS from the live
 // ProxmoxCluster when the workload is selected. Guards respect the

@@ -1,6 +1,6 @@
 # Adding a new CAPI infrastructure provider
 
-bootstrap-capi's orchestrator drives the CAPI-standard flow (kind →
+yage's orchestrator drives the CAPI-standard flow (kind →
 clusterctl init → workload Cluster → CAAPH → Argo CD → optional
 pivot). Provider-specific bits live behind a `Provider` interface in
 `internal/provider`. New providers ship as a self-contained package.
@@ -67,8 +67,8 @@ Each provider package self-registers in `init()`:
 package myprovider
 
 import (
-    "github.com/lpasquali/bootstrap-capi/internal/config"
-    "github.com/lpasquali/bootstrap-capi/internal/provider"
+    "github.com/lpasquali/yage/internal/config"
+    "github.com/lpasquali/yage/internal/provider"
 )
 
 func init() {
@@ -76,11 +76,11 @@ func init() {
 }
 ```
 
-Then add a blank import to `cmd/bootstrap-capi/main.go`:
+Then add a blank import to `cmd/yage/main.go`:
 
 ```go
 import (
-    _ "github.com/lpasquali/bootstrap-capi/internal/provider/myprovider"
+    _ "github.com/lpasquali/yage/internal/provider/myprovider"
 )
 ```
 
@@ -108,7 +108,7 @@ per-provider phase.
      to set up minimum-permission credentials.
 6. Add config fields (region, instance-type defaults) in
    `internal/config/config.go` plus `Load()` defaults.
-7. Add a blank import to `cmd/bootstrap-capi/main.go`.
+7. Add a blank import to `cmd/yage/main.go`.
 8. If you ship a CSI integration: model your CSI Secret apply on
    `internal/csix.ApplyConfigSecretToWorkload`.
 9. If your provider has an identity-bootstrap concept: model your
@@ -150,8 +150,8 @@ ibmcloud       --infrastructure ibmcloud   kubernetes-sigs/cluster-api-provider-
 Replay first-run setup hints any time:
 
 ```bash
-bootstrap-capi --print-pricing-setup aws         # one vendor
-bootstrap-capi --print-pricing-setup all         # every vendor that needs setup
+yage --print-pricing-setup aws         # one vendor
+yage --print-pricing-setup all         # every vendor that needs setup
 ```
 
 See `docs/cost-and-pricing.md` for what each pricing fetcher does

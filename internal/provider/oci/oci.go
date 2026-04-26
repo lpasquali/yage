@@ -1,4 +1,4 @@
-// Package oci is the bootstrap-capi Provider implementation for the
+// Package oci is the yage Provider implementation for the
 // Cluster API Oracle Cloud Infrastructure provider (CAPOCI —
 // oracle/cluster-api-provider-oci).
 //
@@ -7,8 +7,8 @@
 package oci
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 func init() {

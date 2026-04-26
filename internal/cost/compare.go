@@ -18,9 +18,9 @@ import (
 	"io"
 	"sort"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/pricing"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/pricing"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 // liveBlockStorageUSDPerGBMonth fetches the cheap-tier block

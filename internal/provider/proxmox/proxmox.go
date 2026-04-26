@@ -1,4 +1,4 @@
-// Package proxmox is the bootstrap-capi Provider implementation for
+// Package proxmox is the yage Provider implementation for
 // the Cluster API Proxmox VE infrastructure provider (CAPMOX).
 //
 // This package is a THIN WRAPPER over the existing Proxmox-specific
@@ -13,13 +13,13 @@
 package proxmox
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/capacity"
-	"github.com/lpasquali/bootstrap-capi/internal/capimanifest"
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/csix"
-	"github.com/lpasquali/bootstrap-capi/internal/opentofux"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
-	pveapi "github.com/lpasquali/bootstrap-capi/internal/proxmox"
+	"github.com/lpasquali/yage/internal/capacity"
+	"github.com/lpasquali/yage/internal/capimanifest"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/csix"
+	"github.com/lpasquali/yage/internal/opentofux"
+	"github.com/lpasquali/yage/internal/provider"
+	pveapi "github.com/lpasquali/yage/internal/proxmox"
 )
 
 func init() {

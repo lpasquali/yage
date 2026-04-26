@@ -1,4 +1,4 @@
-// Package logx mirrors the bash log/warn/die helpers from bootstrap-capi.sh.
+// Package logx mirrors the bash log/warn/die helpers from yage.sh.
 //
 // Bash equivalents:
 //

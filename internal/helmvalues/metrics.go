@@ -3,7 +3,7 @@
 // body as a string; callers write it to disk, feed to `helm template`,
 // or embed as valuesTemplate inside a HelmChartProxy.
 //
-// Bash source map (bootstrap-capi.sh):
+// Bash source map (yage.sh):
 //   - workload_argocd_metrics_server_helm_values             ~L6010-6024
 //   - workload_argocd_victoria_helm_values                   ~L6826-6850
 //   - workload_argocd_opentelemetry_helm_values              ~L6852-6858
@@ -14,7 +14,7 @@
 package helmvalues
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/yage/internal/config"
 )
 
 // MetricsServerValues ports workload_argocd_metrics_server_helm_values.

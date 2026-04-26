@@ -2,14 +2,14 @@
 // (Proxmox, vSphere) that don't have a vendor pricing API. The TCO
 // path here is the only "monetary number" they emit, and every input
 // is supplied by the operator (capex, useful life, watts, kWh rate,
-// flat monthly support) — bootstrap-capi never invents a number.
+// flat monthly support) — yage never invents a number.
 package provider
 
 import (
 	"errors"
 	"fmt"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/yage/internal/config"
 )
 
 // TCOEstimate computes an amortized monthly cost for a self-hosted

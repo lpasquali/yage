@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/promptx"
-	"github.com/lpasquali/bootstrap-capi/internal/yamlx"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/promptx"
+	"github.com/lpasquali/yage/internal/yamlx"
 )
 
 // EnsureProxmoxAdminConfig ports ensure_proxmox_admin_config

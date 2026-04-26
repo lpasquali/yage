@@ -12,10 +12,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/kind/pkg/cluster"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
-	"github.com/lpasquali/bootstrap-capi/internal/kubectlx"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/k8sclient"
+	"github.com/lpasquali/yage/internal/kubectlx"
+	"github.com/lpasquali/yage/internal/logx"
 )
 
 // EnsureManagementCluster provisions the management cluster on Proxmox

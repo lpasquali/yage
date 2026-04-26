@@ -66,7 +66,7 @@ func ociPayAsYouGo(p ociProduct) float64 {
 
 func (o *ociFetcher) Fetch(shape, region string) (Item, error) {
 	req, _ := http.NewRequest("GET", ociPriceURL, nil)
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
 		return Item{}, fmt.Errorf("oci: %w", err)

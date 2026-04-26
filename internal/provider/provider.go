@@ -1,4 +1,4 @@
-// Package provider is bootstrap-capi's plugin point for CAPI
+// Package provider is yage's plugin point for CAPI
 // infrastructure providers. The orchestrator drives the
 // CAPI-standard flow (kind boots → clusterctl init → workload Cluster
 // → CAAPH → Argo CD → optional pivot); a Provider implementation
@@ -31,7 +31,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/yage/internal/config"
 )
 
 // ErrNotApplicable signals a phase that doesn't apply to this
@@ -85,7 +85,7 @@ type Provider interface {
 	EnsureIdentity(cfg *config.Config) error
 
 	// Capacity queries the underlying cloud / hypervisor for the
-	// CPU / memory / storage available to bootstrap-capi (filtered
+	// CPU / memory / storage available to yage (filtered
 	// by AllowedNodes / region / tag — provider-defined). Used by
 	// the capacity preflight + dry-run plan. May return
 	// ErrNotApplicable when the provider has no single capacity
@@ -164,7 +164,7 @@ var (
 
 // Register adds a provider factory under name. Implementations call
 // this from init() so the orchestrator picks them up by importing
-// the package (and bootstrap-capi imports every provider package
+// the package (and yage imports every provider package
 // it ships). Panics on duplicate registration — that's a programmer
 // error, fail at start-up not at runtime.
 func Register(name string, factory func() Provider) {

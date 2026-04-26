@@ -13,9 +13,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/yaml"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/k8sclient"
+	"github.com/lpasquali/yage/internal/logx"
 )
 
 // EnsureCAPIManifestPath ports bootstrap_ensure_capi_manifest_path
@@ -69,7 +69,7 @@ func RefreshDefaultCAPIManifestPath(cfg *config.Config) {
 			cfg.KindClusterName, ns, cfg.WorkloadClusterName, cfg.CAPIManifestSecretName)
 		return
 	}
-	logx.Die("bootstrap-capi: internal error — CAPI manifest path refresh with neither user file nor Secret mode.")
+	logx.Die("yage: internal error — CAPI manifest path refresh with neither user file nor Secret mode.")
 }
 
 // TryLoadCAPIManifestFromSecret ports capi_manifest_try_load_from_secret
@@ -144,7 +144,7 @@ func PushCAPIManifestToSecret(cfg *config.Config) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cfg.CAPIManifestSecretName,
 			Namespace: cfg.CAPIManifestSecretNamespace,
-			Labels:    map[string]string{"app.kubernetes.io/managed-by": "bootstrap-capi"},
+			Labels:    map[string]string{"app.kubernetes.io/managed-by": "yage"},
 		},
 		Data: map[string][]byte{cfg.CAPIManifestSecretKey: body},
 	}
@@ -163,7 +163,7 @@ func PushCAPIManifestToSecret(cfg *config.Config) {
 		logx.Die("Failed to store workload manifest in Secret %s/%s (key %s): %v",
 			cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, cfg.CAPIManifestSecretKey, err)
 	}
-	logx.Log("Wrote workload manifest to Secret %s/%s (key %s). No persistent file under ~/.bootstrap-capi — debug via k9s or kubectl get secret -n %s %s -o yaml.",
+	logx.Log("Wrote workload manifest to Secret %s/%s (key %s). No persistent file under ~/.yage — debug via k9s or kubectl get secret -n %s %s -o yaml.",
 		cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, cfg.CAPIManifestSecretKey,
 		cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName)
 	TouchWorkloadGencodeStamp(cfg)
@@ -225,7 +225,7 @@ func WorkloadGencodeStampPath(cfg *config.Config) string {
 	if name == "" {
 		name = "capi-provisioner"
 	}
-	return filepath.Join(base, "bootstrap-capi", "gencode", name, "workload.last-clusterctl")
+	return filepath.Join(base, "yage", "gencode", name, "workload.last-clusterctl")
 }
 
 // TouchWorkloadGencodeStamp ports capi_bootstrap_touch_workload_gencode_stamp
@@ -312,7 +312,7 @@ func SyncClusterctlConfigFile(cfg *config.Config) string {
 		return cfg.ClusterctlCfg
 	}
 	RegisterExitTrap()
-	f, err := os.CreateTemp("", "bootstrap-capi-clusterctl.*.yaml")
+	f, err := os.CreateTemp("", "yage-clusterctl.*.yaml")
 	if err != nil {
 		logx.Die("Cannot create ephemeral clusterctl config: %v", err)
 	}

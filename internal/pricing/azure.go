@@ -61,7 +61,7 @@ func (a *azureFetcher) Fetch(sku, region string) (Item, error) {
 	if err != nil {
 		return Item{}, err
 	}
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
 		return Item{}, fmt.Errorf("azure: %w", err)
@@ -115,7 +115,7 @@ func azureRetail(filter string) ([]azureItem, error) {
 	q.Set("$filter", filter)
 	endpoint := azureRetailURL + "?" + q.Encode()
 	req, _ := http.NewRequest("GET", endpoint, nil)
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err
@@ -288,9 +288,9 @@ func AzureLogAnalyticsUSDPerGB(region string) (float64, error) {
 // still keys by region).
 func AzureDNSZoneUSDPerMonth(region string) (float64, error) {
 	// Azure DNS armRegionName is "global" in the catalog; let
-	// the caller override via env BOOTSTRAP_CAPI_AZURE_DNS_REGION.
+	// the caller override via env YAGE_AZURE_DNS_REGION.
 	dnsRegion := region
-	if v := os.Getenv("BOOTSTRAP_CAPI_AZURE_DNS_REGION"); v != "" {
+	if v := os.Getenv("YAGE_AZURE_DNS_REGION"); v != "" {
 		dnsRegion = v
 	}
 	filter := fmt.Sprintf(
@@ -374,7 +374,7 @@ func AzureManagedDiskUSDPerGBMonth(region, productSubstr string) (float64, error
 	q.Set("$filter", filter)
 	endpoint := azureRetailURL + "?" + q.Encode()
 	req, _ := http.NewRequest("GET", endpoint, nil)
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := c.Do(req)
 	if err != nil {
 		return 0, err

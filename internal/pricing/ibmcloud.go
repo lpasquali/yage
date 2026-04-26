@@ -23,7 +23,7 @@ import (
 //
 // VPC Gen2 instance pricing is published as a flat hourly rate per
 // profile per region under the `is.instance.profile` catalog entry.
-// Token: BOOTSTRAP_CAPI_IBMCLOUD_API_KEY or IBMCLOUD_API_KEY.
+// Token: YAGE_IBMCLOUD_API_KEY or IBMCLOUD_API_KEY.
 
 const (
 	ibmIAMTokenURL    = "https://iam.cloud.ibm.com/identity/token"
@@ -37,7 +37,7 @@ func init() {
 }
 
 func ibmAPIKey() string {
-	if v := os.Getenv("BOOTSTRAP_CAPI_IBMCLOUD_API_KEY"); v != "" {
+	if v := os.Getenv("YAGE_IBMCLOUD_API_KEY"); v != "" {
 		return v
 	}
 	return os.Getenv("IBMCLOUD_API_KEY")
@@ -54,7 +54,7 @@ func ibmExchangeAPIKey(key string) (string, error) {
 	req, _ := http.NewRequest("POST", ibmIAMTokenURL, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	c := &http.Client{Timeout: 15 * time.Second}
 	resp, err := c.Do(req)
 	if err != nil {
@@ -131,7 +131,7 @@ func (b *ibmFetcher) Fetch(profile, region string) (Item, error) {
 	endpoint := ibmCatalogBaseURL + "?" + q.Encode()
 	req, _ := http.NewRequest("GET", endpoint, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
 		return Item{}, fmt.Errorf("ibmcloud catalog: %w", err)

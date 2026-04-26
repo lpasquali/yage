@@ -3,7 +3,7 @@ package ciliumx
 import (
 	"testing"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/yage/internal/config"
 )
 
 func TestDefaultLBIPAMPoolCIDRFromNodes(t *testing.T) {

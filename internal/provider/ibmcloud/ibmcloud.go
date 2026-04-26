@@ -1,4 +1,4 @@
-// Package ibmcloud is the bootstrap-capi Provider implementation for
+// Package ibmcloud is the yage Provider implementation for
 // the Cluster API IBM Cloud provider (CAPIBM —
 // kubernetes-sigs/cluster-api-provider-ibmcloud).
 //
@@ -7,8 +7,8 @@
 package ibmcloud
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 func init() {

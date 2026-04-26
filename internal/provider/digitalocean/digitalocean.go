@@ -1,4 +1,4 @@
-// Package digitalocean is the bootstrap-capi Provider implementation
+// Package digitalocean is the yage Provider implementation
 // for the Cluster API DigitalOcean infrastructure provider (CAPDO —
 // kubernetes-sigs/cluster-api-provider-digitalocean).
 //
@@ -8,8 +8,8 @@
 package digitalocean
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 func init() {

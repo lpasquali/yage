@@ -1,4 +1,4 @@
-// Package hetzner is the bootstrap-capi Provider implementation for
+// Package hetzner is the yage Provider implementation for
 // the Cluster API Hetzner Cloud infrastructure provider (CAPHV —
 // github.com/syself/cluster-api-provider-hetzner).
 //
@@ -42,8 +42,8 @@
 package hetzner
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 func init() {
@@ -232,7 +232,7 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 
 // EnsureCSISecret is unimplemented for Hetzner: hcloud-csi-driver +
 // hcloud-cloud-controller-manager ship via Helm with the same
-// HCLOUD_TOKEN secret CAPHV uses. No bootstrap-capi-managed Secret
+// HCLOUD_TOKEN secret CAPHV uses. No yage-managed Secret
 // apply path.
 func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
 	return provider.ErrNotApplicable

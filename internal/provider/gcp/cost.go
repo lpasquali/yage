@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/pricing"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/pricing"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 // GCP overhead is **shape**, not money. Component counts (Cloud
@@ -15,7 +15,7 @@ import (
 // this file comes from internal/pricing — GCP Cloud Billing
 // Catalog API, which requires a Google API key.
 //
-// API key: set GOOGLE_BILLING_API_KEY (or BOOTSTRAP_CAPI_GCP_API_KEY).
+// API key: set GOOGLE_BILLING_API_KEY (or YAGE_GCP_API_KEY).
 // When unset, EstimateMonthlyCostUSD returns provider.ErrNotApplicable
 // so the orchestrator surfaces "GCP estimate unavailable: needs
 // Cloud Billing API key" rather than fabricating a number.

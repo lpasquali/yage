@@ -1,4 +1,4 @@
-// Package gcp is the bootstrap-capi Provider implementation for the
+// Package gcp is the yage Provider implementation for the
 // Cluster API GCP infrastructure provider (CAPG —
 // github.com/kubernetes-sigs/cluster-api-provider-gcp).
 //
@@ -14,7 +14,7 @@
 //     via GOOGLE_APPLICATION_CREDENTIALS or the GCP_B64ENCODED_CREDENTIALS
 //     env var. The IAM role + key are created by the operator out-of-
 //     band (gcloud iam service-accounts create + roles/owner-ish
-//     bindings) — bootstrap-capi doesn't manage GCP projects or IAM.
+//     bindings) — yage doesn't manage GCP projects or IAM.
 //   - Capacity: would query the GCP Compute API for the project's
 //     per-region quotas (CPUS, IN_USE_ADDRESSES, DISKS_TOTAL_GB, …).
 //     Future work; the orchestrator falls back to "skip preflight,
@@ -34,8 +34,8 @@
 package gcp
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 func init() {
@@ -63,7 +63,7 @@ func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) 
 }
 
 // EnsureGroup is a no-op for GCP: cluster-level grouping is by
-// project + label, both managed outside bootstrap-capi.
+// project + label, both managed outside yage.
 func (p *Provider) EnsureGroup(cfg *config.Config, name string) error {
 	return provider.ErrNotApplicable
 }

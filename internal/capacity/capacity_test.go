@@ -3,7 +3,7 @@ package capacity
 import (
 	"testing"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/yage/internal/config"
 )
 
 func tinyHost() *HostCapacity {

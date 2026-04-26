@@ -1,4 +1,4 @@
-// Package aws is the bootstrap-capi Provider implementation for the
+// Package aws is the yage Provider implementation for the
 // Cluster API AWS infrastructure provider (CAPA —
 // github.com/kubernetes-sigs/cluster-api-provider-aws).
 //
@@ -15,7 +15,7 @@
 //     AWS_SECRET_ACCESS_KEY (or an EC2 instance profile when running
 //     on an AWS-hosted bootstrap host). The IAM role itself is
 //     created by `clusterawsadm bootstrap iam create-cloudformation-stack`,
-//     which the user runs once per AWS account. bootstrap-capi
+//     which the user runs once per AWS account. yage
 //     doesn't manage that stack — out of scope.
 //   - Capacity: would query EC2 quotas (Service Quotas API) for the
 //     account's vCPU / instance limits per family. Future work; the
@@ -35,8 +35,8 @@
 package aws
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 func init() {

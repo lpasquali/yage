@@ -4,8 +4,8 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/shell"
 )
 
 // WorkloadKubeconfigFromClusterctl ports

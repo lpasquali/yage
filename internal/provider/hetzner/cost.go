@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/pricing"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/pricing"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 // Hetzner overhead is **shape**, not money. Tier counts (LB sizes,
@@ -140,7 +140,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 	tierLabel := orDefault(cfg.HetznerOverheadTier, "prod")
 	note := fmt.Sprintf(
-		"Hetzner Cloud monthly caps (live api.hetzner.cloud, EUR→USD via BOOTSTRAP_CAPI_EUR_USD), "+
+		"Hetzner Cloud monthly caps (live api.hetzner.cloud, EUR→USD via YAGE_EUR_USD), "+
 			"region %s, %s overhead tier (LB + floating IPs + volume budget). "+
 			"Boot disk + 20 TB egress bundled per server. Backups (+20%%) not enabled by default.",
 		region, tierLabel,

@@ -18,18 +18,18 @@ import (
 // caps monthly billing — that cap is what shows up here, not
 // hourly × 730).
 //
-// Token: HCLOUD_TOKEN (also accepted: BOOTSTRAP_CAPI_HCLOUD_TOKEN).
+// Token: HCLOUD_TOKEN (also accepted: YAGE_HCLOUD_TOKEN).
 // When unset, the fetcher returns ErrUnavailable and the cost
 // path surfaces "Hetzner estimate unavailable: HCLOUD_TOKEN
 // not set" rather than fabricate a number.
 //
-// USD conversion: env BOOTSTRAP_CAPI_EUR_USD overrides the
+// USD conversion: env YAGE_EUR_USD overrides the
 // default rate; we don't pull live FX (out of scope) but the
 // rate is one knob, easy to override per-run.
 const hetznerServerTypesURL = "https://api.hetzner.cloud/v1/server_types"
 
 func hetznerToken() string {
-	if v := os.Getenv("BOOTSTRAP_CAPI_HCLOUD_TOKEN"); v != "" {
+	if v := os.Getenv("YAGE_HCLOUD_TOKEN"); v != "" {
 		return v
 	}
 	return os.Getenv("HCLOUD_TOKEN")
@@ -62,7 +62,7 @@ type hetznerListResp struct {
 }
 
 func eurToUSD() float64 {
-	if v := os.Getenv("BOOTSTRAP_CAPI_EUR_USD"); v != "" {
+	if v := os.Getenv("YAGE_EUR_USD"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			return f
 		}
@@ -79,7 +79,7 @@ func (h *hetznerFetcher) Fetch(sku, region string) (Item, error) {
 	if err != nil {
 		return Item{}, err
 	}
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
@@ -155,7 +155,7 @@ func fetchHetznerPricing() (*hetznerPricingPayload, error) {
 	}
 	c := &http.Client{Timeout: 10 * time.Second}
 	req, _ := http.NewRequest("GET", hetznerPricingURL, nil)
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := c.Do(req)
 	if err != nil {

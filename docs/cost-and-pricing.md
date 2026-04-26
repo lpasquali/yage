@@ -1,6 +1,6 @@
 # Cost & pricing
 
-bootstrap-capi can answer two questions at planning time, both
+yage can answer two questions at planning time, both
 without provisioning anything:
 
 1. **What does this cluster cost per month** on the configured cloud?
@@ -41,7 +41,7 @@ rather than a stale fabricated figure.
               ┌────────────────────────────────┐
               │ FX from open.er-api.com (24h   │
               │ disk cache); active taller     │
-              │ from BOOTSTRAP_CAPI_TALLER_     │
+              │ from YAGE_TALLER_     │
               │ CURRENCY env, geo-IP fallback  │
               └────────────────────────────────┘
                               │
@@ -64,27 +64,27 @@ rather than a stale fabricated figure.
 
 **All of these calls are free**. None of them appear on your bill.
 Don't confuse the AWS Pricing API (free) with AWS Cost Explorer
-(`ce:GetCostAndUsage` — $0.01/request). bootstrap-capi never touches
+(`ce:GetCostAndUsage` — $0.01/request). yage never touches
 Cost Explorer.
 
 ## First-run onboarding hint
 
 When the cost path runs and detects no credentials configured for a
-vendor, bootstrap-capi prints the exact CLI snippet you'd run to
+vendor, yage prints the exact CLI snippet you'd run to
 create a minimum-permission identity for that vendor's pricing API.
 Shown ONCE per vendor per cache (sentinel at
-`~/.cache/bootstrap-capi/pricing/.onboarded-<vendor>`); replay any
+`~/.cache/yage/pricing/.onboarded-<vendor>`); replay any
 time:
 
 ```bash
-bootstrap-capi --print-pricing-setup aws        # one vendor
-bootstrap-capi --print-pricing-setup all        # every vendor that needs setup
+yage --print-pricing-setup aws        # one vendor
+yage --print-pricing-setup all        # every vendor that needs setup
 ```
 
 Knobs:
 
-- `BOOTSTRAP_CAPI_NO_PRICING_ONBOARDING=1` — silence permanently
-- `BOOTSTRAP_CAPI_FORCE_PRICING_ONBOARDING=1` — always re-display
+- `YAGE_NO_PRICING_ONBOARDING=1` — silence permanently
+- `YAGE_FORCE_PRICING_ONBOARDING=1` — always re-display
 
 Hint content per vendor (excerpts):
 
@@ -100,19 +100,19 @@ Hint content per vendor (excerpts):
 
 ## Taller — internal currency abstraction
 
-"Taller" is bootstrap-capi's display currency. Vendors return prices
+"Taller" is yage's display currency. Vendors return prices
 in USD (AWS / Azure / GCP / DO / Linode / OCI / IBM) or EUR (Hetzner
 — converted to USD inside the fetcher); display happens in whatever
 currency the operator wants.
 
 Resolution order:
 
-1. `BOOTSTRAP_CAPI_TALLER_CURRENCY` (or legacy `BOOTSTRAP_CAPI_CURRENCY`)
+1. `YAGE_TALLER_CURRENCY` (or legacy `YAGE_CURRENCY`)
 2. Geo-IP via `ip-api.com/json` → ISO country → ISO currency
 3. USD fallback (and a notice if geolocation failed)
 
 FX fetched once per 24h from `open.er-api.com/v6/latest/USD` (free,
-auth-free), cached on disk at `~/.cache/bootstrap-capi/pricing/fx-USD.json`.
+auth-free), cached on disk at `~/.cache/yage/pricing/fx-USD.json`.
 
 Display sample (geo-detected EUR taller):
 
@@ -131,7 +131,7 @@ Display sample (geo-detected EUR taller):
 Override:
 
 ```bash
-BOOTSTRAP_CAPI_TALLER_CURRENCY=JPY bootstrap-capi --dry-run --cost-compare
+YAGE_TALLER_CURRENCY=JPY yage --dry-run --cost-compare
 # → monthly ¥, ¥/GB-mo
 ```
 
@@ -145,7 +145,7 @@ per cloud — useful for deciding which target gives the widest
 persistence envelope.
 
 ```bash
-bootstrap-capi --dry-run --cost-compare --budget-usd-month 500
+yage --dry-run --cost-compare --budget-usd-month 500
 ```
 
 When a cloud's estimate fails (no creds, API down, SKU not in
@@ -156,11 +156,11 @@ exactly what's missing — never a fabricated number.
 
 Proxmox and vSphere have no vendor pricing API; the cost is sunk
 hardware + electricity + (for vSphere) licensing. The TCO path lets
-the operator supply those numbers and bootstrap-capi computes the
+the operator supply those numbers and yage computes the
 amortized monthly:
 
 ```bash
-bootstrap-capi --dry-run \
+yage --dry-run \
   --hardware-cost-usd 5000 \
   --hardware-useful-life-years 5 \
   --hardware-watts 200 \
@@ -192,7 +192,7 @@ total         = sum
 
 Without `--hardware-cost-usd`, both providers return
 `ErrNotApplicable` and the cost section politely says "supply the
-flag to enable". No defaults — bootstrap-capi never invents the
+flag to enable". No defaults — yage never invents the
 hardware cost of an on-prem cluster.
 
 ## AWS overhead tiers
@@ -273,7 +273,7 @@ Symmetric to AWS:
 The "no hardcoded money numbers" rule comes from a real failure
 mode in cost-aware tooling: hardcoded tables drift, nobody refreshes
 them, and confidence in the planner erodes. By reading live from
-each vendor's catalog, bootstrap-capi's plan is as fresh as the
+each vendor's catalog, yage's plan is as fresh as the
 catalog itself. When a catalog is unreachable, the operator sees
 "unavailable" and a hint for fixing it — better than confidently
 showing a number that's two years stale.

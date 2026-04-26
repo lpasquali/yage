@@ -10,7 +10,7 @@ import (
 
 // GCP service-specific helpers — read from the same Cloud Billing
 // Catalog API as gcp.go. All require GOOGLE_BILLING_API_KEY (or
-// BOOTSTRAP_CAPI_GCP_API_KEY).
+// YAGE_GCP_API_KEY).
 //
 // Service IDs we filter on:
 //   gcpComputeEngineService = "6F81-5844-456A"  — Compute Engine
@@ -44,7 +44,7 @@ func gcpFindSku(serviceID, region, key string, descContains []string, mustNotCon
 			q.Set("pageToken", pageToken)
 		}
 		req, _ := http.NewRequest("GET", u+"?"+q.Encode(), nil)
-		req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+		req.Header.Set("User-Agent", "yage/pricing")
 		c := &http.Client{Timeout: 30 * 1e9} // 30s
 		resp, err := c.Do(req)
 		if err != nil {

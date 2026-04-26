@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/yage/internal/config"
 )
 
 // BackupNamespaces ports kind_bootstrap_state_backup_namespaces. When

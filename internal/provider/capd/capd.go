@@ -20,8 +20,8 @@
 package capd
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 func init() {
@@ -155,7 +155,7 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 	return nil
 }
 
-// EnsureCSISecret — CAPD has no CSI shipped with bootstrap-capi.
+// EnsureCSISecret — CAPD has no CSI shipped with yage.
 func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
 	return provider.ErrNotApplicable
 }

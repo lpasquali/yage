@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/kindsync"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/kindsync"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/proxmox"
 )
 
 // GenerateConfigsFromOutputs ports generate_configs_from_terraform_outputs

@@ -1,7 +1,7 @@
 package capacity
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/yage/internal/config"
 )
 
 // WorkloadAllocations describes how the workload cluster's worker
@@ -9,13 +9,13 @@ import (
 //
 //   1. SystemApps   — fixed reserve for kyverno / cert-manager /
 //                     proxmox-csi / argocd / keycloak / external-secrets
-//                     / infisical (the add-ons bootstrap-capi installs).
+//                     / infisical (the add-ons yage installs).
 //   2. Database     — 1/3 of the remainder: cnpg, postgres operators,
 //                     anything stateful needing a chunk of RAM + IOPS.
 //   3. Observability — 1/3 of the remainder: vmsingle / victoria-metrics,
 //                      OpenTelemetry collector, Grafana, Loki etc.
 //   4. Product      — 1/3 of the remainder: the user's applications,
-//                     Argo CD-deployed workloads. bootstrap-capi has
+//                     Argo CD-deployed workloads. yage has
 //                     no opinion on what lives here.
 //
 // These are PLANNING numbers — they tell the operator what fits, and

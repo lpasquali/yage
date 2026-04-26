@@ -44,7 +44,7 @@ type linodeTypesResp struct {
 
 func (l *linodeFetcher) Fetch(typeID, region string) (Item, error) {
 	req, _ := http.NewRequest("GET", linodeTypesURL, nil)
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := l.httpClient.Do(req)
 	if err != nil {
 		return Item{}, fmt.Errorf("linode: %w", err)

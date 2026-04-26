@@ -15,7 +15,7 @@ import (
 // list. We pick the size by slug ("s-2vcpu-4gb", "g-2vcpu-8gb", etc.)
 // and verify the region is supported.
 //
-// Token: DIGITALOCEAN_TOKEN (also accepted: BOOTSTRAP_CAPI_DO_TOKEN).
+// Token: DIGITALOCEAN_TOKEN (also accepted: YAGE_DO_TOKEN).
 const doSizesURL = "https://api.digitalocean.com/v2/sizes?per_page=200"
 
 type doFetcher struct{ httpClient *http.Client }
@@ -25,7 +25,7 @@ func init() {
 }
 
 func doToken() string {
-	if v := os.Getenv("BOOTSTRAP_CAPI_DO_TOKEN"); v != "" {
+	if v := os.Getenv("YAGE_DO_TOKEN"); v != "" {
 		return v
 	}
 	return os.Getenv("DIGITALOCEAN_TOKEN")
@@ -49,7 +49,7 @@ func (d *doFetcher) Fetch(sku, region string) (Item, error) {
 		return Item{}, fmt.Errorf("digitalocean: DIGITALOCEAN_TOKEN not set")
 	}
 	req, _ := http.NewRequest("GET", doSizesURL, nil)
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := d.httpClient.Do(req)
 	if err != nil {

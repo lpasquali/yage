@@ -1,15 +1,15 @@
-# bootstrap-capi — Go Architecture
+# yage — Go Architecture
 
-This document describes the Go implementation of `bootstrap-capi`. The bash
-script `bootstrap-capi.sh` remains the canonical reference (and is the source
+This document describes the Go implementation of `yage`. The bash
+script `yage.sh` remains the canonical reference (and is the source
 the Go port is reconciled against — phase comments throughout
 `internal/bootstrap/bootstrap.go` cite the originating bash line ranges as
-`L8133-L8211` etc.). The Go binary lives in `cmd/bootstrap-capi` and dispatches
+`L8133-L8211` etc.). The Go binary lives in `cmd/yage` and dispatches
 to `internal/bootstrap.Run`.
 
 ## High-level overview
 
-`bootstrap-capi` provisions a Cluster API management plane (in a local kind
+`yage` provisions a Cluster API management plane (in a local kind
 cluster) and brings up a Proxmox-VE workload cluster on top of it, then layers
 in CNI (Cilium), CSI (Proxmox CSI), and a GitOps app-of-apps surface (Argo CD
 on the workload, fed by CAAPH HelmChartProxy from the management cluster).
@@ -76,12 +76,12 @@ focused leaf packages:
   public catalog API (AWS Bulk JSON, Azure Retail Prices, GCP Cloud Billing
   Catalog, Hetzner, DigitalOcean, Linode, OCI, IBM Cloud Global Catalog).
   File-backed 24h cache at
-  `~/.cache/bootstrap-capi/pricing/`. No hardcoded $/hour or $/GB-month
+  `~/.cache/yage/pricing/`. No hardcoded $/hour or $/GB-month
   numbers anywhere — when a vendor API is unreachable, callers receive
   `ErrUnavailable` and the cost path surfaces "estimate unavailable" rather
   than a stale figure. Also hosts the **taller** currency abstraction:
   geo-detect via ip-api.com → ISO country → currency, override via
-  `BOOTSTRAP_CAPI_TALLER_CURRENCY`, FX from open.er-api.com (24h disk
+  `YAGE_TALLER_CURRENCY`, FX from open.er-api.com (24h disk
   cache). And per-vendor IAM/token onboarding hints with sentinel-based
   first-run-only display. See `docs/cost-and-pricing.md`.
 - `internal/cost` — multi-cloud comparator. `--cost-compare` runs every
@@ -104,7 +104,7 @@ focused leaf packages:
 
 ```mermaid
 flowchart TD
-    A[main entry: cmd/bootstrap-capi] --> B[bootstrap.Run]
+    A[main entry: cmd/yage] --> B[bootstrap.Run]
     B --> SM{standalone mode?}
     SM -- backup/restore --> KSO[kind.Backup or kind.Restore<br/>L7746-L7760]
     SM -- workload-rollout --> WR[workload-rollout flow<br/>L7860-L7941]
@@ -260,7 +260,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    BC[bootstrap-capi binary] --> KCB[host binaries: kubectl, kind,<br/>clusterctl, cilium-cli, argocd-cli,<br/>cmctl, kyverno-cli, opentofu]
+    BC[yage binary] --> KCB[host binaries: kubectl, kind,<br/>clusterctl, cilium-cli, argocd-cli,<br/>cmctl, kyverno-cli, opentofu]
     BC --> KIND[kind cluster: management plane]
     BC --> TF[OpenTofu / BPG provider:<br/>Proxmox CAPI + CSI users,<br/>tokens, ACLs]
     BC --> CCI[clusterctl init: CAPI core,<br/>kubeadm bootstrap, kubeadm<br/>control-plane, CAAPH addon,<br/>in-cluster IPAM, CAPMOX]
@@ -323,7 +323,7 @@ flowchart LR
     plan --> prov[provider.For cfg<br/>EstimateMonthlyCostUSD]
     prov --> pricing[internal/pricing.Fetch<br/>vendor, sku, region]
     pricing --> live[(vendor catalog<br/>HTTP GET, free APIs)]
-    pricing --> cache[(~/.cache/bootstrap-capi/<br/>pricing/*.json)]
+    pricing --> cache[(~/.cache/yage/<br/>pricing/*.json)]
     pricing --> taller[ToTaller<br/>FormatTaller]
     taller --> fx[(open.er-api.com<br/>FX rates, 24h cache)]
     taller --> geo[(ip-api.com<br/>country → currency)]
@@ -407,7 +407,7 @@ The eight pivot steps, with their Go entry points in the new
 
 ```mermaid
 flowchart TD
-    START[bootstrap-capi start] --> KIND[kind cluster transient<br/>phases 2.4 to 2.6]
+    START[yage start] --> KIND[kind cluster transient<br/>phases 2.4 to 2.6]
     KIND --> PROV[clusterctl init on kind<br/>phase 2.8]
     PROV --> BRANCH{PIVOT_ENABLED?}
 
@@ -468,7 +468,7 @@ flowchart TD
     CFG --> SNAP[config.Snapshot<br/>builds map of fields with<br/>EXPLICIT guards]
     SNAP --> SYNC[kindsync.SyncBootstrapConfigToKind]
     SYNC --> KSEC[kind Secret<br/>proxmox-bootstrap-config/config.yaml]
-    KSEC --> NEXT[next bootstrap-capi run]
+    KSEC --> NEXT[next yage run]
     NEXT --> MERGE[kindsync.MergeProxmoxBootstrapSecretsFromKind]
     MERGE --> READBACK[read Secret config.yaml]
     READBACK --> OVR[overlay onto *config.Config<br/>SKIP fields where matching<br/>NAME_EXPLICIT is set]

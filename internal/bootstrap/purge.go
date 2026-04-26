@@ -16,14 +16,14 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/kind/pkg/cluster"
 
-	"github.com/lpasquali/bootstrap-capi/internal/capimanifest"
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
-	"github.com/lpasquali/bootstrap-capi/internal/kindsync"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/opentofux"
-	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
+	"github.com/lpasquali/yage/internal/capimanifest"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/k8sclient"
+	"github.com/lpasquali/yage/internal/kindsync"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/opentofux"
+	"github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/shell"
 )
 
 var capiClusterGVR = schema.GroupVersionResource{

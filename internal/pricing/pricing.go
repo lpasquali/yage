@@ -68,7 +68,7 @@ var (
 	fetchers = map[string]Fetcher{}
 	// disabled toggles all live fetches off; useful for tests + CI
 	// where reaching the public APIs is undesirable.
-	disabled = os.Getenv("BOOTSTRAP_CAPI_PRICING_DISABLED") == "true"
+	disabled = os.Getenv("YAGE_PRICING_DISABLED") == "true"
 )
 
 // Register makes a vendor fetcher available to Fetch().
@@ -129,16 +129,16 @@ func FetchMany(vendor string, queries []Query) ([]Item, error) {
 // Query is one (sku, region) pair for FetchMany.
 type Query struct{ SKU, Region string }
 
-// --- cache: ~/.cache/bootstrap-capi/pricing/<vendor>-<sku>-<region>.json ---
+// --- cache: ~/.cache/yage/pricing/<vendor>-<sku>-<region>.json ---
 
 func cacheDir() string {
-	if d := os.Getenv("BOOTSTRAP_CAPI_PRICING_CACHE"); d != "" {
+	if d := os.Getenv("YAGE_PRICING_CACHE"); d != "" {
 		return d
 	}
 	if d, err := os.UserCacheDir(); err == nil {
-		return filepath.Join(d, "bootstrap-capi", "pricing")
+		return filepath.Join(d, "yage", "pricing")
 	}
-	return filepath.Join(os.TempDir(), "bootstrap-capi-pricing")
+	return filepath.Join(os.TempDir(), "yage-pricing")
 }
 
 func cachePath(vendor, sku, region string) string {

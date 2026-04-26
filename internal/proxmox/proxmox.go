@@ -1,5 +1,5 @@
 // Package proxmox ports Proxmox identity / token / URL helpers from
-// bootstrap-capi.sh. Pure-logic helpers (no HTTP, no exec) live here.
+// yage.sh. Pure-logic helpers (no HTTP, no exec) live here.
 // HTTP-backed helpers (resolve_available_cluster_set_id_for_roles,
 // _resolve_proxmox_region_and_node_from_pve_auth_value) are stubbed until
 // their calling phases are ported — they need the management cluster /
@@ -18,8 +18,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/logx"
 )
 
 // Default user "bases" used when suffixes are derived from CLUSTER_SET_ID.

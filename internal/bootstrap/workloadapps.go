@@ -10,14 +10,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/csix"
-	"github.com/lpasquali/bootstrap-capi/internal/helmvalues"
-	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/postsync"
-	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
-	"github.com/lpasquali/bootstrap-capi/internal/wlargocd"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/csix"
+	"github.com/lpasquali/yage/internal/helmvalues"
+	"github.com/lpasquali/yage/internal/k8sclient"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/postsync"
+	"github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/wlargocd"
 )
 
 // argoAppGVR is reused by waiters and renderers when reaching for the

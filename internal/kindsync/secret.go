@@ -2,7 +2,7 @@
 // state into kind Secrets (so a re-run finds the same state in the
 // management cluster when local env is thin).
 //
-// Bash source map (bootstrap-capi.sh):
+// Bash source map (yage.sh):
 //   - sync_bootstrap_config_to_kind                        ~L840-L850
 //   - sync_proxmox_bootstrap_literal_credentials_to_kind   ~L857-L1043
 //   - _apply_proxmox_bootstrap_admin_yaml_to_kind          ~L1046-L1103
@@ -21,8 +21,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
+	"github.com/lpasquali/yage/internal/k8sclient"
+	"github.com/lpasquali/yage/internal/logx"
 )
 
 // kindSecret models a kind Secret merge: take the existing in-cluster

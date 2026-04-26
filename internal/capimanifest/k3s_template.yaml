@@ -1,4 +1,4 @@
-# K3s flavor manifest, embedded into the bootstrap-capi binary.
+# K3s flavor manifest, embedded into the yage binary.
 #
 # Replaces a `clusterctl generate cluster --flavor k3s` call against
 # CAPMOX (which doesn't ship a K3s flavor upstream). The renderer in
@@ -79,7 +79,7 @@ spec:
   kthreesConfigSpec:
     serverConfig:
       # K3s replaces kube-proxy with its own implementation by default.
-      # bootstrap-capi installs Cilium with kubeProxyReplacement=true on
+      # yage installs Cilium with kubeProxyReplacement=true on
       # top, so disable the K3s built-ins that Cilium subsumes.
       disableComponents:
         - servicelb       # we use Cilium LB-IPAM instead

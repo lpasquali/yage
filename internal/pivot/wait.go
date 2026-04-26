@@ -25,7 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
+	"github.com/lpasquali/yage/internal/k8sclient"
 )
 
 // capiClusterGVR is the v1beta1 CAPI Cluster resource.

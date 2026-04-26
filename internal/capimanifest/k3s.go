@@ -30,8 +30,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/logx"
 )
 
 //go:embed k3s_template.yaml

@@ -3,9 +3,9 @@ package bootstrap
 import (
 	"os"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/shell"
 )
 
 // minimalKindConfig is the YAML written when no KIND_CONFIG is set.
@@ -26,7 +26,7 @@ func EnsureKindConfig(cfg *config.Config) {
 		return
 	}
 	RegisterExitTrap()
-	f, err := os.CreateTemp("", "bootstrap-capi-kind.*.yaml")
+	f, err := os.CreateTemp("", "yage-kind.*.yaml")
 	if err != nil {
 		logx.Die("Cannot create ephemeral kind config: %v", err)
 	}

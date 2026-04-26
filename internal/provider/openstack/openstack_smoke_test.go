@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/openstack"
+	"github.com/lpasquali/yage/internal/provider"
+	_ "github.com/lpasquali/yage/internal/provider/openstack"
 )
 
 func TestOpenStackProviderSmoke(t *testing.T) {

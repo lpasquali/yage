@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# bootstrap-capi.sh
+# yage.sh
 #
 # Bootstraps a CAPI management cluster on kind with Cilium CNI (default: Ingress, kube-proxy replacement, and Hubble + Relay + UI on the workload),
 # initializes Cluster API with the Proxmox infrastructure provider
 # and in-cluster IPAM, then applies a workload cluster manifest.
 #
 # Usage:
-#   ./bootstrap-capi.sh [OPTIONS]
+#   ./yage.sh [OPTIONS]
 #
 # Options:
 #   -f, --force                    Replace an existing kind cluster (delete workload + kind) without prompting; skips kind cluster selection when other clusters exist
@@ -158,7 +158,7 @@
 #   The script warns when it regenerates the manifest with clusterctl while that Cluster already exists.
 #   BOOTSTRAP_SKIP_IMMUTABLE_MANIFEST_WARNING  true: suppress that warning (default: false)
 #   CAPI_MANIFEST_SECRET_NAMESPACE  kind namespace for workload YAML Secret (default: proxmox-bootstrap-system)
-#   CAPI_MANIFEST_SECRET_NAME       name of the Secret (default: proxmox-bootstrap-capi-manifest)
+#   CAPI_MANIFEST_SECRET_NAME       name of the Secret (default: proxmox-yage-manifest)
 #   CAPI_MANIFEST_SECRET_KEY        data key in that Secret (default: workload.yaml; same on-disk role as a checked-in workload CAPI file)
 #   PROXMOX_BOOTSTRAP_CONFIG_FILE     Optional path to a local config.yaml; when unset, ./config.yaml is used if that file exists (stale check vs. workload)
 #   BOOTSTRAP_REGENERATE_CAPI_MANIFEST  true: always clusterctl re-generate workload YAML before re-apply (e.g. only edited the in-cluster config Secret; default: false)
@@ -372,10 +372,10 @@ KIND_CONFIG="${KIND_CONFIG:-}"
 CAPI_MANIFEST="${CAPI_MANIFEST:-}"
 BOOTSTRAP_EPHEMERAL_KIND_CONFIG=""
 BOOTSTRAP_KIND_CONFIG_EPHEMERAL=false
-BOOTSTRAP_CAPI_MANIFEST_EPHEMERAL=false
-BOOTSTRAP_CAPI_MANIFEST_USER_SET=false
-# When CAPI_MANIFEST is unset, manifest is stored on kind in a Secret (no ~/.bootstrap-capi file).
-BOOTSTRAP_CAPI_USE_SECRET=false
+YAGE_MANIFEST_EPHEMERAL=false
+YAGE_MANIFEST_USER_SET=false
+# When CAPI_MANIFEST is unset, manifest is stored on kind in a Secret (no ~/.yage file).
+YAGE_USE_SECRET=false
 # Local bootstrap snapshot file (if present, its mtime is compared to the last pushed workload to decide whether to re-run clusterctl).
 PROXMOX_BOOTSTRAP_CONFIG_FILE="${PROXMOX_BOOTSTRAP_CONFIG_FILE:-}"
 BOOTSTRAP_REGENERATE_CAPI_MANIFEST="${BOOTSTRAP_REGENERATE_CAPI_MANIFEST:-false}"
@@ -385,7 +385,7 @@ BOOTSTRAP_CLUSTERCTL_REGENERATED_MANIFEST="${BOOTSTRAP_CLUSTERCTL_REGENERATED_MA
 # Version ProxmoxMachineTemplate metadata.name from spec hash so re-applies can change VM shape without immutability errors.
 CAPI_PROXMOX_MACHINE_TEMPLATE_SPEC_REV="${CAPI_PROXMOX_MACHINE_TEMPLATE_SPEC_REV:-true}"
 CAPI_MANIFEST_SECRET_NAMESPACE="${CAPI_MANIFEST_SECRET_NAMESPACE:-proxmox-bootstrap-system}"
-CAPI_MANIFEST_SECRET_NAME="${CAPI_MANIFEST_SECRET_NAME:-proxmox-bootstrap-capi-manifest}"
+CAPI_MANIFEST_SECRET_NAME="${CAPI_MANIFEST_SECRET_NAME:-proxmox-yage-manifest}"
 CAPI_MANIFEST_SECRET_KEY="${CAPI_MANIFEST_SECRET_KEY:-workload.yaml}"
 PROXMOX_BOOTSTRAP_CONFIG_SECRET_NAME="${PROXMOX_BOOTSTRAP_CONFIG_SECRET_NAME:-proxmox-bootstrap-config}"
 PROXMOX_BOOTSTRAP_CONFIG_SECRET_KEY="${PROXMOX_BOOTSTRAP_CONFIG_SECRET_KEY:-config.yaml}"
@@ -640,7 +640,7 @@ PROXMOX_BRIDGE="${PROXMOX_BRIDGE:-vmbr0}"
 # Proxmox pool tags (organizational + ACL only; not a resource quota).
 # Default each cluster into its own pool so the Proxmox UI groups VMs
 # by cluster and pool-scoped permissions are easy to delegate.
-# bootstrap-capi auto-creates these via the admin API before manifest apply.
+# yage auto-creates these via the admin API before manifest apply.
 PROXMOX_POOL="${PROXMOX_POOL:-${WORKLOAD_CLUSTER_NAME:-capi-quickstart}}"
 MGMT_PROXMOX_POOL="${MGMT_PROXMOX_POOL:-${MGMT_CLUSTER_NAME:-capi-management}}"
 CONTROL_PLANE_ENDPOINT_IP="${CONTROL_PLANE_ENDPOINT_IP:-192.168.0.20}"
@@ -2982,7 +2982,7 @@ EOF
 }
 
 write_embedded_terraform_files() {
-  local state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
+  local state_dir="${HOME}/.yage/proxmox-identity-terraform"
   mkdir -p "$state_dir"
 
   cat > "${state_dir}/${PROXMOX_IDENTITY_TF}" <<'EOF'
@@ -3143,7 +3143,7 @@ EOF
 apply_proxmox_identity_terraform() {
   local state_dir endpoint api_token
   local -a tf_vars
-  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
+  state_dir="${HOME}/.yage/proxmox-identity-terraform"
   endpoint="${PROXMOX_URL}"
   api_token="${PROXMOX_ADMIN_USERNAME}=${PROXMOX_ADMIN_TOKEN}"
 
@@ -3200,7 +3200,7 @@ infer_proxmox_identity_from_token_ids() {
 
 resolve_recreate_proxmox_identity_context() {
   local state_dir tf_file
-  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
+  state_dir="${HOME}/.yage/proxmox-identity-terraform"
   tf_file="${state_dir}/terraform.tfstate"
   if [[ -f "$tf_file" ]]; then
     local -a tf_in=()
@@ -3243,7 +3243,7 @@ validate_cluster_set_id_format() {
 
 proxmox_identity_terraform_state_rm_all() {
   local state_dir addr
-  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
+  state_dir="${HOME}/.yage/proxmox-identity-terraform"
   [[ -f "${state_dir}/terraform.tfstate" ]] || { warn "No OpenTofu state to clear at ${state_dir}."; return 0; }
   log "Removing all resources from Proxmox identity Terraform state (PVE may be empty; next apply is create-only)..."
   while IFS= read -r addr; do
@@ -3303,7 +3303,7 @@ rollout_restart_proxmox_csi_on_workload() {
 # Paired with recreate_identities_resync_and_rollout_capmox (after capmox-system is installed) and optionally recreate_identities_workload_csi_secrets (after a workload CAPI manifest exists).
 recreate_proxmox_identities_terraform() {
   local state_dir
-  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
+  state_dir="${HOME}/.yage/proxmox-identity-terraform"
   command -v tofu >/dev/null 2>&1 || die "OpenTofu (tofu) is required for --recreate-proxmox-identities."
   ensure_proxmox_admin_config
   if [[ -z "$PROXMOX_URL" || -z "$PROXMOX_ADMIN_USERNAME" || -z "$PROXMOX_ADMIN_TOKEN" ]]; then
@@ -3625,7 +3625,7 @@ check_proxmox_admin_api_connectivity() {
 
 generate_configs_from_terraform_outputs() {
   local state_dir csi_api_url capi_token_id capi_token_secret csi_token_id csi_token_secret
-  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
+  state_dir="${HOME}/.yage/proxmox-identity-terraform"
   csi_api_url="$(proxmox_api_json_url)"
 
   capi_token_id="$(tofu -chdir="$state_dir" output -raw capi_token_id)"
@@ -4398,7 +4398,7 @@ bootstrap_exit_cleanup_all() {
     [[ -n "${BOOTSTRAP_EPHEMERAL_KIND_CONFIG:-}" && -f "$BOOTSTRAP_EPHEMERAL_KIND_CONFIG" ]] \
       && rm -f "$BOOTSTRAP_EPHEMERAL_KIND_CONFIG"
   fi
-  if is_true "$BOOTSTRAP_CAPI_MANIFEST_EPHEMERAL"; then
+  if is_true "$YAGE_MANIFEST_EPHEMERAL"; then
     [[ -n "${CAPI_MANIFEST:-}" && -f "$CAPI_MANIFEST" ]] && rm -f "$CAPI_MANIFEST"
   fi
 }
@@ -4410,7 +4410,7 @@ bootstrap_ensure_kind_config() {
     return 0
   fi
   bootstrap_register_exit_trap
-  BOOTSTRAP_EPHEMERAL_KIND_CONFIG="$(mktemp "${TMPDIR:-/tmp}/bootstrap-capi-kind.XXXXXX.yaml")"
+  BOOTSTRAP_EPHEMERAL_KIND_CONFIG="$(mktemp "${TMPDIR:-/tmp}/yage-kind.XXXXXX.yaml")"
   cat > "$BOOTSTRAP_EPHEMERAL_KIND_CONFIG" <<'EOF'
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -4423,10 +4423,10 @@ EOF
 }
 
 # Workload CAPI manifest on kind: ConfigMap in CAPI_MANIFEST_CONFIGMAP_NAMESPACE; name is a stable short hash
-# of kind + workload namespace + workload name (stays under DNS label length). No file under ~/.bootstrap-capi/ unless
+# of kind + workload namespace + workload name (stays under DNS label length). No file under ~/.yage/ unless
 # CAPI_MANIFEST or --capi-manifest is set to a local path.
 capi_manifest_try_load_from_secret() {
-  is_true "${BOOTSTRAP_CAPI_USE_SECRET:-false}" || return 0
+  is_true "${YAGE_USE_SECRET:-false}" || return 0
   [[ -n "${CAPI_MANIFEST:-}" ]] || return 0
   local ctx ns name key
   ctx="kind-${KIND_CLUSTER_NAME}"
@@ -4465,7 +4465,7 @@ bootstrap_resolved_local_config_yaml_path() {
 # When the workload is stored in a kind Secret, we use a per-management-cluster stamp mtime (not the ephemeral CAPI file).
 capi_bootstrap_workload_gencode_stamp_path() {
   local d
-  d="${XDG_STATE_HOME:-$HOME/.local/state}/bootstrap-capi/gencode/${KIND_CLUSTER_NAME:-capi-provisioner}"
+  d="${XDG_STATE_HOME:-$HOME/.local/state}/yage/gencode/${KIND_CLUSTER_NAME:-capi-provisioner}"
   printf '%s' "${d}/workload.last-clusterctl"
 }
 
@@ -4492,7 +4492,7 @@ capi_bootstrap_workload_clusterctl_is_stale() {
   cfg="$(bootstrap_resolved_local_config_yaml_path)"
   [[ -n "$cfg" && -f "$cfg" ]] || return 1
 
-  if is_true "${BOOTSTRAP_CAPI_USE_SECRET:-false}"; then
+  if is_true "${YAGE_USE_SECRET:-false}"; then
     local st
     st="$(capi_bootstrap_workload_gencode_stamp_path)"
     if [[ ! -f "$st" ]]; then
@@ -4513,7 +4513,7 @@ capi_bootstrap_workload_clusterctl_is_stale() {
 }
 
 capi_manifest_push_to_secret() {
-  is_true "${BOOTSTRAP_CAPI_USE_SECRET:-false}" || return 0
+  is_true "${YAGE_USE_SECRET:-false}" || return 0
   [[ -n "${CAPI_MANIFEST:-}" && -s "$CAPI_MANIFEST" ]] || return 0
   local ctx ns name key sz
   ctx="kind-${KIND_CLUSTER_NAME}"
@@ -4534,13 +4534,13 @@ capi_manifest_push_to_secret() {
     | kubectl --context "$ctx" apply -f -; then
     die "Failed to store workload manifest in Secret ${ns}/${name} (key ${key})."
   fi
-  kubectl --context "$ctx" -n "$ns" label secret "$name" "app.kubernetes.io/managed-by=bootstrap-capi" --overwrite >/dev/null 2>&1 || true
-  log "Wrote workload manifest to Secret ${ns}/${name} (key ${key}). No persistent file under ~/.bootstrap-capi — debug via k9s or kubectl get secret -n ${ns} ${name} -o yaml."
+  kubectl --context "$ctx" -n "$ns" label secret "$name" "app.kubernetes.io/managed-by=yage" --overwrite >/dev/null 2>&1 || true
+  log "Wrote workload manifest to Secret ${ns}/${name} (key ${key}). No persistent file under ~/.yage — debug via k9s or kubectl get secret -n ${ns} ${name} -o yaml."
   capi_bootstrap_touch_workload_gencode_stamp
 }
 
 capi_manifest_delete_secret() {
-  is_true "${BOOTSTRAP_CAPI_USE_SECRET:-false}" || return 0
+  is_true "${YAGE_USE_SECRET:-false}" || return 0
   local ctx ns name
   ctx="kind-${KIND_CLUSTER_NAME}"
   ns="${CAPI_MANIFEST_SECRET_NAMESPACE}"
@@ -4552,29 +4552,29 @@ capi_manifest_delete_secret() {
 
 bootstrap_ensure_capi_manifest_path() {
   if [[ -n "${CAPI_MANIFEST:-}" ]]; then
-    BOOTSTRAP_CAPI_USE_SECRET=false
-    BOOTSTRAP_CAPI_MANIFEST_EPHEMERAL=false
-    BOOTSTRAP_CAPI_MANIFEST_USER_SET=true
+    YAGE_USE_SECRET=false
+    YAGE_MANIFEST_EPHEMERAL=false
+    YAGE_MANIFEST_USER_SET=true
     return 0
   fi
   bootstrap_register_exit_trap
-  BOOTSTRAP_CAPI_USE_SECRET=true
+  YAGE_USE_SECRET=true
   CAPI_MANIFEST="$(mktemp "${TMPDIR:-/tmp}/capi-wl-XXXXXX.yaml")"
   : > "$CAPI_MANIFEST"
-  BOOTSTRAP_CAPI_MANIFEST_EPHEMERAL=true
-  BOOTSTRAP_CAPI_MANIFEST_USER_SET=false
+  YAGE_MANIFEST_EPHEMERAL=true
+  YAGE_MANIFEST_USER_SET=false
   log "Workload CAPI manifest is stored in the management cluster as a Secret (namespace ${CAPI_MANIFEST_SECRET_NAMESPACE}, secret ${CAPI_MANIFEST_SECRET_NAME}, data key ${CAPI_MANIFEST_SECRET_KEY}) — this process only uses a temp file. Use --capi-manifest for a file on disk; inspect live YAML with k9s or kubectl."
 }
 
 # After interactive reuse of an existing Cluster CR, point the default manifest path at the chosen workload name.
 bootstrap_refresh_default_capi_manifest_path() {
-  is_true "$BOOTSTRAP_CAPI_MANIFEST_USER_SET" && return 0
-  if is_true "$BOOTSTRAP_CAPI_USE_SECRET"; then
+  is_true "$YAGE_MANIFEST_USER_SET" && return 0
+  if is_true "$YAGE_USE_SECRET"; then
     [[ -n "${CAPI_MANIFEST:-}" && -f "$CAPI_MANIFEST" ]] && : > "$CAPI_MANIFEST"
     log "Workload selection updated; will load or generate for ${KIND_CLUSTER_NAME} ${WORKLOAD_CLUSTER_NAMESPACE:-default}/${WORKLOAD_CLUSTER_NAME} (Secret ${CAPI_MANIFEST_SECRET_NAME})."
     return 0
   fi
-  die "bootstrap-capi: internal error — CAPI manifest path refresh with neither user file nor Secret mode."
+  die "yage: internal error — CAPI manifest path refresh with neither user file nor Secret mode."
 }
 
 # Offer existing cluster.cluster.x-k8s.io on the management kind cluster so reruns align WORKLOAD_* with real CRs.
@@ -4766,7 +4766,7 @@ bootstrap_sync_clusterctl_config_file() {
   fi
 
   if [[ -z "$BOOTSTRAP_EPHEMERAL_CLUSTERCTL" ]]; then
-    BOOTSTRAP_EPHEMERAL_CLUSTERCTL="$(mktemp "${TMPDIR:-/tmp}/bootstrap-capi-clusterctl.XXXXXX.yaml")"
+    BOOTSTRAP_EPHEMERAL_CLUSTERCTL="$(mktemp "${TMPDIR:-/tmp}/yage-clusterctl.XXXXXX.yaml")"
     bootstrap_register_exit_trap
   fi
   cat > "$BOOTSTRAP_EPHEMERAL_CLUSTERCTL" <<EOF
@@ -5274,7 +5274,7 @@ generate_workload_manifest_if_missing() {
       log "Bootstrap config is newer than the last clusterctl-generated workload manifest (workload.yaml / CAPI YAML) — regenerating with clusterctl."
       : > "$CAPI_MANIFEST"
     else
-      if is_true "${BOOTSTRAP_CAPI_USE_SECRET:-false}"; then
+      if is_true "${YAGE_USE_SECRET:-false}"; then
         log "Reusing existing workload manifest from the management Secret (use --purge to clear kind state, or set CAPI_MANIFEST / --capi-manifest for a local file; after editing config.yaml use --regenerate-capi-manifest if you only changed the in-cluster Secret)."
       else
         log "Reusing existing workload manifest ${CAPI_MANIFEST} (remove the file or use --purge to force clusterctl generate again; edit and save config.yaml / set PROXMOX_BOOTSTRAP_CONFIG_FILE so it is newer than this file to auto-regenerate)."
@@ -5284,7 +5284,7 @@ generate_workload_manifest_if_missing() {
   fi
 
   if [[ -f "$CAPI_MANIFEST" && ! -s "$CAPI_MANIFEST" ]]; then
-    if is_true "${BOOTSTRAP_CAPI_USE_SECRET:-false}"; then
+    if is_true "${YAGE_USE_SECRET:-false}"; then
       warn "Ephemeral manifest file was empty; generating workload manifest with clusterctl."
     else
       warn "${CAPI_MANIFEST} exists but is empty; regenerating it."
@@ -5299,14 +5299,14 @@ generate_workload_manifest_if_missing() {
 
   if [[ ${#missing_manifest_cfg[@]} -gt 0 ]]; then
     warn "Missing workload manifest inputs: ${missing_manifest_cfg[*]}"
-    if is_true "${BOOTSTRAP_CAPI_USE_SECRET:-false}"; then
+    if is_true "${YAGE_USE_SECRET:-false}"; then
       die "Set them as command-line options or environment variables before generating the workload cluster manifest."
     else
       die "Set them as command-line options or environment variables before generating ${CAPI_MANIFEST}."
     fi
   fi
 
-  if is_true "${BOOTSTRAP_CAPI_USE_SECRET:-false}"; then
+  if is_true "${YAGE_USE_SECRET:-false}"; then
     log "Generating workload cluster manifest with clusterctl (Secret is updated after discover/label, before apply)..."
   else
     log "${CAPI_MANIFEST} not found — generating workload cluster manifest with clusterctl..."
@@ -5381,7 +5381,7 @@ generate_workload_manifest_if_missing() {
   sync_bootstrap_config_to_kind || true
   BOOTSTRAP_CLUSTERCTL_REGENERATED_MANIFEST=true
 
-  if is_true "${BOOTSTRAP_CAPI_USE_SECRET:-false}"; then
+  if is_true "${YAGE_USE_SECRET:-false}"; then
     log "Generated workload cluster manifest (ephemeral file; pushed to the management Secret after discover/label, before apply)."
   else
     log "Generated ${CAPI_MANIFEST}."
@@ -5690,7 +5690,7 @@ apply_workload_argocd_operator_and_argocd_cr() {
   # Client-side `kubectl apply` stores last-applied-configuration; argocds.argoproj.io CRD exceeds the 256KiB annotation
   # limit. Server-Side Apply avoids that (ref: KEP-555, https://github.com/argoproj/argo-cd/issues/12043).
   log "Installing Argo CD Operator on the workload cluster (ref ${ARGOCD_OPERATOR_VERSION}; kubectl apply -k --server-side ${op_url})…"
-  KUBECONFIG="$wk" kubectl apply --server-side --force-conflicts --field-manager=bootstrap-capi-argocd-operator -k "$op_url" \
+  KUBECONFIG="$wk" kubectl apply --server-side --force-conflicts --field-manager=yage-argocd-operator -k "$op_url" \
     || die "Failed to apply Argo CD Operator (network, ref ${ARGOCD_OPERATOR_VERSION}, or kubectl that supports --server-side; need >= 1.18)."
   log "Waiting for Argo CD Operator controller (initial start)…"
   KUBECONFIG="$wk" kubectl wait -n argocd-operator-system deploy/argocd-operator-controller-manager \
@@ -8068,7 +8068,7 @@ delete_workload_cluster_before_kind_deletion() {
 purge_generated_artifacts() {
   local state_dir
 
-  state_dir="${HOME}/.bootstrap-capi/proxmox-identity-terraform"
+  state_dir="${HOME}/.yage/proxmox-identity-terraform"
 
   log "Purging generated files and Terraform state..."
 
@@ -8555,7 +8555,7 @@ if is_true "$ARGOCD_ENABLED"; then
 fi
 
 maybe_interactive_select_kind_cluster
-if ! is_true "${BOOTSTRAP_CAPI_MANIFEST_USER_SET:-false}"; then
+if ! is_true "${YAGE_MANIFEST_USER_SET:-false}"; then
   bootstrap_refresh_default_capi_manifest_path
 fi
 
@@ -8963,7 +8963,7 @@ refresh_derived_cilium_cluster_id
 patch_capi_cluster_caaph_helm_labels "$CAPI_MANIFEST"
 capi_manifest_push_to_secret
 
-if is_true "${BOOTSTRAP_CAPI_USE_SECRET:-false}"; then
+if is_true "${YAGE_USE_SECRET:-false}"; then
   log "Applying workload manifest to management cluster (ephemeral file in this run; last pushed to Secret ${CAPI_MANIFEST_SECRET_NAMESPACE}/${CAPI_MANIFEST_SECRET_NAME})..."
 else
   log "Applying CAPI manifest ${CAPI_MANIFEST}..."

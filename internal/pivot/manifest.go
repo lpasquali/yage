@@ -12,10 +12,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/capimanifest"
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/sysinfo"
+	"github.com/lpasquali/yage/internal/capimanifest"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/sysinfo"
 )
 
 // renderManagementManifest generates the CAPI manifest for the management

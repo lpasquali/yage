@@ -35,7 +35,7 @@ import (
 )
 
 // FieldManager is the FieldManager string used for all server-side applies.
-const FieldManager = "bootstrap-capi"
+const FieldManager = "yage"
 
 // Client bundles the four handles every caller needs.
 type Client struct {

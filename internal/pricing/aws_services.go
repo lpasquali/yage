@@ -56,7 +56,7 @@ func (a *awsServiceFetcher) downloadServiceBulk(service, region string) (string,
 	url := fmt.Sprintf("%s/offers/v1.0/aws/%s/current/%s/index.json",
 		awsPricingHost, service, region)
 	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("aws %s/%s: %w", service, region, err)

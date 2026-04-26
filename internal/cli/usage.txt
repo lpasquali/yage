@@ -1,7 +1,7 @@
-bootstrap-capi — bootstrap a Cluster API management plane and provision a Proxmox workload cluster
+yage — bootstrap a Cluster API management plane and provision a Proxmox workload cluster
 
 USAGE
-    bootstrap-capi [OPTIONS]
+    yage [OPTIONS]
 
 DESCRIPTION
     Bootstraps a kind-based CAPI management plane (Cilium CNI: Ingress,
@@ -10,7 +10,7 @@ DESCRIPTION
     moved to a Proxmox-hosted management cluster (clusterctl move) and
     kind is torn down.
 
-    The bash script bootstrap-capi.sh is the canonical reference for
+    The bash script yage.sh is the canonical reference for
     every behavior detail. The Go binary is a 1:1 port and accepts the
     same flags + environment variables; see docs/ARCHITECTURE.md for
     the in-process implementation overview.
@@ -90,7 +90,7 @@ OPTIONS
                                         ≤ 1 + tolerance-pct/100             → ⚠  proceed with warning
                                         >  1 + tolerance-pct/100            → ❌ abort (unless
                                                                               --allow-resource-overcommit)
-        --system-apps-cpu-millicores N    Cluster-wide CPU reserve for system add-ons bootstrap-capi
+        --system-apps-cpu-millicores N    Cluster-wide CPU reserve for system add-ons yage
                                           installs (kyverno + cert-manager + proxmox-csi controller +
                                           argocd + keycloak + external-secrets + infisical). Default
                                           2000 = 2 cores. The remainder of worker capacity is split
@@ -120,7 +120,7 @@ OPTIONS
                                       capi-<workload-cluster-name>). Pools are organizational +
                                       ACL groupings, NOT resource quotas — they group VMs in the
                                       Proxmox UI and let you delegate start/stop/console
-                                      permissions per pool. bootstrap-capi auto-creates the pool
+                                      permissions per pool. yage auto-creates the pool
                                       via the admin API before manifest apply.
         --mgmt-proxmox-pool NAME      Same, for management-cluster VMs (default: capi-<mgmt-cluster-name>).
         --template-id ID              Catch-all Proxmox template VM ID (default: 104)
@@ -237,10 +237,10 @@ ENVIRONMENT
 EXAMPLES
 
     # See what a real run would do (no state changes)
-    bootstrap-capi --dry-run
+    yage --dry-run
 
     # Standard bootstrap (kind = forever-management)
-    bootstrap-capi \
+    yage \
         --proxmox-url https://pve.example:8006 \
         --admin-username root@pam!capi-bootstrap \
         --admin-token 11111111-2222-3333-4444-555555555555 \
@@ -248,28 +248,28 @@ EXAMPLES
 
     # Pivot an existing setup to a Proxmox-hosted management cluster
     # (workload keeps running; only the CAPI controller managing it moves).
-    bootstrap-capi --pivot --pivot-keep-kind \
+    yage --pivot --pivot-keep-kind \
         --mgmt-control-plane-endpoint-ip 192.168.0.30 \
         --mgmt-node-ip-ranges 192.168.0.31-192.168.0.32
 
     # Validate the pivot before committing — provisions mgmt, runs
     # `clusterctl move --dry-run` and exits without moving state.
-    bootstrap-capi --pivot --pivot-dry-run \
+    yage --pivot --pivot-dry-run \
         --mgmt-control-plane-endpoint-ip 192.168.0.30 \
         --mgmt-node-ip-ranges 192.168.0.31-192.168.0.32
 
     # Per-machine-type templates (e.g. a hardened CP image, vanilla worker image)
-    bootstrap-capi \
+    yage \
         --workload-control-plane-template-id 200 \
         --workload-worker-template-id 201
 
     # Snapshot kind state before a risky run
-    bootstrap-capi --kind-backup ./kind-pre-pivot.tar.gz
+    yage --kind-backup ./kind-pre-pivot.tar.gz
 
     # Print Argo CD access info for the workload (no full bootstrap)
-    bootstrap-capi --argocd-print-access
+    yage --argocd-print-access
 
 SEE ALSO
 
-    bootstrap-capi.sh        canonical bash reference (every default + behavior detail)
+    yage.sh        canonical bash reference (every default + behavior detail)
     docs/ARCHITECTURE.md     Go implementation overview + 6 mermaid diagrams

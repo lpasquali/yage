@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/shell"
 )
 
 // Backup ports kind_bootstrap_state_backup.

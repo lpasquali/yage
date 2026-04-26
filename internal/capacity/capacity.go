@@ -1,5 +1,5 @@
 // Package capacity computes the aggregate Proxmox host resources
-// available to bootstrap-capi (filtered by AllowedNodes / ProxmoxNode)
+// available to yage (filtered by AllowedNodes / ProxmoxNode)
 // and compares them against the resources the planned management +
 // workload clusters would consume. Used by the orchestrator to
 // pre-flight a real run, and by --dry-run to print a capacity vs plan
@@ -18,8 +18,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/proxmox"
 )
 
 // DefaultThreshold is the fraction of host resources that may be

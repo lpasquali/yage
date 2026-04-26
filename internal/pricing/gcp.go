@@ -11,7 +11,7 @@ import (
 )
 
 // GCP Cloud Billing Catalog API — needs an API key.
-// Set GOOGLE_BILLING_API_KEY (or BOOTSTRAP_CAPI_GCP_API_KEY) to
+// Set GOOGLE_BILLING_API_KEY (or YAGE_GCP_API_KEY) to
 // enable; otherwise this fetcher returns ErrUnavailable and
 // the cost path surfaces "GCP estimate unavailable".
 //
@@ -39,7 +39,7 @@ func init() {
 }
 
 func gcpAPIKey() string {
-	if k := os.Getenv("BOOTSTRAP_CAPI_GCP_API_KEY"); k != "" {
+	if k := os.Getenv("YAGE_GCP_API_KEY"); k != "" {
 		return k
 	}
 	return os.Getenv("GOOGLE_BILLING_API_KEY")
@@ -107,7 +107,7 @@ func gcpUsdFromTier(p gcpPricingInfo) float64 {
 func (g *gcpFetcher) Fetch(sku, region string) (Item, error) {
 	key := gcpAPIKey()
 	if key == "" {
-		return Item{}, fmt.Errorf("gcp: no GOOGLE_BILLING_API_KEY (or BOOTSTRAP_CAPI_GCP_API_KEY)")
+		return Item{}, fmt.Errorf("gcp: no GOOGLE_BILLING_API_KEY (or YAGE_GCP_API_KEY)")
 	}
 
 	// SKU forms:
@@ -170,7 +170,7 @@ func (g *gcpFetcher) findCoreRam(family, region, key string, wantCore bool) (flo
 			q.Set("pageToken", pageToken)
 		}
 		req, _ := http.NewRequest("GET", u+"?"+q.Encode(), nil)
-		req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+		req.Header.Set("User-Agent", "yage/pricing")
 		resp, err := g.httpClient.Do(req)
 		if err != nil {
 			return 0, err
@@ -245,7 +245,7 @@ func (g *gcpFetcher) fetchPD(kind, region, key string) (Item, error) {
 			q.Set("pageToken", pageToken)
 		}
 		req, _ := http.NewRequest("GET", u+"?"+q.Encode(), nil)
-		req.Header.Set("User-Agent", "bootstrap-capi/pricing")
+		req.Header.Set("User-Agent", "yage/pricing")
 		resp, err := g.httpClient.Do(req)
 		if err != nil {
 			return Item{}, err

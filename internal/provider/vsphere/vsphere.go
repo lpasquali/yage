@@ -1,10 +1,10 @@
-// Package vsphere is the bootstrap-capi Provider implementation for
+// Package vsphere is the yage Provider implementation for
 // the Cluster API vSphere infrastructure provider (CAPV —
 // github.com/kubernetes-sigs/cluster-api-provider-vsphere).
 //
 // Shape: closer to Proxmox than to CAPD, but with identity handled
 // out-of-band. The vSphere admin pre-creates a service account with
-// the CAPV-required role bindings; bootstrap-capi consumes the
+// the CAPV-required role bindings; yage consumes the
 // resulting credentials via the standard CAPV env vars
 // (VSPHERE_USERNAME / VSPHERE_PASSWORD / VSPHERE_SERVER) which the
 // orchestrator passes through to clusterctl. Capacity is reported by
@@ -16,15 +16,15 @@
 // version behind the v1beta2 the rest of CAPI is on). The
 // MachineTemplate spec carries inline sizing fields (numCPUs,
 // numCoresPerSocket, memoryMiB, diskGiB) that map cleanly onto
-// bootstrap-capi's CONTROL_PLANE_* / WORKER_* config knobs — the
+// yage's CONTROL_PLANE_* / WORKER_* config knobs — the
 // template wires the placeholders today and a future PatchManifest
 // can rewrite them post-render if richer per-role overrides are
 // needed.
 package vsphere
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 func init() {
@@ -54,7 +54,7 @@ func (p *Provider) Capacity(cfg *config.Config) (*provider.HostCapacity, error) 
 }
 
 // EnsureGroup is a no-op for vSphere. Folders are the closest
-// equivalent to a Proxmox pool / AWS IAM group, but bootstrap-capi
+// equivalent to a Proxmox pool / AWS IAM group, but yage
 // doesn't manage them today; the operator pre-creates the target
 // folder and supplies its path via VSPHERE_FOLDER.
 func (p *Provider) EnsureGroup(cfg *config.Config, name string) error {
@@ -256,7 +256,7 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 // EnsureCSISecret is unimplemented. CAPV's CSI story is
 // vsphere-cpi + vsphere-csi-driver, both shipped as Helm charts; the
 // install path will live alongside CAAPH in a future iteration. Until
-// then bootstrap-capi leaves CSI to the operator.
+// then yage leaves CSI to the operator.
 func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
 	return provider.ErrNotApplicable
 }

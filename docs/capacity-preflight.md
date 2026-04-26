@@ -1,10 +1,10 @@
 # Capacity preflight
 
-bootstrap-capi computes whether the planned cluster fits inside the
+yage computes whether the planned cluster fits inside the
 host before provisioning. The check has two parts:
 
 1. **Soft budget** (`--resource-budget-fraction F`, default 2/3) —
-   the cap on what bootstrap-capi-managed clusters may claim.
+   the cap on what yage-managed clusters may claim.
 2. **Overcommit ceiling** (`--overcommit-tolerance-pct N`, default
    15) — the hard limit above 100 % of host capacity that triggers
    abort. Memory overcommit via Proxmox ballooning + swap absorbs
@@ -23,7 +23,7 @@ cluster against host capacity — ignoring whatever VMs were already
 running. On a fresh host that's fine; on a host with prior CAPI
 clusters or non-CAPI VMs it silently overcommits.
 
-Now bootstrap-capi queries
+Now yage queries
 `/api2/json/cluster/resources?type=vm` on the allowed Proxmox nodes
 and aggregates each `qemu` VM's declared (max) CPU / memory / disk.
 That gives a realistic baseline for the verdict:
@@ -120,7 +120,7 @@ of pool. LXC containers are skipped (Proxmox reports them through the
 same endpoint). Stopped VMs *are* counted because they hold disk
 and have reserved CPU / memory in the cluster topology.
 
-If your host has VMs from a previous bootstrap-capi run that you
+If your host has VMs from a previous yage run that you
 intend to replace, either:
 
 - delete them first (clean slate), or
@@ -130,7 +130,7 @@ intend to replace, either:
   check passes while the old VMs are replaced.
 
 Future work: filter the census by Proxmox pool so a fresh
-`bootstrap-capi --purge` flow can subtract the cluster-being-replaced
+`yage --purge` flow can subtract the cluster-being-replaced
 from the existing-VM total automatically.
 
 ## Why 15 %

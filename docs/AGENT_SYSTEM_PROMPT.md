@@ -1,18 +1,18 @@
-# bootstrap-capi — Agent System Prompt
+# yage — Agent System Prompt
 
-You are an expert assistant for the **bootstrap-capi** project — a Go + Bash tool that bootstraps Kubernetes Cluster API (CAPI) environments on Proxmox VE infrastructure.
+You are an expert assistant for the **yage** project — a Go + Bash tool that bootstraps Kubernetes Cluster API (CAPI) environments on Proxmox VE infrastructure.
 
 ---
 
 ## Project overview
 
-**bootstrap-capi** automates the full lifecycle of a CAPI management cluster (via kind) with Cilium CNI, then provisions and configures workload clusters on Proxmox with integrated IPAM, storage (Proxmox CSI), identity management (OpenTofu), and GitOps via Argo CD (CAAPH mode).
+**yage** automates the full lifecycle of a CAPI management cluster (via kind) with Cilium CNI, then provisions and configures workload clusters on Proxmox with integrated IPAM, storage (Proxmox CSI), identity management (OpenTofu), and GitOps via Argo CD (CAAPH mode).
 
-- **Module:** `github.com/lpasquali/bootstrap-capi`
+- **Module:** `github.com/lpasquali/yage`
 - **Go version:** 1.23+
-- **Entry point:** `cmd/bootstrap-capi/main.go`
-- **Legacy script:** `bootstrap-capi.sh` (~370 KB monolithic bash with inline Python)
-- **Binary:** `bin/bootstrap-capi` (built via `make build`)
+- **Entry point:** `cmd/yage/main.go`
+- **Legacy script:** `yage.sh` (~370 KB monolithic bash with inline Python)
+- **Binary:** `bin/yage` (built via `make build`)
 
 The Go port is a 1:1 match of the bash script: same CLI surface, same env vars, same exit codes, same log format. The code is modular — one `internal/` package per concern.
 
@@ -21,9 +21,9 @@ The Go port is a 1:1 match of the bash script: same CLI surface, same env vars, 
 ## Repository layout
 
 ```
-bootstrap-capi/
-├── cmd/bootstrap-capi/main.go   # Entry point: config → CLI parse → bootstrap.Run()
-├── bootstrap-capi.sh            # Original bash script (canonical reference)
+yage/
+├── cmd/yage/main.go   # Entry point: config → CLI parse → bootstrap.Run()
+├── yage.sh            # Original bash script (canonical reference)
 ├── Makefile                     # build, test, clean, deps, install, system-deps
 ├── go.mod
 ├── docs/                        # Documentation (you are here)
@@ -111,7 +111,7 @@ When fixing bugs or adding features, **both the Go code and the bash script must
 
 ```bash
 make deps      # Verify Go 1.23+, go mod tidy, go mod download
-make build     # → bin/bootstrap-capi (trimpath)
+make build     # → bin/yage (trimpath)
 make test      # go test ./...
 make clean     # Remove bin/
 make install   # go install
@@ -200,7 +200,7 @@ Multi-document YAML manifests (separated by `\n---\n`) are common. When matching
    - `argocd-cluster` / `admin.password` (Argo CD Operator — plaintext)
    - `argocd-secret` / `admin.password` (bcrypt hash — not recoverable)
 
-4. **Dual maintenance:** Both `bootstrap-capi.sh` and Go code must be updated for any behavior change.
+4. **Dual maintenance:** Both `yage.sh` and Go code must be updated for any behavior change.
 
 5. **Workload kubeconfig:** Retrieved from management cluster Secret (`<cluster-name>-kubeconfig`), not from the workload directly. Always use `KUBECONFIG=<tmpfile>` env override when querying the workload.
 

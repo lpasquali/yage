@@ -3,7 +3,7 @@
 // document the orchestrator will concatenate into one kubectl-apply
 // stream.
 //
-// Bash source map (bootstrap-capi.sh):
+// Bash source map (yage.sh):
 //   - _wl_argocd_render_helm_git           ~L6229-6318
 //   - _kyverno_argocd_values_toleration_fragment ~L6321-6333
 //   - _wl_argocd_render_kyverno            ~L6344-6468
@@ -16,9 +16,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/postsync"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/postsync"
 )
 
 // PostSyncBlock holds the optional second-source fields for a

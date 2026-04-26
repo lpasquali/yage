@@ -1,4 +1,4 @@
-// Package azure is the bootstrap-capi Provider implementation for the
+// Package azure is the yage Provider implementation for the
 // Cluster API Azure infrastructure provider (CAPZ —
 // github.com/kubernetes-sigs/cluster-api-provider-azure).
 //
@@ -13,7 +13,7 @@
 //     User-Assigned Managed Identity that the user provides via
 //     environment variables (AZURE_SUBSCRIPTION_ID,
 //     AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET) or via
-//     `az login` on the bootstrap host. bootstrap-capi doesn't
+//     `az login` on the bootstrap host. yage doesn't
 //     create the SP / Managed Identity — that's an out-of-band
 //     `az ad sp create-for-rbac` step the user runs once per
 //     subscription.
@@ -38,8 +38,8 @@
 package azure
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 func init() {
@@ -228,7 +228,7 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 
 // EnsureCSISecret is unimplemented for Azure: azuredisk-csi-driver
 // ships via Helm + a Workload Identity (or Service Principal)
-// binding rather than a credentials Secret in the bootstrap-capi
+// binding rather than a credentials Secret in the yage
 // shape.
 func (p *Provider) EnsureCSISecret(cfg *config.Config, workloadKubeconfigPath string) error {
 	return provider.ErrNotApplicable

@@ -1,4 +1,4 @@
-// bootstrap-capi is the Go port of bootstrap-capi.sh.
+// yage is the Go port of yage.sh.
 //
 // Goal: identical CLI surface (same flags, same env vars, same exit codes,
 // same log output format). Internal structure is modular Go packages under
@@ -14,27 +14,27 @@ package main
 import (
 	"os"
 
-	"github.com/lpasquali/bootstrap-capi/internal/bootstrap"
-	"github.com/lpasquali/bootstrap-capi/internal/cli"
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/pricing"
+	"github.com/lpasquali/yage/internal/bootstrap"
+	"github.com/lpasquali/yage/internal/cli"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/pricing"
 
 	// Provider registrations: importing each provider package runs
 	// its init() which calls provider.Register. Add a new provider
 	// by dropping a package under internal/provider/<name> and
 	// importing it here.
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/aws"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/azure"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/capd"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/digitalocean"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/gcp"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/hetzner"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/ibmcloud"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/linode"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/oci"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/openstack"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/proxmox"
-	_ "github.com/lpasquali/bootstrap-capi/internal/provider/vsphere"
+	_ "github.com/lpasquali/yage/internal/provider/aws"
+	_ "github.com/lpasquali/yage/internal/provider/azure"
+	_ "github.com/lpasquali/yage/internal/provider/capd"
+	_ "github.com/lpasquali/yage/internal/provider/digitalocean"
+	_ "github.com/lpasquali/yage/internal/provider/gcp"
+	_ "github.com/lpasquali/yage/internal/provider/hetzner"
+	_ "github.com/lpasquali/yage/internal/provider/ibmcloud"
+	_ "github.com/lpasquali/yage/internal/provider/linode"
+	_ "github.com/lpasquali/yage/internal/provider/oci"
+	_ "github.com/lpasquali/yage/internal/provider/openstack"
+	_ "github.com/lpasquali/yage/internal/provider/proxmox"
+	_ "github.com/lpasquali/yage/internal/provider/vsphere"
 )
 
 func main() {

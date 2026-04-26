@@ -1,7 +1,7 @@
 // Package opentofux ports the OpenTofu-backed Proxmox identity
 // bootstrap flow.
 //
-// Bash source map (bootstrap-capi.sh):
+// Bash source map (yage.sh):
 //   - install_bpg_proxmox_provider                          ~L2860-2879
 //   - write_embedded_terraform_files                        ~L2881-3038
 //   - apply_proxmox_identity_terraform                      ~L3040-3067
@@ -28,20 +28,20 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/capimanifest"
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/csix"
-	"github.com/lpasquali/bootstrap-capi/internal/kindsync"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
-	"github.com/lpasquali/bootstrap-capi/internal/sysinfo"
+	"github.com/lpasquali/yage/internal/capimanifest"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/csix"
+	"github.com/lpasquali/yage/internal/kindsync"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/shell"
+	"github.com/lpasquali/yage/internal/sysinfo"
 )
 
-// StateDir returns ~/.bootstrap-capi/proxmox-identity-terraform.
+// StateDir returns ~/.yage/proxmox-identity-terraform.
 func StateDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".bootstrap-capi", "proxmox-identity-terraform")
+	return filepath.Join(home, ".yage", "proxmox-identity-terraform")
 }
 
 // stateFile returns ${StateDir}/terraform.tfstate (OpenTofu's default).

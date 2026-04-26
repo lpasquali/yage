@@ -10,12 +10,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
-	"github.com/lpasquali/bootstrap-capi/internal/kubectlx"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/proxmox"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/k8sclient"
+	"github.com/lpasquali/yage/internal/kubectlx"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/proxmox"
+	"github.com/lpasquali/yage/internal/shell"
 )
 
 // SyncBootstrapConfigToKind ports sync_bootstrap_config_to_kind.

@@ -16,8 +16,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/logx"
 )
 
 // Parse consumes argv (without program name) and writes results into c.

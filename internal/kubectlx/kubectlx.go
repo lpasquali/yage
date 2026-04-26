@@ -1,7 +1,7 @@
 // Package kubectlx ports thin wrappers around kubectl that the rest of the
 // bootstrap calls repeatedly.
 //
-// Bash source map (bootstrap-capi.sh):
+// Bash source map (yage.sh):
 //   - contains_line                                         ~L1130-1139
 //   - _resolve_bootstrap_kubectl_context                    ~L821-835
 //   - wait_for_service_endpoint                             ~L2059-2070
@@ -24,9 +24,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/k8sclient"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/k8sclient"
+	"github.com/lpasquali/yage/internal/logx"
 )
 
 // ResolveBootstrapContext ports _resolve_bootstrap_kubectl_context.

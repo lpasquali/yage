@@ -1,5 +1,5 @@
 // Package versionx ports _normalize_git_version and _versions_match from
-// bootstrap-capi.sh — used to decide whether a locally-installed CLI matches
+// yage.sh — used to decide whether a locally-installed CLI matches
 // the pinned *_VERSION and should be reinstalled.
 package versionx
 

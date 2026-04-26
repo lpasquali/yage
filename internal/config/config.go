@@ -6,7 +6,7 @@
 // Naming convention: the Go field is the UpperCamelCase spelling of the
 // bash var, with _EXPLICIT suffixed flags kept as <Name>Explicit.
 //
-// Defaults are taken verbatim from bootstrap-capi.sh (lines ~337-673). When
+// Defaults are taken verbatim from yage.sh (lines ~337-673). When
 // bash uses ${FOO:-default}, we use getenv(..., "default"); when bash uses
 // ${FOO-default} (empty-string preserved), we use getenvKeep(..., "default").
 package config
@@ -141,7 +141,7 @@ type Config struct {
 	// support contract, IPMI subscription, colo/rack rental, etc.
 	HardwareSupportUSDMonth     float64
 	// SystemAppsCPUMillicores / SystemAppsMemoryMiB define the cluster-
-	// wide reserve for the system add-ons bootstrap-capi installs:
+	// wide reserve for the system add-ons yage installs:
 	// kyverno, cert-manager, proxmox-csi (controller), argocd (operator
 	// + server + repo + redis), keycloak (SSO), external-secrets, and
 	// infisical. The remainder of the workload cluster's worker capacity
@@ -501,7 +501,7 @@ type Config struct {
 	// the Proxmox UI and gate ACLs (delegating start/stop/console
 	// permissions); they do NOT enforce CPU/memory quotas — that
 	// remains per-VM + per-storage. Empty default means "no pool";
-	// when set, bootstrap-capi pre-creates the pool via the admin API
+	// when set, yage pre-creates the pool via the admin API
 	// before applying the CAPI manifest, so CAPMOX won't fail on a
 	// missing pool reference.
 	ProxmoxPool          string
@@ -777,7 +777,7 @@ func Load() *Config {
 	c.BootstrapClusterctlRegeneratedManifest = envBool("BOOTSTRAP_CLUSTERCTL_REGENERATED_MANIFEST", false)
 	c.CAPIProxmoxMachineTemplateSpecRev = envBool("CAPI_PROXMOX_MACHINE_TEMPLATE_SPEC_REV", true)
 	c.CAPIManifestSecretNamespace = getenv("CAPI_MANIFEST_SECRET_NAMESPACE", "proxmox-bootstrap-system")
-	c.CAPIManifestSecretName = getenv("CAPI_MANIFEST_SECRET_NAME", "proxmox-bootstrap-capi-manifest")
+	c.CAPIManifestSecretName = getenv("CAPI_MANIFEST_SECRET_NAME", "proxmox-yage-manifest")
 	c.CAPIManifestSecretKey = getenv("CAPI_MANIFEST_SECRET_KEY", "workload.yaml")
 	c.ProxmoxBootstrapConfigFile = getenv("PROXMOX_BOOTSTRAP_CONFIG_FILE", "")
 	c.ProxmoxBootstrapConfigSecretName = getenv("PROXMOX_BOOTSTRAP_CONFIG_SECRET_NAME", "proxmox-bootstrap-config")

@@ -1,4 +1,4 @@
-// Package openstack is the bootstrap-capi Provider implementation
+// Package openstack is the yage Provider implementation
 // for the Cluster API OpenStack infrastructure provider (CAPO —
 // https://github.com/kubernetes-sigs/cluster-api-provider-openstack).
 //
@@ -16,7 +16,7 @@
 // `OS_*` environment (OS_AUTH_URL / OS_USERNAME / OS_PASSWORD /
 // OS_PROJECT_NAME / OS_DOMAIN_NAME) — typically an application
 // credential. The user provides those directly to clusterctl /
-// CAPO; bootstrap-capi has nothing to mint, so EnsureIdentity is
+// CAPO; yage has nothing to mint, so EnsureIdentity is
 // ErrNotApplicable. (Future: we could template a clouds.yaml from
 // cfg, but that's out of scope here.)
 //
@@ -32,8 +32,8 @@
 package openstack
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/provider"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 func init() {
@@ -48,7 +48,7 @@ func (p *Provider) InfraProviderName() string { return "openstack" }
 
 // EnsureIdentity — CAPO consumes a clouds.yaml / OS_* env supplied
 // by the user (typically an application credential). Nothing for
-// bootstrap-capi to mint here.
+// yage to mint here.
 func (p *Provider) EnsureIdentity(cfg *config.Config) error {
 	return provider.ErrNotApplicable
 }

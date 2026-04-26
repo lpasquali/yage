@@ -1,5 +1,5 @@
 // Package installer ports install_binary and every ensure_* helper from
-// bootstrap-capi.sh (lines ~1994-2858). These functions install or upgrade
+// yage.sh (lines ~1994-2858). These functions install or upgrade
 // third-party CLIs to pinned versions, mirroring the bash behavior:
 //
 //   - If the binary is missing, install.
@@ -26,11 +26,11 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/logx"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
-	"github.com/lpasquali/bootstrap-capi/internal/sysinfo"
-	"github.com/lpasquali/bootstrap-capi/internal/versionx"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/logx"
+	"github.com/lpasquali/yage/internal/shell"
+	"github.com/lpasquali/yage/internal/sysinfo"
+	"github.com/lpasquali/yage/internal/versionx"
 )
 
 // installBinary downloads url into a temp file then installs it into

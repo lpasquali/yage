@@ -22,8 +22,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lpasquali/bootstrap-capi/internal/config"
-	"github.com/lpasquali/bootstrap-capi/internal/shell"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/shell"
 )
 
 // BootstrapDir ports workload_postsync_hooks_bootstrap_dir. In Go this

@@ -1,11 +1,11 @@
 package provider
 
 import (
-	"github.com/lpasquali/bootstrap-capi/internal/config"
+	"github.com/lpasquali/yage/internal/config"
 )
 
 // MinStub embeds the boilerplate every CAPI infrastructure provider
-// has when bootstrap-capi only wires it for cost estimation +
+// has when yage only wires it for cost estimation +
 // clusterctl init. Concrete cloud packages embed MinStub, override
 // Name() / InfraProviderName() / EstimateMonthlyCostUSD(), and get
 // the rest (EnsureIdentity / EnsureGroup / EnsureCSISecret return

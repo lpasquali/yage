@@ -679,6 +679,15 @@ func Run(cfg *config.Config) int {
 		logx.Log("BOOTSTRAP_MODE=k3s — initializing CAPI with K3s control-plane + bootstrap providers (instead of kubeadm)")
 		initArgs = append(initArgs, "--control-plane", "k3s", "--bootstrap", "k3s")
 	}
+	// Wire cfg.ImageRegistryMirror (§17): when non-empty, rewrite any
+	// public-registry image references that follow --core / --bootstrap
+	// / --control-plane / --infrastructure so the airgapped mgmt cluster
+	// pulls CAPI provider images from the operator's internal mirror.
+	// No-op when the mirror is unset (the common, non-airgapped path).
+	if cfg.ImageRegistryMirror != "" {
+		logx.Log("Image registry mirror set (%s) — rewriting clusterctl init image references.", cfg.ImageRegistryMirror)
+		initArgs = applyImageMirror(initArgs, cfg.ImageRegistryMirror)
+	}
 	if err := shell.RunWithEnv(
 		[]string{
 			"EXP_CLUSTER_RESOURCE_SET=false",

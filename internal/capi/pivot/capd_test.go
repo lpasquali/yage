@@ -78,7 +78,6 @@ func capdTargetingConfig(t *testing.T) *config.Config {
 	cfg.MgmtKubeconfigPath = mgmtKubeconfig
 	cfg.WorkloadClusterNamespace = "default"
 	cfg.Mgmt.ClusterNamespace = "default"
-	cfg.Providers.Proxmox.BootstrapSecretNamespace = "yage-system"
 	return cfg
 }
 
@@ -93,14 +92,17 @@ func writeEmptyFile(path string) error {
 // TestSelectPivotNamespaces_CAPDFallsBackToDefault is the headline
 // E.5 assertion: when the active provider's Pivoter returns
 // ErrNotApplicable (CAPD's MinStub-inherited default), the namespace
-// selector falls back to the workload + mgmt + bootstrap-Secret trio.
+// selector falls back to the generic workload + mgmt namespace pair.
+// Provider-specific bootstrap namespaces (e.g. Proxmox's yage-system)
+// are NOT part of the generic fallback — providers that need additional
+// namespaces must implement PivotTarget and return them in Namespaces.
 // This proves the pivot mechanism doesn't break for providers that
-// haven't (yet) implemented PivotTarget.
+// haven't (yet) implemented PivotTarget, and that it doesn't leak
+// Proxmox-specific namespace knowledge into the generic path.
 func TestSelectPivotNamespaces_CAPDFallsBackToDefault(t *testing.T) {
 	cfg := capdTargetingConfig(t)
 	cfg.WorkloadClusterNamespace = "wl-ns"
 	cfg.Mgmt.ClusterNamespace = "mgmt-ns"
-	cfg.Providers.Proxmox.BootstrapSecretNamespace = "yage-system"
 
 	// Sanity: confirm CAPD really does inherit the default
 	// ErrNotApplicable. If a future commit overrides PivotTarget on
@@ -113,7 +115,7 @@ func TestSelectPivotNamespaces_CAPDFallsBackToDefault(t *testing.T) {
 	}
 
 	got := selectPivotNamespaces(cfg, capdProv)
-	want := []string{"wl-ns", "mgmt-ns", "yage-system"}
+	want := []string{"wl-ns", "mgmt-ns"}
 	sort.Strings(got)
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
@@ -124,15 +126,14 @@ func TestSelectPivotNamespaces_CAPDFallsBackToDefault(t *testing.T) {
 // TestSelectPivotNamespaces_NilProviderFallsBackToDefault covers the
 // path where provider.For(cfg) errors (unknown provider, air-gap
 // rejection). MoveCAPIState passes nil in that case; the helper must
-// still produce the default trio rather than panic.
+// still produce the generic workload + mgmt fallback rather than panic.
 func TestSelectPivotNamespaces_NilProviderFallsBackToDefault(t *testing.T) {
 	cfg := capdTargetingConfig(t)
 	cfg.WorkloadClusterNamespace = "wl"
 	cfg.Mgmt.ClusterNamespace = "mgmt"
-	cfg.Providers.Proxmox.BootstrapSecretNamespace = "yage-system"
 
 	got := selectPivotNamespaces(cfg, nil)
-	want := []string{"wl", "mgmt", "yage-system"}
+	want := []string{"wl", "mgmt"}
 	sort.Strings(got)
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
@@ -182,18 +183,17 @@ func TestSelectPivotNamespaces_ProviderOverridesDefault(t *testing.T) {
 // TestSelectPivotNamespaces_ProviderErrorFallsBackToDefault covers
 // the third branch: provider IS present but PivotTarget returns a
 // real error (not ErrNotApplicable, not nil — e.g. mgmt kubeconfig
-// not yet ready). Helper falls back to defaults, mirroring the
-// pre-E.4 behaviour for that edge case.
+// not yet ready). Helper falls back to the generic workload + mgmt
+// fallback.
 func TestSelectPivotNamespaces_ProviderErrorFallsBackToDefault(t *testing.T) {
 	cfg := capdTargetingConfig(t)
 	cfg.WorkloadClusterNamespace = "wl"
 	cfg.Mgmt.ClusterNamespace = "mgmt"
-	cfg.Providers.Proxmox.BootstrapSecretNamespace = "yage-system"
 
 	prov := fakePivoter{err: errors.New("mgmt kubeconfig not yet ready")}
 
 	got := selectPivotNamespaces(cfg, prov)
-	want := []string{"wl", "mgmt", "yage-system"}
+	want := []string{"wl", "mgmt"}
 	sort.Strings(got)
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {

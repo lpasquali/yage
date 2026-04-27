@@ -18,6 +18,7 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/platform/kubectl"
+	"github.com/lpasquali/yage/internal/provider"
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
@@ -129,15 +130,17 @@ func EnsureManagementCluster(cfg *config.Config) (string, error) {
 // CAPI inventory + bootstrap Secrets to the kind cluster, or the
 // PivotVerifyTimeout elapses. Specifically:
 //
-//  1. clusters.cluster.x-k8s.io list contains both the workload cluster
-//     and the mgmt cluster (the mgmt cluster's own Cluster object is
-//     created during clusterctl init's pivot-back; we rely on the move
-//     to bring the workload Cluster across).
-//  2. yage-system namespace exists with the four expected
-//     Secrets (proxmox-bootstrap-config, proxmox-bootstrap-capmox-credentials,
-//     proxmox-bootstrap-csi-credentials, proxmox-bootstrap-admin-credentials).
-//     Agent B owns the actual Secret hand-off; we only verify presence.
-//  3. capmox-system / capi-system Deployments report Available=True.
+//  1. clusters.cluster.x-k8s.io list contains the workload cluster
+//     (the move brings the workload Cluster object across).
+//  2. Any provider-specific bootstrap Secrets listed in the active
+//     provider's PivotTarget.VerifySecrets are present. Providers that
+//     have no bootstrap Secrets to verify return an empty list.
+//  3. capi-system Deployment reports Available=True.
+//
+// The set of Deployments and Secrets verified is driven by the active
+// provider's PivotTarget so that VerifyParity is provider-agnostic:
+// Proxmox verifies capmox-system + its bootstrap Secrets; a future
+// AWS provider would verify capa-system + its own Secrets.
 //
 // Returns nil on parity, otherwise the first failure encountered after
 // the timeout.
@@ -155,15 +158,16 @@ func VerifyParity(cfg *config.Config, mgmtKubeconfig string) error {
 	timeout := parseDuration(cfg.Pivot.VerifyTimeout, 10*time.Minute)
 	deadline := time.Now().Add(timeout)
 
-	expectedSecrets := []string{
-		"proxmox-bootstrap-config",
-		"proxmox-bootstrap-capmox-credentials",
-		"proxmox-bootstrap-csi-credentials",
-		"proxmox-bootstrap-admin-credentials",
-	}
-	bsNS := cfg.Providers.Proxmox.BootstrapSecretNamespace
-	if bsNS == "" {
-		bsNS = "yage-system"
+	// Ask the active provider for the Secrets it expects to find on
+	// the management cluster after the handoff step. Providers that
+	// have no managed-mgmt story return ErrNotApplicable; in that case
+	// we skip Secret verification (parity is still checked via CAPI
+	// Cluster objects + capi-system Deployment).
+	var providerVerifySecrets []provider.VerifySecret
+	if prov, provErr := provider.For(cfg); provErr == nil {
+		if pt, ptErr := prov.PivotTarget(cfg); ptErr == nil {
+			providerVerifySecrets = pt.VerifySecrets
+		}
 	}
 
 	logx.Log("Verifying mgmt-vs-kind parity (timeout %s)…", timeout)
@@ -187,45 +191,58 @@ func VerifyParity(cfg *config.Config, mgmtKubeconfig string) error {
 			}
 		}
 
-		// (b) bootstrap-system namespace + four Secrets present.
-		if lastErr == nil {
-			if _, err := cli.Typed.CoreV1().Namespaces().Get(bg, bsNS, metav1.GetOptions{}); err != nil {
-				if apierrors.IsNotFound(err) {
-					lastErr = fmt.Errorf("namespace %s not on mgmt yet", bsNS)
-				} else {
-					lastErr = fmt.Errorf("get %s ns: %w", bsNS, err)
-				}
-			}
-		}
-		if lastErr == nil {
-			missing := []string{}
-			for _, sn := range expectedSecrets {
-				if _, err := cli.Typed.CoreV1().Secrets(bsNS).Get(bg, sn, metav1.GetOptions{}); err != nil {
-					if apierrors.IsNotFound(err) {
-						missing = append(missing, sn)
-					} else {
-						lastErr = fmt.Errorf("get secret %s/%s: %w", bsNS, sn, err)
+		// (b) Provider-specific bootstrap Secrets present. The set is
+		// empty for providers without a bootstrap-Secret story; checking
+		// is skipped entirely in that case so the function stays
+		// provider-agnostic.
+		if lastErr == nil && len(providerVerifySecrets) > 0 {
+			// Collect the unique namespaces so we can verify each
+			// namespace exists before looking for its Secrets.
+			nsSeen := map[string]bool{}
+			for _, vs := range providerVerifySecrets {
+				if vs.Namespace != "" && !nsSeen[vs.Namespace] {
+					nsSeen[vs.Namespace] = true
+					if _, err := cli.Typed.CoreV1().Namespaces().Get(bg, vs.Namespace, metav1.GetOptions{}); err != nil {
+						if apierrors.IsNotFound(err) {
+							lastErr = fmt.Errorf("namespace %s not on mgmt yet", vs.Namespace)
+						} else {
+							lastErr = fmt.Errorf("get %s ns: %w", vs.Namespace, err)
+						}
 						break
 					}
 				}
 			}
-			if lastErr == nil && len(missing) > 0 {
-				lastErr = fmt.Errorf("bootstrap Secrets missing on mgmt: %s",
-					strings.Join(sortedStrings(missing), ","))
+			if lastErr == nil {
+				var missing []string
+				for _, vs := range providerVerifySecrets {
+					if vs.Namespace == "" || vs.Name == "" {
+						continue
+					}
+					if _, err := cli.Typed.CoreV1().Secrets(vs.Namespace).Get(bg, vs.Name, metav1.GetOptions{}); err != nil {
+						if apierrors.IsNotFound(err) {
+							missing = append(missing, vs.Namespace+"/"+vs.Name)
+						} else {
+							lastErr = fmt.Errorf("get secret %s/%s: %w", vs.Namespace, vs.Name, err)
+							break
+						}
+					}
+				}
+				if lastErr == nil && len(missing) > 0 {
+					lastErr = fmt.Errorf("bootstrap Secrets missing on mgmt: %s",
+						strings.Join(sortedStrings(missing), ","))
+				}
 			}
 		}
 
-		// (c) capi-system + capmox-system Deployments Available.
+		// (c) capi-system Deployment Available — provider-agnostic.
+		// Provider-specific controller Deployments are verified by
+		// InstallCAPIOnManagement + MoveCAPIState; VerifyParity owns
+		// only the universal CAPI core check.
 		if lastErr == nil {
-			for _, d := range []struct{ ns, name string }{
-				{"capi-system", "capi-controller-manager"},
-				{"capmox-system", "capmox-controller-manager"},
-			} {
-				dep, err := cli.Typed.AppsV1().Deployments(d.ns).Get(bg, d.name, metav1.GetOptions{})
-				if err != nil {
-					lastErr = fmt.Errorf("get deployment %s/%s on mgmt: %w", d.ns, d.name, err)
-					break
-				}
+			dep, err := cli.Typed.AppsV1().Deployments("capi-system").Get(bg, "capi-controller-manager", metav1.GetOptions{})
+			if err != nil {
+				lastErr = fmt.Errorf("get deployment capi-system/capi-controller-manager on mgmt: %w", err)
+			} else {
 				ok := false
 				for _, c := range dep.Status.Conditions {
 					if string(c.Type) == "Available" && string(c.Status) == "True" {
@@ -234,8 +251,7 @@ func VerifyParity(cfg *config.Config, mgmtKubeconfig string) error {
 					}
 				}
 				if !ok {
-					lastErr = fmt.Errorf("%s/%s not Available on mgmt", d.ns, d.name)
-					break
+					lastErr = fmt.Errorf("capi-system/capi-controller-manager not Available on mgmt")
 				}
 			}
 		}

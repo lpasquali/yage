@@ -207,6 +207,20 @@ type PivotTarget struct {
 	// accept the move. Zero = orchestrator default (typically
 	// 10 minutes).
 	ReadyTimeout time.Duration
+	// VerifySecrets is the provider-specific list of namespace/name
+	// pairs that VerifyParity checks on the management cluster after
+	// clusterctl move. An empty slice means the provider has no
+	// provider-specific Secrets to verify (CAPI object parity is still
+	// checked regardless). nil = same as empty.
+	VerifySecrets []VerifySecret
+}
+
+// VerifySecret is a namespace-qualified Secret name used by
+// VerifyParity to confirm that the provider's bootstrap Secrets
+// arrived on the management cluster after the handoff step.
+type VerifySecret struct {
+	Namespace string
+	Name      string
 }
 
 // KindSyncer is composed into Provider for callers that only need

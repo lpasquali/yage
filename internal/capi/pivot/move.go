@@ -237,8 +237,9 @@ func scaleDeploymentsToZero(kindCtx string) error {
 
 // selectPivotNamespaces resolves the namespace list `clusterctl move`
 // runs against. Per §12, the active provider's PivotTarget owns
-// the namespace list; nil means "use default" — workload + mgmt +
-// the provider-managed bootstrap Secret namespace.
+// the namespace list; nil means "use default" — workload + mgmt
+// cluster namespaces only (provider-specific bootstrap namespaces are
+// the provider's responsibility, returned via PivotTarget.Namespaces).
 //
 // Extracted from MoveCAPIState so the namespace-selection logic is
 // unit-testable without spinning up clusterctl. The Pivoter argument
@@ -257,10 +258,13 @@ func selectPivotNamespaces(cfg *config.Config, prov provider.Pivoter) []string {
 		}
 	}
 	if namespaces == nil {
+		// Generic fallback: workload + mgmt cluster namespaces.
+		// Providers that need additional namespaces (e.g. a
+		// provider-managed bootstrap-Secret namespace) must return
+		// a non-nil Namespaces list from PivotTarget.
 		namespaces = dedupe([]string{
 			cfg.WorkloadClusterNamespace,
 			cfg.Mgmt.ClusterNamespace,
-			cfg.Providers.Proxmox.BootstrapSecretNamespace,
 		})
 	}
 	return namespaces

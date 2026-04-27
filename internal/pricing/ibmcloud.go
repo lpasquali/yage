@@ -11,32 +11,41 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/IBM/go-sdk-core/v5/core"
 )
 
-// IBM Cloud Global Catalog — needs a Bearer token obtained via the
-// IAM exchange:
-//   POST https://iam.cloud.ibm.com/identity/token
-//     grant_type=urn:ibm:params:oauth:grant-type:apikey
-//     apikey=<IBMCLOUD_API_KEY>
-// returns access_token used as Authorization: Bearer.
+// IBM Cloud Global Catalog — authenticated via the IBM go-sdk-core
+// IamAuthenticator, which handles the IAM API-key → Bearer-token
+// exchange and caches the token until it nears expiry.
 //
 // Catalog query for VPC Gen2 instance profiles:
-//   GET https://globalcatalog.cloud.ibm.com/api/v1/<is.instance>/pricing
-//   GET https://globalcatalog.cloud.ibm.com/api/v1?q=is-instance-profile
+//   GET https://globalcatalog.cloud.ibm.com/api/v1?q=<profile>&kind=instance.profile&include=pricing
 //
 // VPC Gen2 instance pricing is published as a flat hourly rate per
 // profile per region under the `is.instance.profile` catalog entry.
+//
+// The IamAuthenticator is configured with Client: &http.Client{} (nil
+// Transport) so IAM token requests go through http.DefaultTransport —
+// keeping the airgap shim effective. The catalog HTTP client uses the
+// same nil-Transport pattern.
+//
 // Token: YAGE_IBMCLOUD_API_KEY or IBMCLOUD_API_KEY.
 
 const (
-	ibmIAMTokenURL    = "https://iam.cloud.ibm.com/identity/token"
 	ibmCatalogBaseURL = "https://globalcatalog.cloud.ibm.com/api/v1"
 )
 
-type ibmFetcher struct{ httpClient *http.Client }
+// ibmHTTPClient is the shared nil-Transport HTTP client used for all
+// IBM Cloud catalog HTTP requests. Inherits http.DefaultTransport at
+// call time (including the airgap shim). The IamAuthenticator uses its
+// own Client field, also set to &http.Client{}.
+var ibmHTTPClient = &http.Client{}
+
+type ibmFetcher struct{}
 
 func init() {
-	Register("ibmcloud", &ibmFetcher{httpClient: &http.Client{Timeout: 30 * time.Second}})
+	Register("ibmcloud", &ibmFetcher{})
 }
 
 // ibmAPIKey returns the IBM Cloud API key used for pricing.
@@ -51,35 +60,32 @@ func ibmAPIKey() string {
 	return os.Getenv("IBMCLOUD_API_KEY")
 }
 
-type ibmIAMResp struct {
-	AccessToken string `json:"access_token"`
+// newIBMAuthenticator creates an IamAuthenticator for the given API
+// key. The Client field is set to &http.Client{} (nil Transport) so
+// the IAM token request inherits http.DefaultTransport, keeping the
+// airgap shim effective.
+func newIBMAuthenticator(apiKey string) *core.IamAuthenticator {
+	return &core.IamAuthenticator{
+		ApiKey: apiKey,
+		Client: ibmHTTPClient,
+	}
 }
 
-func ibmExchangeAPIKey(key string) (string, error) {
-	form := url.Values{}
-	form.Set("grant_type", "urn:ibm:params:oauth:grant-type:apikey")
-	form.Set("apikey", key)
-	req, _ := http.NewRequest("POST", ibmIAMTokenURL, strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "yage/pricing")
-	c := &http.Client{Timeout: 15 * time.Second}
-	resp, err := c.Do(req)
-	if err != nil {
-		return "", err
+// ibmAuthorize exchanges the API key for a Bearer token via the IBM
+// IamAuthenticator and returns it as a string. The authenticator
+// caches the token so repeated calls within a process avoid redundant
+// IAM round-trips.
+func ibmAuthorize(auth *core.IamAuthenticator) (string, error) {
+	// Construct a throwaway request just to extract the token value.
+	req, _ := http.NewRequest("GET", ibmCatalogBaseURL, nil)
+	if err := auth.Authenticate(req); err != nil {
+		return "", fmt.Errorf("ibm iam: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("ibm iam: HTTP %d", resp.StatusCode)
+	authHeader := req.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return "", fmt.Errorf("ibm iam: unexpected authorization header %q", authHeader)
 	}
-	var ir ibmIAMResp
-	if err := json.NewDecoder(resp.Body).Decode(&ir); err != nil {
-		return "", err
-	}
-	if ir.AccessToken == "" {
-		return "", fmt.Errorf("ibm iam: empty access_token")
-	}
-	return ir.AccessToken, nil
+	return strings.TrimPrefix(authHeader, "Bearer "), nil
 }
 
 type ibmAmount struct {
@@ -92,15 +98,15 @@ type ibmAmount struct {
 }
 
 type ibmMetric struct {
-	PartRef       string      `json:"part_ref"`
-	MetricID      string      `json:"metric"`
-	Amounts       []ibmAmount `json:"amounts"`
-	UsageCapQty   int         `json:"usage_cap_qty"`
-	DisplayCap    int         `json:"display_cap"`
+	PartRef     string      `json:"part_ref"`
+	MetricID    string      `json:"metric"`
+	Amounts     []ibmAmount `json:"amounts"`
+	UsageCapQty int         `json:"usage_cap_qty"`
+	DisplayCap  int         `json:"display_cap"`
 }
 
 type ibmDeployment struct {
-	Location string `json:"location"`
+	Location string      `json:"location"`
 	Metrics  []ibmMetric `json:"metrics"`
 }
 
@@ -112,9 +118,9 @@ type ibmEntryPricing struct {
 }
 
 type ibmEntry struct {
-	Name         string          `json:"name"`
-	ID           string          `json:"id"`
-	Pricing      ibmEntryPricing `json:"pricing"`
+	Name    string          `json:"name"`
+	ID      string          `json:"id"`
+	Pricing ibmEntryPricing `json:"pricing"`
 }
 
 type ibmCatalogResp struct {
@@ -145,7 +151,8 @@ func (b *ibmFetcher) Fetch(profile, region string) (Item, error) {
 	if apiKey == "" {
 		return Item{}, fmt.Errorf("ibmcloud: IBMCLOUD_API_KEY not set")
 	}
-	token, err := ibmExchangeAPIKey(apiKey)
+	auth := newIBMAuthenticator(apiKey)
+	token, err := ibmAuthorize(auth)
 	if err != nil {
 		return Item{}, fmt.Errorf("ibmcloud iam: %w", err)
 	}
@@ -162,7 +169,7 @@ func (b *ibmFetcher) Fetch(profile, region string) (Item, error) {
 	req, _ := http.NewRequest("GET", endpoint, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", "yage/pricing")
-	resp, err := b.httpClient.Do(req)
+	resp, err := ibmHTTPClient.Do(req)
 	if err != nil {
 		return Item{}, fmt.Errorf("ibmcloud catalog: %w", err)
 	}
@@ -195,7 +202,7 @@ func (b *ibmFetcher) Fetch(profile, region string) (Item, error) {
 		if len(metrics) == 0 {
 			// Fetch children with pricing and pick the one whose name
 			// ends with the data-center suffix matching `region`.
-			children, cerr := b.fetchChildrenWithPricing(token, entry.ID)
+			children, cerr := ibmFetchChildrenWithPricing(token, entry.ID)
 			if cerr == nil {
 				dcSuffix := ibmRegionToDCSuffix[strings.ToLower(strings.TrimSpace(region))]
 				for _, child := range children {
@@ -317,18 +324,18 @@ func ibmInstanceListPrice(profile string) (float64, bool) {
 	return float64(vcpus) * rate, true
 }
 
-// fetchChildrenWithPricing returns the catalog children of parent
+// ibmFetchChildrenWithPricing returns the catalog children of parent
 // entry parentID, with each child's pricing object populated. Used
 // to drill into per-region deployment entries when the parent
 // itself doesn't expose regional pricing inline.
-func (b *ibmFetcher) fetchChildrenWithPricing(token, parentID string) ([]ibmEntry, error) {
+func ibmFetchChildrenWithPricing(token, parentID string) ([]ibmEntry, error) {
 	q := url.Values{}
 	q.Set("include", "pricing")
 	endpoint := ibmCatalogBaseURL + "/" + url.PathEscape(parentID) + "/" + url.PathEscape("*") + "?" + q.Encode()
 	req, _ := http.NewRequest("GET", endpoint, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", "yage/pricing")
-	resp, err := b.httpClient.Do(req)
+	resp, err := ibmHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ibmcloud children: %w", err)
 	}
@@ -342,3 +349,6 @@ func (b *ibmFetcher) fetchChildrenWithPricing(token, parentID string) ([]ibmEntr
 	}
 	return cr.Resources, nil
 }
+
+// ensure time is used (FetchedAt in buildVendorItem uses time.Now internally)
+var _ = time.Now

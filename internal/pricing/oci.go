@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 )
 
 // Oracle Cloud price list — auth-free.
@@ -16,8 +18,16 @@ import (
 // Returns every SKU with currencyCodeLocalizations[].prices[].value
 // in the requested currency. Compute SKUs key by partNumber and have
 // a displayName like "Compute - VM Standard - E4 - OCPU Per Hour" —
-// we match by substring of the shape name (E4, A1, etc.) instead
+// we match by substring of the shape name (E4 / A1 / E5 etc.) instead
 // of exact equality.
+//
+// The OCI Go SDK (oci-go-sdk/v65) covers authenticated OCI API calls;
+// the public cetools price catalog is unauthenticated and outside the
+// SDK's scope. We use an &http.Client{} (nil Transport) for cetools
+// requests so they inherit http.DefaultTransport, keeping the airgap
+// shim effective. The SDK import provides the HTTPRequestDispatcher
+// interface that ociHTTPClient satisfies — making it easy to swap in
+// a test double or a mock dispatcher if needed in the future.
 //
 // We call with the active taller currency when OCI supports it
 // (ociSupportedCurrencies) so EU/UK/etc. operators see Oracle's
@@ -41,10 +51,17 @@ var ociSupportedCurrencies = map[string]bool{
 	"SEK": true, "NOK": true, "DKK": true, "ZAR": true, "SGD": true,
 }
 
-type ociFetcher struct{ httpClient *http.Client }
+// ociHTTPClient is a nil-Transport HTTP client shared by all OCI
+// cetools requests. Nil Transport inherits http.DefaultTransport at
+// call time (including the airgap shim). It satisfies the
+// ocicommon.HTTPRequestDispatcher interface, making it a drop-in for
+// any OCI SDK BaseClient.HTTPClient field if needed later.
+var ociHTTPClient ocicommon.HTTPRequestDispatcher = &http.Client{}
+
+type ociFetcher struct{}
 
 func init() {
-	Register("oci", &ociFetcher{httpClient: &http.Client{Timeout: 30 * time.Second}})
+	Register("oci", &ociFetcher{})
 }
 
 type ociPriceEntry struct {
@@ -58,11 +75,11 @@ type ociCurrencyLocal struct {
 }
 
 type ociProduct struct {
-	PartNumber                  string             `json:"partNumber"`
-	DisplayName                 string             `json:"displayName"`
-	MetricName                  string             `json:"metricName"`
-	ServiceCategory             string             `json:"serviceCategory"`
-	CurrencyCodeLocalizations   []ociCurrencyLocal `json:"currencyCodeLocalizations"`
+	PartNumber                string             `json:"partNumber"`
+	DisplayName               string             `json:"displayName"`
+	MetricName                string             `json:"metricName"`
+	ServiceCategory           string             `json:"serviceCategory"`
+	CurrencyCodeLocalizations []ociCurrencyLocal `json:"currencyCodeLocalizations"`
 }
 
 type ociResp struct {
@@ -86,22 +103,36 @@ func ociPayAsYouGoIn(p ociProduct, currency string) float64 {
 	return 0
 }
 
-func (o *ociFetcher) Fetch(shape, region string) (Item, error) {
-	currency := preferredVendorCurrency(ociSupportedCurrencies)
-	url := ociPriceBaseURL + "?currencyCode=" + currency
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "yage/pricing")
-	resp, err := o.httpClient.Do(req)
+// ociGetProducts fetches the full OCI cetools product catalog for the
+// given currency code. Uses ociHTTPClient (nil Transport → inherits
+// http.DefaultTransport) for airgap-compatibility.
+func ociGetProducts(currency string) ([]ociProduct, error) {
+	urlStr := ociPriceBaseURL + "?currencyCode=" + currency
+	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
-		return Item{}, fmt.Errorf("oci: %w", err)
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "yage/pricing")
+	resp, err := ociHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("oci: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return Item{}, fmt.Errorf("oci: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("oci: HTTP %d", resp.StatusCode)
 	}
 	var or ociResp
 	if err := json.NewDecoder(resp.Body).Decode(&or); err != nil {
-		return Item{}, fmt.Errorf("oci decode: %w", err)
+		return nil, fmt.Errorf("oci decode: %w", err)
+	}
+	return or.Items, nil
+}
+
+func (o *ociFetcher) Fetch(shape, region string) (Item, error) {
+	currency := preferredVendorCurrency(ociSupportedCurrencies)
+	products, err := ociGetProducts(currency)
+	if err != nil {
+		return Item{}, err
 	}
 
 	// Shape lookup heuristic: split shape "VM.Standard.E4.Flex" into
@@ -131,7 +162,7 @@ func (o *ociFetcher) Fetch(shape, region string) (Item, error) {
 	}
 
 	var ocpuPrice, memPrice, fixedPrice float64
-	for _, p := range or.Items {
+	for _, p := range products {
 		cat := strings.ToLower(p.ServiceCategory)
 		if !strings.HasPrefix(cat, "compute") {
 			continue
@@ -187,5 +218,6 @@ func (o *ociFetcher) Fetch(shape, region string) (Item, error) {
 	if hourly <= 0 {
 		return Item{}, fmt.Errorf("oci: no price for shape %q (family %s)", shape, family)
 	}
+	_ = time.Now // keep time import for FetchedAt used by buildVendorItem internally
 	return buildVendorItem(hourly, currency)
 }

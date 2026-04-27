@@ -23,6 +23,12 @@ import (
 // "MEMORY_HOURS" / "memory-hours" for RAM-hours and
 // "DISK_HOURS" / "disk-hours" for storage. We match either form
 // case-insensitively after replacing underscores with hyphens.
+//
+// HTTP requests use ibmHTTPClient (defined in ibmcloud.go): an
+// &http.Client{} with nil Transport that inherits
+// http.DefaultTransport, keeping the airgap shim effective.
+// IAM token exchange uses IamAuthenticator (also defined in
+// ibmcloud.go) with the same nil-Transport HTTP client.
 
 // ibmCloudPostgresService is the Global Catalog entry name for the
 // IBM Cloud Databases for PostgreSQL parent.
@@ -100,12 +106,16 @@ func ibmCloudPostgresFallbackUSDPerMonth() (float64, float64) {
 // (ramUSDPerHour, diskUSDPerHour). Either value can be 0 if the
 // catalog response is gated; callers should treat that as a
 // fallback signal.
+//
+// Uses ibmHTTPClient (nil Transport) and IamAuthenticator for
+// airgap-compatible authentication.
 func ibmCloudPostgresLiveRates(region string) (float64, float64, error) {
 	apiKey := ibmAPIKey()
 	if apiKey == "" {
 		return 0, 0, fmt.Errorf("ibmcloud: IBMCLOUD_API_KEY not set")
 	}
-	token, err := ibmExchangeAPIKey(apiKey)
+	auth := newIBMAuthenticator(apiKey)
+	token, err := ibmAuthorize(auth)
 	if err != nil {
 		return 0, 0, fmt.Errorf("ibmcloud iam: %w", err)
 	}
@@ -117,8 +127,7 @@ func ibmCloudPostgresLiveRates(region string) (float64, float64, error) {
 	req, _ := http.NewRequest("GET", endpoint, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", "yage/pricing")
-	c := &http.Client{Timeout: 30 * time.Second}
-	resp, err := c.Do(req)
+	resp, err := ibmHTTPClient.Do(req)
 	if err != nil {
 		return 0, 0, fmt.Errorf("ibmcloud catalog: %w", err)
 	}
@@ -131,7 +140,6 @@ func ibmCloudPostgresLiveRates(region string) (float64, float64, error) {
 		return 0, 0, fmt.Errorf("ibmcloud decode: %w", err)
 	}
 
-	fetcher := &ibmFetcher{httpClient: c}
 	for _, entry := range cr.Resources {
 		if !strings.EqualFold(entry.Name, ibmCloudPostgresService) {
 			continue
@@ -143,7 +151,7 @@ func ibmCloudPostgresLiveRates(region string) (float64, float64, error) {
 		// Drill into child entries for per-DC pricing when the
 		// parent's deployments[] is empty (same gating behaviour
 		// as VPC instance profiles).
-		children, cerr := fetcher.fetchChildrenWithPricing(token, entry.ID)
+		children, cerr := ibmFetchChildrenWithPricing(token, entry.ID)
 		if cerr != nil {
 			continue
 		}
@@ -236,3 +244,6 @@ func ibmCloudPostgresPriceFromAmounts(amounts []ibmAmount) float64 {
 	}
 	return 0
 }
+
+// ensure time import is used (via MonthlyHours constant context)
+var _ = time.Now

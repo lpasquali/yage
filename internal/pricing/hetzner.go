@@ -4,23 +4,25 @@
 package pricing
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hetznercloud/hcloud-go/v2/hcloud"
 )
 
 // Hetzner Cloud API — requires a project API token for catalog
 // reads (Hetzner closed the unauthenticated endpoint a while back).
-// GET https://api.hetzner.cloud/v1/server_types returns every
-// server type with a prices[] array, one entry per location
-// ("fsn1", "nbg1", "hel1", "ash", "hil"). Each entry exposes
-// price_hourly.gross and price_monthly.gross in EUR (Hetzner
-// caps monthly billing — that cap is what shows up here, not
-// hourly × 730).
+// Uses the official hcloud-go/v2 SDK; the underlying HTTP client is
+// passed as &http.Client{} (nil Transport) so it inherits whatever
+// http.DefaultTransport is at call time — including the airgap shim
+// applied by defaulttransport_airgap_test.go.
+//
+// SDK docs: https://pkg.go.dev/github.com/hetznercloud/hcloud-go/v2/hcloud
 //
 // Token: HCLOUD_TOKEN (also accepted: YAGE_HCLOUD_TOKEN).
 // When unset, the fetcher returns ErrUnavailable and the cost
@@ -34,7 +36,6 @@ import (
 // USDPerHour/USDPerMonth fields used by cross-vendor sort. There is
 // no hetzner-specific FX knob — open.er-api.com supplies the EUR
 // rate alongside every other currency.
-const hetznerServerTypesURL = "https://api.hetzner.cloud/v1/server_types"
 
 // hetznerDeprecatedServerTypes maps server type names removed from the
 // public catalog (Hetzner Cloud changelog 2025-10-16) to their
@@ -58,30 +59,21 @@ func hetznerToken() string {
 	return os.Getenv("HCLOUD_TOKEN")
 }
 
-type hetznerFetcher struct{ httpClient *http.Client }
+// newHCloudClient creates a Hetzner Cloud API client using the given
+// token. The HTTP client is intentionally &http.Client{} (nil
+// Transport) so callers inherit http.DefaultTransport — this keeps
+// the airgap test shim effective.
+func newHCloudClient(token string) *hcloud.Client {
+	return hcloud.NewClient(
+		hcloud.WithToken(token),
+		hcloud.WithHTTPClient(&http.Client{}),
+	)
+}
+
+type hetznerFetcher struct{}
 
 func init() {
-	Register("hetzner", &hetznerFetcher{httpClient: &http.Client{Timeout: 10 * time.Second}})
-}
-
-type hetznerPriceAmount struct {
-	Net   string `json:"net"`
-	Gross string `json:"gross"`
-}
-
-type hetznerLocPrice struct {
-	Location     string             `json:"location"`
-	PriceHourly  hetznerPriceAmount `json:"price_hourly"`
-	PriceMonthly hetznerPriceAmount `json:"price_monthly"`
-}
-
-type hetznerServerType struct {
-	Name   string            `json:"name"`
-	Prices []hetznerLocPrice `json:"prices"`
-}
-
-type hetznerListResp struct {
-	ServerTypes []hetznerServerType `json:"server_types"`
+	Register("hetzner", &hetznerFetcher{})
 }
 
 // nativeToUSDOrZero converts a hetzner native amount (EUR) to USD
@@ -101,39 +93,30 @@ func (h *hetznerFetcher) Fetch(sku, region string) (Item, error) {
 	if token == "" {
 		return Item{}, fmt.Errorf("hetzner: HCLOUD_TOKEN not set")
 	}
-	req, err := http.NewRequest("GET", hetznerServerTypesURL, nil)
-	if err != nil {
-		return Item{}, err
-	}
-	req.Header.Set("User-Agent", "yage/pricing")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := h.httpClient.Do(req)
+	client := newHCloudClient(token)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	serverTypes, err := client.ServerType.All(ctx)
 	if err != nil {
 		return Item{}, fmt.Errorf("hetzner: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return Item{}, fmt.Errorf("hetzner: HTTP %d", resp.StatusCode)
-	}
-	var list hetznerListResp
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		return Item{}, fmt.Errorf("hetzner decode: %w", err)
-	}
+
 	tryNames := []string{sku}
 	if alt, ok := hetznerDeprecatedServerTypes[strings.ToLower(strings.TrimSpace(sku))]; ok && alt != sku {
 		tryNames = append(tryNames, alt)
 	}
 	for _, name := range tryNames {
-		for _, st := range list.ServerTypes {
+		for _, st := range serverTypes {
 			if st.Name != name {
 				continue
 			}
-			for _, p := range st.Prices {
-				if p.Location != region {
+			for _, p := range st.Pricings {
+				if p.Location == nil || p.Location.Name != region {
 					continue
 				}
-				hourEUR, _ := strconv.ParseFloat(p.PriceHourly.Gross, 64)
-				monthEUR, _ := strconv.ParseFloat(p.PriceMonthly.Gross, 64)
+				hourEUR, _ := strconv.ParseFloat(p.Hourly.Gross, 64)
+				monthEUR, _ := strconv.ParseFloat(p.Monthly.Gross, 64)
 				return Item{
 					USDPerHour:     nativeToUSDOrZero(hourEUR),
 					USDPerMonth:    nativeToUSDOrZero(monthEUR),
@@ -148,68 +131,35 @@ func (h *hetznerFetcher) Fetch(sku, region string) (Item, error) {
 	return Item{}, fmt.Errorf("hetzner: unknown server_type %q", sku)
 }
 
-// HetznerVolumeUSDPerGBMonth fetches the per-GB-month price of
-// a Hetzner Cloud Volume. Hetzner publishes volume pricing on
-// a separate /pricing endpoint; we use the public one and
-// convert EUR → USD via the standard pricing.toUSD path.
-const hetznerPricingURL = "https://api.hetzner.cloud/v1/pricing"
-
-type hetznerVolumePrice struct {
-	PricePerGBMonth hetznerPriceAmount `json:"price_per_gb_month"`
-}
-
-type hetznerLBTypePrice struct {
-	Location     string             `json:"location"`
-	PriceMonthly hetznerPriceAmount `json:"price_monthly"`
-}
-
-type hetznerLBType struct {
-	Name   string               `json:"name"`
-	Prices []hetznerLBTypePrice `json:"prices"`
-}
-
-type hetznerFloatingIPPrice struct {
-	PriceMonthly hetznerPriceAmount `json:"price_monthly"`
-}
-
-type hetznerPricingPayload struct {
-	Pricing struct {
-		Volume               hetznerVolumePrice     `json:"volume"`
-		LoadBalancerTypes    []hetznerLBType        `json:"load_balancer_types"`
-		FloatingIP           hetznerFloatingIPPrice `json:"floating_ip"`
-	} `json:"pricing"`
-}
-
-func fetchHetznerPricing() (*hetznerPricingPayload, error) {
+// fetchHetznerPricing uses the Pricing SDK client to retrieve volume,
+// load balancer, and floating IP pricing from /v1/pricing. The HTTP
+// client is &http.Client{} (nil Transport) to inherit DefaultTransport.
+func fetchHetznerPricing() (*hcloud.Pricing, error) {
 	token := hetznerToken()
 	if token == "" {
 		return nil, fmt.Errorf("hetzner: HCLOUD_TOKEN not set")
 	}
-	c := &http.Client{Timeout: 10 * time.Second}
-	req, _ := http.NewRequest("GET", hetznerPricingURL, nil)
-	req.Header.Set("User-Agent", "yage/pricing")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := c.Do(req)
+	client := newHCloudClient(token)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	p, _, err := client.Pricing.Get(ctx)
 	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("hetzner pricing: HTTP %d", resp.StatusCode)
-	}
-	var p hetznerPricingPayload
-	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("hetzner pricing: %w", err)
 	}
 	return &p, nil
 }
 
+// HetznerVolumeUSDPerGBMonth fetches the per-GB-month price of
+// a Hetzner Cloud Volume. Hetzner publishes volume pricing on
+// a separate /pricing endpoint; we use the SDK and convert EUR → USD
+// via the standard pricing.toUSD path.
 func HetznerVolumeUSDPerGBMonth() (float64, error) {
 	p, err := fetchHetznerPricing()
 	if err != nil {
 		return 0, err
 	}
-	eur, err := strconv.ParseFloat(p.Pricing.Volume.PricePerGBMonth.Gross, 64)
+	eur, err := strconv.ParseFloat(p.Volume.PerGBMonthly.Gross, 64)
 	if err != nil {
 		return 0, fmt.Errorf("hetzner pricing: parse: %w", err)
 	}
@@ -225,14 +175,14 @@ func HetznerLoadBalancerUSDPerMonth(lbType string) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	for _, t := range p.Pricing.LoadBalancerTypes {
-		if t.Name != lbType {
+	for _, t := range p.LoadBalancerTypes {
+		if t.LoadBalancerType == nil || t.LoadBalancerType.Name != lbType {
 			continue
 		}
 		var bestEUR float64
 		found := false
-		for _, lp := range t.Prices {
-			eur, err := strconv.ParseFloat(lp.PriceMonthly.Gross, 64)
+		for _, lp := range t.Pricings {
+			eur, err := strconv.ParseFloat(lp.Monthly.Gross, 64)
 			if err != nil || eur <= 0 {
 				continue
 			}
@@ -256,7 +206,9 @@ func HetznerFloatingIPUSDPerMonth() (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	eur, err := strconv.ParseFloat(p.Pricing.FloatingIP.PriceMonthly.Gross, 64)
+	// Use the legacy FloatingIP field (IPv4 only); hcloud-go still
+	// populates it alongside FloatingIPs for backward compatibility.
+	eur, err := strconv.ParseFloat(p.FloatingIP.Monthly.Gross, 64)
 	if err != nil {
 		return 0, fmt.Errorf("hetzner pricing fip: parse: %w", err)
 	}

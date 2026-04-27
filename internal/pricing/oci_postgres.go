@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // OCI Database with PostgreSQL pricing.
@@ -28,6 +27,10 @@ import (
 // We always price block-volume-style storage off B99062 — the
 // "Database Optimized Storage" SKU is the only storage line OCI
 // publishes for managed Postgres in the catalog.
+//
+// HTTP requests use ociHTTPClient (defined in oci.go): an &http.Client{}
+// with nil Transport that inherits http.DefaultTransport, keeping the
+// airgap shim effective.
 
 // Per-OCPU and per-GB-RAM ratio used to pre-bill memory when the
 // catalog OCPU rate is the bundled flavor (no separate RAM SKU).
@@ -39,9 +42,10 @@ const ociPostgresRAMPerOCPU = 16
 // at writing. Used when the cetools API is unreachable.
 //
 // Headline rates:
-//   OCPU       $0.0717 per OCPU-hour
-//   Memory     $0.005  per GB-hour
-//   Storage    $0.0255 per GB-month
+//
+//	OCPU       $0.0717 per OCPU-hour
+//	Memory     $0.005  per GB-hour
+//	Storage    $0.0255 per GB-month
 func ociPostgresFallbackUSDPerMonth(ocpu, ramGB, dbGB int, multiAD bool) float64 {
 	const (
 		ocpuPerHr = 0.0717
@@ -109,14 +113,17 @@ func OCIPostgresUSDPerMonth(region string, dbGB int, multiAD bool) (label string
 
 // fetchOCIPostgresRates pulls the per-OCPU-hour, per-GB-RAM-hour
 // (when published as a separate SKU), and per-GB-month storage
-// rates from the cetools catalog. Returns positive values for the
-// SKUs found and 0 for any not present so the caller can decide
-// whether to trip the fallback.
+// rates from the cetools catalog. Uses ociHTTPClient (nil Transport →
+// inherits http.DefaultTransport) for airgap-compatibility.
+// Returns positive values for the SKUs found and 0 for any not
+// present so the caller can decide whether to trip the fallback.
 func fetchOCIPostgresRates() (ocpuHourly, ramHourly, storageMonthly float64, err error) {
-	c := &http.Client{Timeout: 30 * time.Second}
-	req, _ := http.NewRequest("GET", ociPriceBaseURL+"?currencyCode=USD", nil)
+	req, reqErr := http.NewRequest("GET", ociPriceBaseURL+"?currencyCode=USD", nil)
+	if reqErr != nil {
+		return 0, 0, 0, fmt.Errorf("oci postgres: %w", reqErr)
+	}
 	req.Header.Set("User-Agent", "yage/pricing")
-	resp, err := c.Do(req)
+	resp, err := ociHTTPClient.Do(req)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("oci postgres: %w", err)
 	}

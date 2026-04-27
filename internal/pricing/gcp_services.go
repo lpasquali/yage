@@ -4,36 +4,40 @@
 package pricing
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"strings"
 	"sync"
-	"time"
+
+	"cloud.google.com/go/billing/apiv1/billingpb"
 )
 
 // GCP service-specific helpers — read from the same Cloud Billing
 // Catalog API as gcp.go. All require GOOGLE_BILLING_API_KEY (or
 // YAGE_GCP_API_KEY).
 //
+// Uses the official cloud.google.com/go/billing/apiv1 SDK
+// (NewCloudCatalogRESTClient) via gcpFetchAllSkus (defined in
+// gcp.go). SKU results are cached per service ID for the process
+// lifetime to avoid repeated catalog fetches.
+//
 // Service IDs we filter on:
-//   gcpComputeEngineService = "6F81-5844-456A"  — Compute Engine
-//                                                 (NAT, LB, egress, GKE)
-//   gcpStorageService       = "95FF-2EF5-5EA1"  — Cloud Storage
-//                                                 (logs to Cloud Logging
-//                                                 are billed via this)
+//
+//	gcpComputeEngineService = "6F81-5844-456A"  — Compute Engine
+//	                                              (NAT, LB, egress, GKE)
+//	gcpStorageService       = "95FF-2EF5-5EA1"  — Cloud Storage
+//	                                              (logs to Cloud Logging
+//	                                              are billed via this)
 //
 // Each helper follows the same pattern: page /services/<id>/skus,
 // filter on serviceRegions + description substring + UsageType="OnDemand",
 // pick the first non-zero tiered rate.
 
 const (
-	gcpKubernetesService    = "CCD8-9BF1-090E" // Google Kubernetes Engine (GKE)
-	gcpStackdriverService   = "5490-F7B7-8DF6" // Cloud Logging / Stackdriver
-	gcpCloudDNSService      = "9DC7-D6A1-D9D1" // Cloud DNS
-	gcpNetworkingService    = "E505-1604-58F8" // Networking (egress)
-	gcpCloudSQLService      = "9662-B51E-5089" // Cloud SQL (PostgreSQL / MySQL / SQLServer)
+	gcpKubernetesService  = "CCD8-9BF1-090E" // Google Kubernetes Engine (GKE)
+	gcpStackdriverService = "5490-F7B7-8DF6" // Cloud Logging / Stackdriver
+	gcpCloudDNSService    = "9DC7-D6A1-D9D1" // Cloud DNS
+	gcpNetworkingService  = "E505-1604-58F8" // Networking (egress)
+	gcpCloudSQLService    = "9662-B51E-5089" // Cloud SQL (PostgreSQL / MySQL / SQLServer)
 )
 
 // gcpServiceSKUCache memoizes the full SKU list per service ID for
@@ -43,13 +47,13 @@ const (
 // dominates the cost-compare wall-clock when GCP is in the mix.
 var (
 	gcpServiceSKUMu    sync.Mutex
-	gcpServiceSKUCache = map[string][]gcpSku{}
+	gcpServiceSKUCache = map[string][]*billingpb.Sku{}
 )
 
 // gcpListAllSkus returns every SKU the catalog exposes for a service,
 // fetching once per process and caching the result. Callers do their
 // own filtering by region / description / category in-memory.
-func gcpListAllSkus(serviceID, key string) ([]gcpSku, error) {
+func gcpListAllSkus(serviceID, key string) ([]*billingpb.Sku, error) {
 	gcpServiceSKUMu.Lock()
 	if cached, ok := gcpServiceSKUCache[serviceID]; ok {
 		gcpServiceSKUMu.Unlock()
@@ -57,40 +61,15 @@ func gcpListAllSkus(serviceID, key string) ([]gcpSku, error) {
 	}
 	gcpServiceSKUMu.Unlock()
 
-	out := []gcpSku{}
-	pageToken := ""
-	c := &http.Client{Timeout: 30 * time.Second}
-	for {
-		u := fmt.Sprintf("%s/services/%s/skus", gcpBillingHost, serviceID)
-		q := url.Values{}
-		q.Set("key", key)
-		q.Set("pageSize", "5000")
-		if pageToken != "" {
-			q.Set("pageToken", pageToken)
-		}
-		req, _ := http.NewRequest("GET", u+"?"+q.Encode(), nil)
-		req.Header.Set("User-Agent", "yage/pricing")
-		resp, err := c.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		var lr gcpListResp
-		if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
-			resp.Body.Close()
-			return nil, err
-		}
-		resp.Body.Close()
-		out = append(out, lr.Skus...)
-		if lr.NextPageToken == "" {
-			break
-		}
-		pageToken = lr.NextPageToken
+	skus, err := gcpFetchAllSkus(serviceID, key)
+	if err != nil {
+		return nil, err
 	}
 
 	gcpServiceSKUMu.Lock()
-	gcpServiceSKUCache[serviceID] = out
+	gcpServiceSKUCache[serviceID] = skus
 	gcpServiceSKUMu.Unlock()
-	return out, nil
+	return skus, nil
 }
 
 // gcpFindSku scans the cached SKU list for a service+region and
@@ -108,7 +87,7 @@ func gcpFindSku(serviceID, region, key string, descContains []string, mustNotCon
 		if region != "" && !inSlice(s.ServiceRegions, region) {
 			continue
 		}
-		if s.Category.UsageType != "OnDemand" {
+		if s.Category == nil || s.Category.UsageType != "OnDemand" {
 			continue
 		}
 		desc := strings.ToLower(s.Description)

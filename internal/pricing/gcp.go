@@ -4,11 +4,16 @@
 package pricing
 
 import (
+	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	billing "cloud.google.com/go/billing/apiv1"
+	"cloud.google.com/go/billing/apiv1/billingpb"
+	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
 )
 
 // GCP Cloud Billing Catalog API — needs an API key.
@@ -16,27 +21,26 @@ import (
 // enable; otherwise this fetcher returns ErrUnavailable and
 // the cost path surfaces "GCP estimate unavailable".
 //
-// Endpoint:
-//   GET https://cloudbilling.googleapis.com/v1/services/<svcID>/skus?key=<API_KEY>
+// Uses the official cloud.google.com/go/billing/apiv1 SDK with a
+// REST transport (NewCloudCatalogRESTClient). option.WithAPIKey adds
+// the API key to every request; the underlying transport starts from
+// a clone of http.DefaultTransport at client-creation time, so
+// airgap.Apply() must be called before the first GCP pricing call
+// (which is always true in the normal bootstrap flow).
 //
-// Compute Engine service ID is "6F81-5844-456A". We page
-// through skus[], finding ones whose category.resourceFamily
-// is "Compute" and whose serviceRegions includes the requested
-// region and whose description matches the machine type.
-//
-// The catalog is large (>10k SKUs for Compute alone). We don't
-// pre-cache the full dump; instead, we filter server-side using
-// pageToken and skip rows quickly.
+// Service IDs:
+//   gcpComputeEngineService = "6F81-5844-456A"  — Compute Engine
+//   gcpStorageService       = "95FF-2EF5-5EA1"  — Cloud Storage
+
 const (
-	gcpBillingHost          = "https://cloudbilling.googleapis.com/v1"
 	gcpComputeEngineService = "6F81-5844-456A"
 	gcpStorageService       = "95FF-2EF5-5EA1"
 )
 
-type gcpFetcher struct{ httpClient *http.Client }
+type gcpFetcher struct{}
 
 func init() {
-	Register("gcp", &gcpFetcher{httpClient: &http.Client{Timeout: 30 * time.Second}})
+	Register("gcp", &gcpFetcher{})
 }
 
 // gcpAPIKey returns the configured Google Cloud Billing Catalog
@@ -53,58 +57,18 @@ func gcpAPIKey() string {
 	return os.Getenv("GOOGLE_BILLING_API_KEY")
 }
 
-type gcpPricingExpression struct {
-	UsageUnit               string `json:"usageUnit"`
-	UsageUnitDescription    string `json:"usageUnitDescription"`
-	BaseUnit                string `json:"baseUnit"`
-	DisplayQuantity         float64 `json:"displayQuantity"`
-	TieredRates             []struct {
-		StartUsageAmount float64 `json:"startUsageAmount"`
-		UnitPrice        struct {
-			CurrencyCode string `json:"currencyCode"`
-			Units        string `json:"units"`
-			Nanos        int64  `json:"nanos"`
-		} `json:"unitPrice"`
-	} `json:"tieredRates"`
-}
-
-type gcpPricingInfo struct {
-	EffectiveTime      string               `json:"effectiveTime"`
-	PricingExpression  gcpPricingExpression `json:"pricingExpression"`
-	CurrencyConversionRate float64          `json:"currencyConversionRate"`
-}
-
-type gcpSku struct {
-	Name        string `json:"name"`
-	SkuId       string `json:"skuId"`
-	Description string `json:"description"`
-	Category    struct {
-		ServiceDisplayName string `json:"serviceDisplayName"`
-		ResourceFamily     string `json:"resourceFamily"`
-		ResourceGroup      string `json:"resourceGroup"`
-		UsageType          string `json:"usageType"`
-	} `json:"category"`
-	ServiceRegions []string         `json:"serviceRegions"`
-	PricingInfo    []gcpPricingInfo `json:"pricingInfo"`
-}
-
-type gcpListResp struct {
-	Skus          []gcpSku `json:"skus"`
-	NextPageToken string   `json:"nextPageToken"`
-}
-
-func gcpUsdFromTier(p gcpPricingInfo) float64 {
-	if len(p.PricingExpression.TieredRates) == 0 {
+// gcpUsdFromTier extracts the first non-zero on-demand USD price from
+// a PricingInfo's tiered rates. units is an int64 string and nanos is
+// int32 (e.g. units=0, nanos=23000000 → $0.023).
+func gcpUsdFromTier(p *billingpb.PricingInfo) float64 {
+	if p == nil || p.PricingExpression == nil {
 		return 0
 	}
-	// Pick the first non-zero tiered rate (commonly tier 0 is
-	// the headline on-demand price).
 	for _, t := range p.PricingExpression.TieredRates {
-		usd := 0.0
-		// units is a string ("0"), nanos is int (e.g. 23000000 = 0.023)
-		var u float64
-		fmt.Sscanf(t.UnitPrice.Units, "%f", &u)
-		usd = u + float64(t.UnitPrice.Nanos)/1e9
+		if t.UnitPrice == nil {
+			continue
+		}
+		usd := float64(t.UnitPrice.Units) + float64(t.UnitPrice.Nanos)/1e9
 		if usd > 0 {
 			return usd
 		}
@@ -179,7 +143,7 @@ func (g *gcpFetcher) findCoreRam(family, region, key string, wantCore bool) (flo
 		if !inSlice(s.ServiceRegions, region) {
 			continue
 		}
-		if s.Category.ResourceFamily != "Compute" {
+		if s.Category == nil || s.Category.ResourceFamily != "Compute" {
 			continue
 		}
 		if !strings.Contains(s.Category.ResourceGroup, wantGroup) {
@@ -235,7 +199,7 @@ func (g *gcpFetcher) fetchPD(kind, region, key string) (Item, error) {
 		if !strings.Contains(s.Description, wantDesc) {
 			continue
 		}
-		if s.Category.UsageType != "OnDemand" {
+		if s.Category == nil || s.Category.UsageType != "OnDemand" {
 			continue
 		}
 		if len(s.PricingInfo) == 0 {
@@ -259,8 +223,8 @@ func (g *gcpFetcher) fetchPD(kind, region, key string) (Item, error) {
 //   - "<family>-highmem-<n>"   vCPU=n, RAM=n×8 GiB
 //   - "<family>-highcpu-<n>"   vCPU=n, RAM=n×1 GiB
 //   - "<family>-<shared-size>" predefined shared-core types
-//                              ("e2-micro" / "e2-small" / "e2-medium" /
-//                               "f1-micro" / "g1-small")
+//     ("e2-micro" / "e2-small" / "e2-medium" /
+//     "f1-micro" / "g1-small")
 //
 // Shared-core types charge a flat per-instance hourly rate rather
 // than separable core+RAM lines; we model their RAM using the public
@@ -314,4 +278,46 @@ func inSlice(s []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// gcpNewCatalogClient creates a GCP CloudCatalogRESTClient authenticated
+// with the given API key. The REST transport wraps http.DefaultTransport
+// (cloned at creation time) with an API-key parameter injector — this
+// means airgap.Apply() must be called before the first GCP pricing call
+// in any process. In the normal yage bootstrap flow, airgap is applied
+// before any cost-compare runs so this ordering is always satisfied.
+func gcpNewCatalogClient(ctx context.Context, key string) (*billing.CloudCatalogClient, error) {
+	return billing.NewCloudCatalogRESTClient(ctx, option.WithAPIKey(key))
+}
+
+// gcpFetchAllSkus pages through all SKUs for serviceID using the GCP
+// billing SDK and returns them as a slice. Used by gcpListAllSkus to
+// populate the process-level cache on a cache miss.
+func gcpFetchAllSkus(serviceID, key string) ([]*billingpb.Sku, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	client, err := gcpNewCatalogClient(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("gcp billing client: %w", err)
+	}
+	defer client.Close()
+
+	req := &billingpb.ListSkusRequest{
+		Parent: "services/" + serviceID,
+	}
+	it := client.ListSkus(ctx, req)
+
+	var out []*billingpb.Sku
+	for {
+		sku, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("gcp sku iter: %w", err)
+		}
+		out = append(out, sku)
+	}
+	return out, nil
 }

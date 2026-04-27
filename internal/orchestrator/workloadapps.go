@@ -16,6 +16,7 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/capi/csi"
 	"github.com/lpasquali/yage/internal/capi/helmvalues"
+	"github.com/lpasquali/yage/internal/cost"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/capi/postsync"
@@ -29,6 +30,13 @@ var argoAppGVR = schema.GroupVersionResource{
 	Group:    "argoproj.io",
 	Version:  "v1alpha1",
 	Resource: "applications",
+}
+
+// cnpgSuppressedByManagedPG reports whether the in-cluster cnpg Helm
+// install should be skipped because the operator opted into the active
+// vendor's managed Postgres SKU. avoid double-stacking with managed PG.
+func cnpgSuppressedByManagedPG(cfg *config.Config) bool {
+	return cfg.UseManagedPostgres && cost.VendorOffersManaged(cfg.InfraProvider, cost.MSPostgres)
 }
 
 // ApplyWorkloadArgoCDApplications renders every enabled
@@ -123,10 +131,14 @@ storageClass:
 			"2", "", "crossplane"))
 	}
 	if cfg.CNPGEnabled {
-		sb.WriteString(wlargocd.Helm(cfg,
-			cfg.WorkloadClusterName+"-cnpg", cfg.CNPGNamespace,
-			cfg.CNPGChartRepoURL, cfg.CNPGChartName, cfg.CNPGChartVersion,
-			"2", "", "cnpg"))
+		if cnpgSuppressedByManagedPG(cfg) {
+			logx.Log("cnpg skipped: managed Postgres on %s selected (--no-managed-postgres to keep in-cluster cnpg).", cfg.InfraProvider)
+		} else {
+			sb.WriteString(wlargocd.Helm(cfg,
+				cfg.WorkloadClusterName+"-cnpg", cfg.CNPGNamespace,
+				cfg.CNPGChartRepoURL, cfg.CNPGChartName, cfg.CNPGChartVersion,
+				"2", "", "cnpg"))
+		}
 	}
 	if cfg.ExternalSecretsEnabled {
 		sb.WriteString(wlargocd.Helm(cfg,
@@ -228,7 +240,7 @@ func WaitForWorkloadArgoCDApplicationsHealthy(cfg *config.Config) {
 	add(&apps, cfg.KyvernoEnabled, "kyverno")
 	add(&apps, cfg.CertManagerEnabled, "cert-manager")
 	add(&apps, cfg.CrossplaneEnabled, "crossplane")
-	add(&apps, cfg.CNPGEnabled, "cnpg")
+	add(&apps, cfg.CNPGEnabled && !cnpgSuppressedByManagedPG(cfg), "cnpg")
 	add(&apps, cfg.ExternalSecretsEnabled, "external-secrets")
 	add(&apps, cfg.InfisicalOperatorEnabled, "infisical-secrets-operator")
 	if cfg.SPIREEnabled {

@@ -16,9 +16,8 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/platform/kubectl"
-	"github.com/lpasquali/yage/internal/ui/logx"
-	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
 	"github.com/lpasquali/yage/internal/platform/shell"
+	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
 // SyncBootstrapConfigToKind syncs the current cfg snapshot into the
@@ -115,9 +114,16 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 	logx.Log("Updated %s/%s (CAPI / clusterctl keys from current environment).", ns, cfg.Providers.Proxmox.BootstrapCAPMOXSecretName)
 
 	// Derive PROXMOX_CSI_URL from PROXMOX_URL when not set.
+	// Appends "/api2/json" to the Proxmox URL (idempotent: already-
+	// suffixed URLs are returned unchanged). Inlined here to avoid
+	// importing the Proxmox-specific pveapi package from kindsync.
 	if cfg.Providers.Proxmox.URL != "" && cfg.Providers.Proxmox.CSIURL == "" {
-		cfg.Providers.Proxmox.CSIURL = pveapi.APIJSONURL(cfg)
-		env["PROXMOX_CSI_URL"] = cfg.Providers.Proxmox.CSIURL
+		u := cfg.Providers.Proxmox.URL
+		if !strings.HasSuffix(u, "/api2/json") {
+			u = strings.TrimRight(u, "/") + "/api2/json"
+		}
+		cfg.Providers.Proxmox.CSIURL = u
+		env["PROXMOX_CSI_URL"] = u
 	}
 
 	// --- Default split: CSI Secret ---

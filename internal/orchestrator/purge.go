@@ -20,12 +20,10 @@ import (
 	"sigs.k8s.io/kind/pkg/cluster"
 
 	"github.com/lpasquali/yage/internal/capi/manifest"
-	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/platform/shell"
 	"github.com/lpasquali/yage/internal/provider"
-	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
@@ -508,5 +506,3 @@ func nonEmptyLines(s string) []string {
 	return out
 }
 
-var _ = kindsync.SyncBootstrapConfigToKind
-var _ = pveapi.APIJSONURL

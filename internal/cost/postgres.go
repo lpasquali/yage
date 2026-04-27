@@ -205,12 +205,20 @@ func ociManagedPostgres(region string, tier PostgresTier, dbGB int) (ManagedPost
 	return ManagedPostgres{SKU: label, MonthlyUSD: monthly}, nil
 }
 
+// ibmcloudManagedPostgres prices IBM Cloud Databases for PostgreSQL.
+// tier.IsProd() trips the 3-member HA layout (RAM and disk × 3, one
+// per node). The pricing layer walks the Global Catalog when an API
+// key is present and falls back to the public list rates otherwise —
+// IBM's catalog gates pricing data behind authenticated scope and
+// often returns empty `prices: []` even on a valid bearer token.
 func ibmcloudManagedPostgres(region string, tier PostgresTier, dbGB int) (ManagedPostgres, error) {
-	return ManagedPostgres{}, errNotImplemented("ibmcloud")
+	multiMember := tier.IsProd()
+	label, monthly, err := pricing.IBMCloudPostgresUSDPerMonth(region, dbGB, multiMember)
+	if err != nil {
+		return ManagedPostgres{}, fmt.Errorf("%w: ibmcloud: %v",
+			provider.ErrNotApplicable, err)
+	}
+	return ManagedPostgres{SKU: label, MonthlyUSD: monthly}, nil
 }
 
-func errNotImplemented(vendor string) error {
-	return fmt.Errorf("%w: managed postgres helper for %q not implemented yet",
-		provider.ErrNotApplicable, vendor)
-}
 

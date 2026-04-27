@@ -72,7 +72,7 @@ All cluster interactions go through `internal/platform/k8sclient` (typed + dynam
 
 ## Abstraction plan
 
-`docs/abstraction-plan.md` tracks the five-phase plan to decouple Proxmox from the core orchestrator. Phases and their primary targets:
+The abstraction plan ADR in [yage-docs](https://lpasquali.github.io/yage-docs/architecture/adrs/abstraction-plan/) tracks the five-phase plan to decouple Proxmox from the core orchestrator. Phases and their primary targets:
 
 | Phase | Goal | Key files |
 |-------|------|-----------|

@@ -96,7 +96,7 @@ func CheckOnPrem(cfg *config.Config, host *capacity.HostCapacity) (Verdict, erro
 			continue
 		}
 		verdict, msg := capacity.CheckCombined(plan, host, nil,
-			cfg.ResourceBudgetFraction, cfg.OvercommitTolerancePct)
+			cfg.Capacity.ResourceBudgetFraction, cfg.Capacity.OvercommitTolerancePct)
 		switch verdict {
 		case capacity.VerdictFits:
 			pv.Verdict = Comfortable

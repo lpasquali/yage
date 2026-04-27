@@ -28,7 +28,7 @@ import (
 //
 // Mirrors the kind-side init in internal/bootstrap/orchestrator.go phase 8.
 func InstallCAPIOnManagement(cfg *config.Config, mgmtKubeconfig string) error {
-	if !cfg.PivotEnabled {
+	if !cfg.Pivot.Enabled {
 		return nil
 	}
 	if mgmtKubeconfig == "" {
@@ -108,7 +108,7 @@ func InstallCAPIOnManagement(cfg *config.Config, mgmtKubeconfig string) error {
 //
 // Returns nil on success.
 func MoveCAPIState(cfg *config.Config, mgmtKubeconfig string) error {
-	if !cfg.PivotEnabled {
+	if !cfg.Pivot.Enabled {
 		return nil
 	}
 	if mgmtKubeconfig == "" {
@@ -170,7 +170,7 @@ func MoveCAPIState(cfg *config.Config, mgmtKubeconfig string) error {
 			"--to-kubeconfig", mgmtKubeconfig,
 			"-n", ns,
 		}
-		if cfg.PivotDryRun {
+		if cfg.Pivot.DryRun {
 			args = append(args, "--dry-run")
 			logx.Log("clusterctl move --dry-run: namespace=%s (logging plan only — no state will move)", ns)
 			if err := shell.Run(args...); err != nil {

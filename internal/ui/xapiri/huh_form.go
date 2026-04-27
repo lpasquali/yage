@@ -260,14 +260,14 @@ func runHuhForm(w io.Writer, cfg *config.Config, s *state) int {
 	}
 	switch s.env {
 	case envDev:
-		s.cfg.ArgoCDEnabled = false
-		s.cfg.WorkloadArgoCDEnabled = false
+		s.cfg.ArgoCD.Enabled = false
+		s.cfg.ArgoCD.WorkloadEnabled = false
 	case envStaging:
-		s.cfg.ArgoCDEnabled = true
-		s.cfg.WorkloadArgoCDEnabled = false
+		s.cfg.ArgoCD.Enabled = true
+		s.cfg.ArgoCD.WorkloadEnabled = false
 	case envProd:
-		s.cfg.ArgoCDEnabled = true
-		s.cfg.WorkloadArgoCDEnabled = true
+		s.cfg.ArgoCD.Enabled = true
+		s.cfg.ArgoCD.WorkloadEnabled = true
 		s.cfg.CertManagerEnabled = true
 	}
 	cfg.Cost.Currency.DataCenterLocation = strings.ToUpper(strings.TrimSpace(dcLoc))

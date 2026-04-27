@@ -33,11 +33,11 @@ func ApplyWorkloadArgoHelmProxies(cfg *config.Config, installOperator func()) {
 	if !cfg.IsWorkloadGitopsCaaphMode() {
 		return
 	}
-	if !cfg.WorkloadArgoCDEnabled {
+	if !cfg.ArgoCD.WorkloadEnabled {
 		return
 	}
 	mctx := "kind-" + cfg.KindClusterName
-	if cfg.WorkloadAppOfAppsGitURL == "" {
+	if cfg.ArgoCD.AppOfAppsGitURL == "" {
 		logx.Die("WORKLOAD_APP_OF_APPS_GIT_URL is required in caaph mode (validated at start).")
 	}
 	logx.Log("Argo CD on the workload: Argo CD Operator + ArgoCD CR (in-bootstrap), then CAAPH argocd-apps (root Application name %s).",
@@ -47,10 +47,10 @@ func ApplyWorkloadArgoHelmProxies(cfg *config.Config, installOperator func()) {
 		installOperator()
 	}
 
-	u := strings.ReplaceAll(cfg.WorkloadAppOfAppsGitURL, `'`, `'"'"'`)
-	p := strings.ReplaceAll(cfg.WorkloadAppOfAppsGitPath, `'`, `'"'"'`)
-	r := strings.ReplaceAll(cfg.WorkloadAppOfAppsGitRef, `'`, `'"'"'`)
-	argoNS := cfg.WorkloadArgoCDNamespace
+	u := strings.ReplaceAll(cfg.ArgoCD.AppOfAppsGitURL, `'`, `'"'"'`)
+	p := strings.ReplaceAll(cfg.ArgoCD.AppOfAppsGitPath, `'`, `'"'"'`)
+	r := strings.ReplaceAll(cfg.ArgoCD.AppOfAppsGitRef, `'`, `'"'"'`)
+	argoNS := cfg.ArgoCD.WorkloadNamespace
 	if argoNS == "" {
 		argoNS = "argocd"
 	}
@@ -107,13 +107,13 @@ func ApplyWorkloadArgoHelmProxies(cfg *config.Config, installOperator func()) {
 		logx.Die("Failed to apply HelmChartProxy (argocd-apps / app-of-apps): %v", err)
 	}
 	logx.Log("Applied HelmChartProxy %s-caaph-argocd-apps (root app-of-apps Application name: %s; repo %s).",
-		cfg.WorkloadClusterName, cfg.WorkloadClusterName, cfg.WorkloadAppOfAppsGitURL)
+		cfg.WorkloadClusterName, cfg.WorkloadClusterName, cfg.ArgoCD.AppOfAppsGitURL)
 }
 
 // WaitWorkloadArgoCDServer polls the workload cluster for the
 // argocd-server Deployment to become Available.
 func WaitWorkloadArgoCDServer(cfg *config.Config, writeWorkloadKubeconfig func() (string, error)) {
-	if !cfg.IsWorkloadGitopsCaaphMode() || !cfg.WorkloadArgoCDEnabled {
+	if !cfg.IsWorkloadGitopsCaaphMode() || !cfg.ArgoCD.WorkloadEnabled {
 		return
 	}
 	wk, err := writeWorkloadKubeconfig()
@@ -121,7 +121,7 @@ func WaitWorkloadArgoCDServer(cfg *config.Config, writeWorkloadKubeconfig func()
 		return
 	}
 	defer removePath(wk)
-	ns := cfg.WorkloadArgoCDNamespace
+	ns := cfg.ArgoCD.WorkloadNamespace
 	if ns == "" {
 		ns = "argocd"
 	}
@@ -160,7 +160,7 @@ func WaitWorkloadArgoCDServer(cfg *config.Config, writeWorkloadKubeconfig func()
 // LogWorkloadArgoAppsStatus prints a status overview of the workload
 // Argo CD Applications (sync + health per app).
 func LogWorkloadArgoAppsStatus(cfg *config.Config, writeWorkloadKubeconfig func() (string, error)) {
-	if !cfg.IsWorkloadGitopsCaaphMode() || !cfg.WorkloadArgoCDEnabled {
+	if !cfg.IsWorkloadGitopsCaaphMode() || !cfg.ArgoCD.WorkloadEnabled {
 		return
 	}
 	wk, err := writeWorkloadKubeconfig()
@@ -168,7 +168,7 @@ func LogWorkloadArgoAppsStatus(cfg *config.Config, writeWorkloadKubeconfig func(
 		return
 	}
 	defer removePath(wk)
-	ns := cfg.WorkloadArgoCDNamespace
+	ns := cfg.ArgoCD.WorkloadNamespace
 	if ns == "" {
 		ns = "argocd"
 	}

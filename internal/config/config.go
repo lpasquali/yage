@@ -585,7 +585,20 @@ type Config struct {
 	// case feasibility.Check returns ErrNotApplicable and the existing
 	// resource-budget check stays the only gate.
 	Workload WorkloadShape
-
+	// ArgoCD groups all Argo CD configuration: operator/server versions,
+	// install toggles, access modes, GitOps repo coordinates, and
+	// workload post-sync hook settings. See ArgoCDConfig for the field
+	// roster.
+	ArgoCD ArgoCDConfig
+	// Capacity groups resource-budget and capacity-planning configuration:
+	// host budget fraction, overcommit policy, and the system-apps CPU/
+	// memory reserve. See CapacityConfig for the field roster.
+	Capacity CapacityConfig
+	// Pivot groups pivot-orchestration configuration: whether to pivot,
+	// kind teardown policy, verify timeout, dry-run, and the
+	// stop-before-workload escape hatch. See PivotConfig for the field
+	// roster.
+	Pivot PivotConfig
 
 	// ---- Tool versions ----
 	KindVersion       string
@@ -593,10 +606,6 @@ type Config struct {
 	ClusterctlVersion string
 	CiliumCLIVersion  string
 	CiliumVersion     string
-	// ArgoCDVersion drives both the argocd CLI release tag and the
-	// ArgoCD CR spec.version; the two are kept in lockstep upstream.
-	ArgoCDVersion         string
-	ArgoCDOperatorVersion string
 	KyvernoCLIVersion string
 	CmctlVersion      string
 	OpenTofuVersion   string
@@ -616,25 +625,8 @@ type Config struct {
 	CiliumIPAMClusterPoolIPv4MaskSize string
 	CiliumGatewayAPIEnabled           string
 
-	// ---- ArgoCD ----
-	ArgoCDEnabled                         bool
-	ArgoCDServerInsecure                  string
-	ArgoCDDisableOperatorManagedIngress   string
-	ArgoCDOperatorArgoCDPrometheusEnabled string
-	ArgoCDOperatorArgoCDMonitoringEnabled string
-	ArgoCDPrintAccessStandalone           bool
-	ArgoCDPrintAccessTarget               string
-	ArgoCDPortForwardStandalone           bool
-	ArgoCDPortForwardTarget               string
-	ArgoCDPortForwardPort                 string
-
-	// Workload ArgoCD / GitOps
-	WorkloadArgoCDEnabled      bool
-	WorkloadArgoCDNamespace    string
+	// Workload GitOps (non-ArgoCD fields that remain at top-level)
 	WorkloadGitopsMode         string
-	WorkloadAppOfAppsGitURL    string
-	WorkloadAppOfAppsGitPath   string
-	WorkloadAppOfAppsGitRef    string
 	WorkloadRolloutStandalone  bool
 	WorkloadRolloutMode        string
 	WorkloadRolloutNoWait      bool
@@ -727,25 +719,6 @@ type Config struct {
 	ObjStoreVolumeGBOverride      int
 	CacheCPUMillicoresOverride    int
 	CacheMemoryMiBOverride        int
-	// ResourceBudgetFraction caps the share of available Proxmox host
-	// CPU/memory/storage that the configured clusters may consume.
-	// 0.75 by default — the remaining 25 % is reserved for the host
-	// OS, hypervisor overhead, and slack for VM rollouts.
-	ResourceBudgetFraction      float64
-	// AllowResourceOvercommit, when true, downgrades the
-	// over-the-budget capacity check to a warning instead of failing
-	// the run.
-	AllowResourceOvercommit     bool
-	// OvercommitTolerancePct caps how far above 100% of host capacity
-	// the combined (existing-VM + planned) demand may go before the
-	// orchestrator refuses to continue. 15 = "(existing + planned)
-	// must be ≤ host × 1.15" — Proxmox supports memory overcommit
-	// via ballooning + swap, but >15% drift starts to OOM under
-	// load. Below the soft threshold (ResourceBudgetFraction) is
-	// fine; between threshold and 1+tolerance is "tight, warn-and-
-	// continue"; above 1+tolerance is "abort unless --allow-resource-
-	// overcommit". Default 15. See capacity.CheckCombined.
-	OvercommitTolerancePct      float64
 	// HardwareCostUSD is the capex of the entire on-prem cluster
 	// (sum of every node's purchase price). > 0 enables the TCO
 	// path for self-hosted providers (Proxmox, vSphere) — they
@@ -767,14 +740,6 @@ type Config struct {
 	// wants to fold into the estimate — vSphere licensing, ESXi
 	// support contract, IPMI subscription, colo/rack rental, etc.
 	HardwareSupportUSDMonth     float64
-	// SystemAppsCPUMillicores / SystemAppsMemoryMiB define the cluster-
-	// wide reserve for the system add-ons yage installs:
-	// kyverno, cert-manager, proxmox-csi (controller), argocd (operator
-	// + server + repo + redis), keycloak (SSO), external-secrets, and
-	// infisical. The remainder of the workload cluster's worker capacity
-	// is split into three equal buckets (db / observability / product).
-	SystemAppsCPUMillicores     int    // default 2000 = 2 cores
-	SystemAppsMemoryMiB         int64  // default 4096 = 4 GiB
 	// AWS-only fields live in cfg.Providers.AWS.* (see AWSConfig).
 	// Azure / GCP / Hetzner / DigitalOcean / Linode / OCI / IBMCloud
 	// per-provider fields live under cfg.Providers.<Name>.* — see the
@@ -913,13 +878,7 @@ type Config struct {
 	MetricsServerManifestURL          string
 	MetricsServerGitChartTag          string
 
-	// Argo workload post-sync hooks
-	ArgoWorkloadPostsyncHooksEnabled    bool
-	ArgoWorkloadPostsyncHooksGitURL     string
-	ArgoWorkloadPostsyncHooksGitPath    string
-	ArgoWorkloadPostsyncHooksGitRef     string
-	ArgoWorkloadPostsyncHooksKubectlImg string
-	WorkloadPostsyncNamespace           string
+	WorkloadPostsyncNamespace string
 
 	// ---- Kyverno ----
 	KyvernoEnabled                bool
@@ -1073,50 +1032,6 @@ type Config struct {
 	ControlPlaneMachineCount        string
 	WorkerMachineCount              string
 
-	// ---- Pivot orchestration toggles ----
-	//
-	// When PivotEnabled is true, the bootstrap follows the standard CAPI
-	// "bootstrap-and-pivot" pattern: kind provisions a management cluster
-	// on Proxmox, clusterctl-moves CAPI state into it, the
-	// yage-system Secrets are mirrored, the workload cluster
-	// is created from the management cluster, and the kind cluster is
-	// torn down once the management cluster is verified to carry the
-	// same state.
-	//
-	// Default sizing is intentionally smaller than the workload defaults:
-	// the management cluster runs only CAPI controllers, CAAPH, capmox,
-	// in-cluster IPAM, and the bootstrap-state Secrets — no application
-	// workload. 1 socket / 2 cores / 4 GiB is enough; one CP endpoint
-	// VIP and a 2-IP node range (so a rollout can land a replacement VM
-	// before draining the original).
-	//
-	// CNI: Cilium with Hubble enabled but LB-IPAM disabled (the
-	// management cluster has no Services that need LoadBalancer IPs).
-	// CSI: disabled by default (the management cluster is stateless
-	// unless explicitly opted-in via MGMT_PROXMOX_CSI_ENABLED=true).
-	//
-	// The cluster shape itself lives in cfg.Mgmt; Proxmox-only sizing /
-	// pool / CSI knobs live in cfg.Providers.Proxmox.Mgmt.
-	PivotEnabled bool
-	// PivotKeepKind, when true, skips the final `kind delete cluster`
-	// after a successful pivot — useful for debugging.
-	PivotKeepKind bool
-	// PivotVerifyTimeout caps how long we wait for the management
-	// cluster to look "identical" to kind before declaring success.
-	PivotVerifyTimeout string
-	// PivotDryRun stops after provisioning + clusterctl-init on the
-	// management cluster, runs `clusterctl move --dry-run` so the user
-	// can inspect the planned hand-off without executing it, and
-	// returns. The workload cluster stays managed by kind. Useful for
-	// validating mgmt connectivity / sizing before committing to the
-	// move.
-	PivotDryRun bool
-	// StopBeforeWorkload exits the orchestrator after the pivot
-	// completes (mgmt cluster up, clusterctl moved, kind torn down)
-	// but before the workload manifest is applied. Useful for
-	// integration tests that inspect a clean managed CAPI plane on
-	// the provider with no workload churn. Env: YAGE_STOP_BEFORE_WORKLOAD.
-	StopBeforeWorkload bool
 }
 
 // Load reads environment variables and applies defaults to produce a
@@ -1134,8 +1049,8 @@ func Load() *Config {
 	c.ClusterctlVersion = getenv("CLUSTERCTL_VERSION", "v1.11.8")
 	c.CiliumCLIVersion = getenv("CILIUM_CLI_VERSION", "v0.19.2")
 	c.CiliumVersion = getenv("CILIUM_VERSION", "1.19.3")
-	c.ArgoCDVersion = getenv("ARGOCD_VERSION", "v3.3.8")
-	c.ArgoCDOperatorVersion = getenv("ARGOCD_OPERATOR_VERSION", "v0.16.0")
+	c.ArgoCD.Version = getenv("ARGOCD_VERSION", "v3.3.8")
+	c.ArgoCD.OperatorVersion = getenv("ARGOCD_OPERATOR_VERSION", "v0.16.0")
 	c.KyvernoCLIVersion = getenv("KYVERNO_CLI_VERSION", "v1.17.1")
 	c.CmctlVersion = getenv("CMCTL_VERSION", "v2.4.1")
 	c.OpenTofuVersion = getenv("OPENTOFU_VERSION", "1.8.5")
@@ -1156,24 +1071,24 @@ func Load() *Config {
 	c.CiliumGatewayAPIEnabled = getenv("CILIUM_GATEWAY_API_ENABLED", "false")
 
 	// --- ArgoCD (lines 358, 428-472) ---
-	c.ArgoCDDisableOperatorManagedIngress = getenv("ARGOCD_DISABLE_OPERATOR_MANAGED_INGRESS", "false")
-	c.ArgoCDEnabled = envBool("ARGOCD_ENABLED", true)
-	c.ArgoCDServerInsecure = getenv("ARGOCD_SERVER_INSECURE", "false")
-	c.ArgoCDOperatorArgoCDPrometheusEnabled = getenv("ARGOCD_OPERATOR_ARGOCD_PROMETHEUS_ENABLED", "false")
-	c.ArgoCDOperatorArgoCDMonitoringEnabled = getenv("ARGOCD_OPERATOR_ARGOCD_MONITORING_ENABLED", "false")
-	c.ArgoCDPrintAccessTarget = getenv("ARGOCD_PRINT_ACCESS_TARGET", "workload")
-	c.ArgoCDPrintAccessStandalone = envBool("ARGOCD_PRINT_ACCESS_STANDALONE", false)
-	c.ArgoCDPortForwardStandalone = envBool("ARGOCD_PORT_FORWARD_STANDALONE", false)
-	c.ArgoCDPortForwardTarget = getenv("ARGOCD_PORT_FORWARD_TARGET", "workload")
-	c.ArgoCDPortForwardPort = getenv("ARGOCD_PORT_FORWARD_PORT", getenv("ARGOCD_PORT_FORWARD_WORKLOAD_PORT", "8443"))
+	c.ArgoCD.DisableOperatorManagedIngress = getenv("ARGOCD_DISABLE_OPERATOR_MANAGED_INGRESS", "false")
+	c.ArgoCD.Enabled = envBool("ARGOCD_ENABLED", true)
+	c.ArgoCD.ServerInsecure = getenv("ARGOCD_SERVER_INSECURE", "false")
+	c.ArgoCD.PrometheusEnabled = getenv("ARGOCD_OPERATOR_ARGOCD_PROMETHEUS_ENABLED", "false")
+	c.ArgoCD.MonitoringEnabled = getenv("ARGOCD_OPERATOR_ARGOCD_MONITORING_ENABLED", "false")
+	c.ArgoCD.PrintAccessTarget = getenv("ARGOCD_PRINT_ACCESS_TARGET", "workload")
+	c.ArgoCD.PrintAccessStandalone = envBool("ARGOCD_PRINT_ACCESS_STANDALONE", false)
+	c.ArgoCD.PortForwardStandalone = envBool("ARGOCD_PORT_FORWARD_STANDALONE", false)
+	c.ArgoCD.PortForwardTarget = getenv("ARGOCD_PORT_FORWARD_TARGET", "workload")
+	c.ArgoCD.PortForwardPort = getenv("ARGOCD_PORT_FORWARD_PORT", getenv("ARGOCD_PORT_FORWARD_WORKLOAD_PORT", "8443"))
 
 	// Workload ArgoCD/GitOps (lines 430-479)
-	c.WorkloadArgoCDEnabled = envBool("WORKLOAD_ARGOCD_ENABLED", true)
-	c.WorkloadArgoCDNamespace = getenv("WORKLOAD_ARGOCD_NAMESPACE", "argocd")
+	c.ArgoCD.WorkloadEnabled = envBool("WORKLOAD_ARGOCD_ENABLED", true)
+	c.ArgoCD.WorkloadNamespace = getenv("WORKLOAD_ARGOCD_NAMESPACE", "argocd")
 	c.WorkloadGitopsMode = getenv("WORKLOAD_GITOPS_MODE", "caaph")
-	c.WorkloadAppOfAppsGitURL = getenv("WORKLOAD_APP_OF_APPS_GIT_URL", "https://github.com/lpasquali/workload-app-of-apps.git")
-	c.WorkloadAppOfAppsGitPath = getenv("WORKLOAD_APP_OF_APPS_GIT_PATH", "examples/default")
-	c.WorkloadAppOfAppsGitRef = getenv("WORKLOAD_APP_OF_APPS_GIT_REF", "main")
+	c.ArgoCD.AppOfAppsGitURL = getenv("WORKLOAD_APP_OF_APPS_GIT_URL", "https://github.com/lpasquali/workload-app-of-apps.git")
+	c.ArgoCD.AppOfAppsGitPath = getenv("WORKLOAD_APP_OF_APPS_GIT_PATH", "examples/default")
+	c.ArgoCD.AppOfAppsGitRef = getenv("WORKLOAD_APP_OF_APPS_GIT_REF", "main")
 	c.WorkloadRolloutStandalone = envBool("WORKLOAD_ROLLOUT_STANDALONE", false)
 	c.WorkloadRolloutMode = getenv("WORKLOAD_ROLLOUT_MODE", "argocd")
 	c.WorkloadRolloutNoWait = envBool("WORKLOAD_ROLLOUT_NO_WAIT", false)
@@ -1185,9 +1100,9 @@ func Load() *Config {
 	c.Purge = envBool("PURGE", false)
 	c.BuildAll = envBool("BUILD_ALL", false)
 	c.DryRun = envBool("DRY_RUN", false)
-	c.AllowResourceOvercommit = envBool("ALLOW_RESOURCE_OVERCOMMIT", false)
-	c.ResourceBudgetFraction = envFloat("RESOURCE_BUDGET_FRACTION", 2.0/3.0)
-	c.OvercommitTolerancePct = envFloat("OVERCOMMIT_TOLERANCE_PCT", 15.0)
+	c.Capacity.AllowOvercommit = envBool("ALLOW_RESOURCE_OVERCOMMIT", false)
+	c.Capacity.ResourceBudgetFraction = envFloat("RESOURCE_BUDGET_FRACTION", 2.0/3.0)
+	c.Capacity.OvercommitTolerancePct = envFloat("OVERCOMMIT_TOLERANCE_PCT", 15.0)
 	c.HardwareCostUSD = envFloat("HARDWARE_COST_USD", 0)
 	c.HardwareUsefulLifeYears = envFloat("HARDWARE_USEFUL_LIFE_YEARS", 5)
 	c.HardwareWatts = envFloat("HARDWARE_WATTS", 0)
@@ -1345,8 +1260,8 @@ func Load() *Config {
 	c.Providers.IBMCloud.Region = getenv("IBMCLOUD_REGION", "us-south")
 	c.Providers.IBMCloud.ControlPlaneProfile = getenv("IBMCLOUD_CONTROL_PLANE_PROFILE", "bx2-2x8")
 	c.Providers.IBMCloud.NodeProfile = getenv("IBMCLOUD_NODE_PROFILE", "bx2-2x8")
-	c.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
-	c.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
+	c.Capacity.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
+	c.Capacity.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
 
 	// --- Kind / management ----
 	c.ClusterID = getenv("CLUSTER_ID", "1")
@@ -1423,13 +1338,13 @@ func Load() *Config {
 	c.Providers.Proxmox.CSITopologyLabels = getenv("PROXMOX_CSI_TOPOLOGY_LABELS", "true")
 
 	// --- Argo workload postsync ---
-	c.ArgoWorkloadPostsyncHooksEnabled = envBool("ARGO_WORKLOAD_POSTSYNC_HOOKS_ENABLED", true)
+	c.ArgoCD.PostsyncHooksEnabled = envBool("ARGO_WORKLOAD_POSTSYNC_HOOKS_ENABLED", true)
 	// bash uses "${VAR-default}" (keep-empty) — we preserve that: only fall
 	// back when the env var is truly unset.
-	c.ArgoWorkloadPostsyncHooksGitURL = getenvKeep("ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_URL", "https://github.com/lpasquali/workload-smoketests.git")
-	c.ArgoWorkloadPostsyncHooksGitPath = getenvKeep("ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_PATH", "")
-	c.ArgoWorkloadPostsyncHooksGitRef = getenvKeep("ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_REF", "")
-	c.ArgoWorkloadPostsyncHooksKubectlImg = getenv("ARGO_WORKLOAD_POSTSYNC_HOOKS_KUBECTL_IMAGE", "")
+	c.ArgoCD.PostsyncHooksGitURL = getenvKeep("ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_URL", "https://github.com/lpasquali/workload-smoketests.git")
+	c.ArgoCD.PostsyncHooksGitPath = getenvKeep("ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_PATH", "")
+	c.ArgoCD.PostsyncHooksGitRef = getenvKeep("ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_REF", "")
+	c.ArgoCD.PostsyncHooksKubectlImg = getenv("ARGO_WORKLOAD_POSTSYNC_HOOKS_KUBECTL_IMAGE", "")
 	c.WorkloadPostsyncNamespace = getenv("WORKLOAD_POSTSYNC_NAMESPACE", "workload-smoke")
 
 	// --- Kyverno (lines 497-503) ---
@@ -1634,11 +1549,11 @@ func Load() *Config {
 	// path when the active provider hasn't implemented PivotTarget
 	// yet (logs once, then proceeds with kind as mgmt). Operators
 	// who want kind as the permanent management plane pass --no-pivot.
-	c.PivotEnabled = envBool("PIVOT_ENABLED", true)
-	c.PivotKeepKind = envBool("PIVOT_KEEP_KIND", false)
-	c.PivotDryRun = envBool("PIVOT_DRY_RUN", false)
-	c.PivotVerifyTimeout = getenv("PIVOT_VERIFY_TIMEOUT", "10m")
-	c.StopBeforeWorkload = envBool("YAGE_STOP_BEFORE_WORKLOAD", false)
+	c.Pivot.Enabled = envBool("PIVOT_ENABLED", true)
+	c.Pivot.KeepKind = envBool("PIVOT_KEEP_KIND", false)
+	c.Pivot.DryRun = envBool("PIVOT_DRY_RUN", false)
+	c.Pivot.VerifyTimeout = getenv("PIVOT_VERIFY_TIMEOUT", "10m")
+	c.Pivot.StopBeforeWorkload = envBool("YAGE_STOP_BEFORE_WORKLOAD", false)
 	c.SkipProviders = getenv("YAGE_SKIP_PROVIDERS", "")
 	c.AllowedProviders = getenv("YAGE_ALLOWED_PROVIDERS", "")
 	c.UseManagedPostgres = envBool("YAGE_USE_MANAGED_POSTGRES", true)

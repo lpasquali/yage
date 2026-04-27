@@ -381,9 +381,9 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfi
 	}
 	defer os.Remove(wk)
 
-	opURL := fmt.Sprintf("https://github.com/argoproj-labs/argocd-operator/config/default?ref=%s", cfg.ArgoCDOperatorVersion)
+	opURL := fmt.Sprintf("https://github.com/argoproj-labs/argocd-operator/config/default?ref=%s", cfg.ArgoCD.OperatorVersion)
 	logx.Log("Installing Argo CD Operator on the workload cluster (ref %s; kubectl apply -k --server-side %s)…",
-		cfg.ArgoCDOperatorVersion, opURL)
+		cfg.ArgoCD.OperatorVersion, opURL)
 	// TODO: kustomize-from-Git is hard to replicate without
 	// sigs.k8s.io/kustomize/api/krusty (~10MB more deps). Keep this one
 	// kubectl shell-out; everything else in this function uses k8sclient.
@@ -392,7 +392,7 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfi
 		"--field-manager=yage-argocd-operator",
 		"-k", opURL); err != nil {
 		logx.Die("Failed to apply Argo CD Operator (network, ref %s, or kubectl that supports --server-side; need >= 1.18).",
-			cfg.ArgoCDOperatorVersion)
+			cfg.ArgoCD.OperatorVersion)
 	}
 
 	cli, err := k8sclient.ForKubeconfigFile(wk)
@@ -407,7 +407,7 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfi
 		logx.Die("Argo CD Operator controller is not Available in argocd-operator-system (see pods in that namespace).")
 	}
 
-	ns := cfg.WorkloadArgoCDNamespace
+	ns := cfg.ArgoCD.WorkloadNamespace
 	if ns == "" {
 		ns = "argocd"
 	}
@@ -425,12 +425,12 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfi
 		logx.Die("Failed to ensure namespace %s on the workload cluster: %v", ns, err)
 	}
 
-	promEnabled := sysinfo.IsTrue(cfg.ArgoCDOperatorArgoCDPrometheusEnabled)
-	monEnabled := sysinfo.IsTrue(cfg.ArgoCDOperatorArgoCDMonitoringEnabled)
-	disableIngress := sysinfo.IsTrue(cfg.ArgoCDDisableOperatorManagedIngress)
-	serverInsecure := sysinfo.IsTrue(cfg.ArgoCDServerInsecure)
+	promEnabled := sysinfo.IsTrue(cfg.ArgoCD.PrometheusEnabled)
+	monEnabled := sysinfo.IsTrue(cfg.ArgoCD.MonitoringEnabled)
+	disableIngress := sysinfo.IsTrue(cfg.ArgoCD.DisableOperatorManagedIngress)
+	serverInsecure := sysinfo.IsTrue(cfg.ArgoCD.ServerInsecure)
 
-	cr := buildArgoCDCR(cfg.ArgoCDVersion, ns, promEnabled, monEnabled, disableIngress, serverInsecure)
+	cr := buildArgoCDCR(cfg.ArgoCD.Version, ns, promEnabled, monEnabled, disableIngress, serverInsecure)
 	logx.Log("Creating ArgoCD custom resource (argocd/%s)…", ns)
 	if err := cli.ApplyYAML(ctx, []byte(cr)); err != nil {
 		logx.Die("Failed to apply ArgoCD custom resource on the workload cluster: %v", err)

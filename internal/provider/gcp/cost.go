@@ -106,7 +106,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		})
 	}
 
-	if cfg.PivotEnabled {
+	if cfg.Pivot.Enabled {
 		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mgmtType := "e2-medium"
 		mgmtPrice, err := liveGCEMonthly(mgmtType, region)

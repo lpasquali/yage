@@ -181,18 +181,18 @@ func StandaloneDiscoverWorkloadKubeconfigRef(cfg *config.Config) error {
 // password when available.
 func PrintAccessInfo(cfg *config.Config) {
 	kctx := "kind-" + cfg.KindClusterName
-	port := cfg.ArgoCDPortForwardPort
+	port := cfg.ArgoCD.PortForwardPort
 	if port == "" {
 		port = "8443"
 	}
 	wlPFAddr := "127.0.0.1:" + port
 	loginExtra := "--grpc-web"
-	if sysinfo.IsTrue(cfg.ArgoCDServerInsecure) {
+	if sysinfo.IsTrue(cfg.ArgoCD.ServerInsecure) {
 		loginExtra = "--insecure --grpc-web"
 	}
 	fmt.Println("\n\033[1;36m── Argo CD access (initial admin; rotate after first login) — provisioned cluster only ──\033[0m")
 	fmt.Printf("\n\033[1;33m[CAPI / Proxmox workload] cluster %s / Argo namespace %s\033[0m\n",
-		cfg.WorkloadClusterName, cfg.WorkloadArgoCDNamespace)
+		cfg.WorkloadClusterName, cfg.ArgoCD.WorkloadNamespace)
 
 	mgmt, err := k8sclient.ForContext(kctx)
 	if err != nil {
@@ -219,17 +219,17 @@ func PrintAccessInfo(cfg *config.Config) {
 		defer os.Remove(kcfg)
 		// Try a typed client against the workload kubeconfig and check namespace presence.
 		if wcli, werr := k8sclient.ForKubeconfigFile(kcfg); werr == nil {
-			if _, nserr := wcli.Typed.CoreV1().Namespaces().Get(bg, cfg.WorkloadArgoCDNamespace, metav1.GetOptions{}); nserr == nil {
-				pw := readAdminPasswordFromClient(wcli, cfg.WorkloadArgoCDNamespace)
+			if _, nserr := wcli.Typed.CoreV1().Namespaces().Get(bg, cfg.ArgoCD.WorkloadNamespace, metav1.GetOptions{}); nserr == nil {
+				pw := readAdminPasswordFromClient(wcli, cfg.ArgoCD.WorkloadNamespace)
 				if pw != "" {
 					logx.Log("  Initial admin password: %s", pw)
 				} else {
 					logx.Warn("  Admin password not found in %s (checked argocd-initial-admin-secret, argocd-cluster, argocd-secret — not installed or password rotated?).",
-						cfg.WorkloadArgoCDNamespace)
+						cfg.ArgoCD.WorkloadNamespace)
 				}
 			} else {
 				logx.Warn("  Namespace %s not on workload — run bootstrap with workload Argo enabled first.",
-					cfg.WorkloadArgoCDNamespace)
+					cfg.ArgoCD.WorkloadNamespace)
 			}
 		}
 	}
@@ -237,7 +237,7 @@ func PrintAccessInfo(cfg *config.Config) {
 	fmt.Printf("    kubectl --context \"%s\" -n \"%s\" get secret \"%s-kubeconfig\" -o jsonpath={.data.value} | base64 -d > /tmp/%s-kubeconfig.yaml\n",
 		kctx, cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName, cfg.WorkloadClusterName)
 	fmt.Printf("    export KUBECONFIG=/tmp/%s-kubeconfig.yaml\n", cfg.WorkloadClusterName)
-	fmt.Printf("    kubectl port-forward --address 127.0.0.1 -n \"%s\" svc/argocd-server %s:443\n", cfg.WorkloadArgoCDNamespace, port)
+	fmt.Printf("    kubectl port-forward --address 127.0.0.1 -n \"%s\" svc/argocd-server %s:443\n", cfg.ArgoCD.WorkloadNamespace, port)
 	fmt.Printf("  Login to Argo on the CAPI cluster:\n")
 	fmt.Printf("    argocd login %s --username admin --password '<password>' %s\n\n", wlPFAddr, loginExtra)
 }
@@ -270,13 +270,13 @@ func ReadInitialAdminPasswordWithKubeconfig(kubeconfig, namespace string) string
 // only the long-lived forwarding child process is a subprocess.
 func RunPortForwards(cfg *config.Config) {
 	kctx := "kind-" + cfg.KindClusterName
-	port := cfg.ArgoCDPortForwardPort
+	port := cfg.ArgoCD.PortForwardPort
 	if port == "" {
 		port = "8443"
 	}
-	if cfg.ArgoCDPortForwardTarget != "" && cfg.ArgoCDPortForwardTarget != "workload" {
+	if cfg.ArgoCD.PortForwardTarget != "" && cfg.ArgoCD.PortForwardTarget != "workload" {
 		logx.Warn("port-forward: only the provisioned cluster is supported (ARGOCD_PORT_FORWARD_TARGET=workload); ignoring %s.",
-			cfg.ArgoCDPortForwardTarget)
+			cfg.ArgoCD.PortForwardTarget)
 	}
 	if !k8sclient.ContextExists(kctx) {
 		logx.Die("port-forward: kubectl context %s not found (need management cluster to read %s-kubeconfig).",
@@ -301,14 +301,14 @@ func RunPortForwards(cfg *config.Config) {
 		os.Remove(kcfg)
 		logx.Die("port-forward: cannot read workload kubeconfig: %v", err)
 	}
-	if _, err := wcli.Typed.CoreV1().Namespaces().Get(bg, cfg.WorkloadArgoCDNamespace, metav1.GetOptions{}); err != nil {
+	if _, err := wcli.Typed.CoreV1().Namespaces().Get(bg, cfg.ArgoCD.WorkloadNamespace, metav1.GetOptions{}); err != nil {
 		os.Remove(kcfg)
 		logx.Die("port-forward: namespace %s not found on the CAPI cluster — is workload Argo installed?",
-			cfg.WorkloadArgoCDNamespace)
+			cfg.ArgoCD.WorkloadNamespace)
 	}
 	// Long-lived shell-out: see function-level NOTE for rationale.
 	cmd := exec.Command("kubectl", "port-forward", "--address", "127.0.0.1",
-		"-n", cfg.WorkloadArgoCDNamespace,
+		"-n", cfg.ArgoCD.WorkloadNamespace,
 		"svc/argocd-server", port+":443")
 	cmd.Env = append(os.Environ(), "KUBECONFIG="+kcfg)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
@@ -337,7 +337,7 @@ func RunPortForwards(cfg *config.Config) {
 // argocd-redis with a random auth value in the workload's Argo
 // namespace, unless it already exists (idempotent).
 func ApplyRedisSecretToWorkload(cfg *config.Config, writeWorkloadKubeconfig func() (string, error)) {
-	if !cfg.WorkloadArgoCDEnabled {
+	if !cfg.ArgoCD.WorkloadEnabled {
 		return
 	}
 	wk, err := writeWorkloadKubeconfig()
@@ -353,7 +353,7 @@ func ApplyRedisSecretToWorkload(cfg *config.Config, writeWorkloadKubeconfig func
 	}
 	bg := context.Background()
 
-	ns := cfg.WorkloadArgoCDNamespace
+	ns := cfg.ArgoCD.WorkloadNamespace
 	if ns == "" {
 		ns = "argocd"
 	}

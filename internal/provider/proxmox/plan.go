@@ -82,7 +82,7 @@ func (p *Provider) DescribeWorkload(w provider.PlanWriter, cfg *config.Config) {
 // state from kind into it.
 func (p *Provider) DescribePivot(w provider.PlanWriter, cfg *config.Config) {
 	w.Section("Pivot to managed mgmt cluster — Proxmox")
-	if !cfg.PivotEnabled {
+	if !cfg.Pivot.Enabled {
 		w.Skip("PIVOT_ENABLED=false (kind remains the management cluster)")
 		return
 	}
@@ -104,13 +104,13 @@ func (p *Provider) DescribePivot(w provider.PlanWriter, cfg *config.Config) {
 		w.Bullet("  Proxmox pool: %q (auto-created)", cfg.Providers.Proxmox.Mgmt.Pool)
 	}
 	w.Bullet("clusterctl init on mgmt (idempotent)")
-	if cfg.PivotDryRun {
+	if cfg.Pivot.DryRun {
 		w.Bullet("clusterctl move --dry-run (logs plan, no state moves) — exit here")
 	} else {
 		w.Bullet("clusterctl move kind → mgmt for namespaces: %s, %s, yage-system",
 			cfg.WorkloadClusterNamespace, cfg.Mgmt.ClusterNamespace)
 		w.Bullet("handoff yage-system Secrets kind → mgmt")
-		w.Bullet("VerifyParity (timeout: %s)", cfg.PivotVerifyTimeout)
+		w.Bullet("VerifyParity (timeout: %s)", cfg.Pivot.VerifyTimeout)
 		w.Bullet("rebind kind-%s context to mgmt kubeconfig (subsequent phases target mgmt)",
 			cfg.KindClusterName)
 	}

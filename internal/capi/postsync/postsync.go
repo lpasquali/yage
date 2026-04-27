@@ -33,8 +33,8 @@ func BootstrapDir() string {
 // repo (translating git@host:path to https://host/path and appending
 // .git when absent).
 func DiscoverURL(cfg *config.Config) string {
-	if cfg.ArgoWorkloadPostsyncHooksGitURL != "" {
-		return cfg.ArgoWorkloadPostsyncHooksGitURL
+	if cfg.ArgoCD.PostsyncHooksGitURL != "" {
+		return cfg.ArgoCD.PostsyncHooksGitURL
 	}
 	root := BootstrapDir()
 	out, _, err := shell.CaptureIn(root, "git", "remote", "get-url", "origin")
@@ -65,8 +65,8 @@ func DiscoverURL(cfg *config.Config) string {
 // env override, otherwise git branch, otherwise short commit, otherwise
 // "main".
 func DiscoverRef(cfg *config.Config) string {
-	if cfg.ArgoWorkloadPostsyncHooksGitRef != "" {
-		return cfg.ArgoWorkloadPostsyncHooksGitRef
+	if cfg.ArgoCD.PostsyncHooksGitRef != "" {
+		return cfg.ArgoCD.PostsyncHooksGitRef
 	}
 	root := BootstrapDir()
 	branch, _, err := shell.CaptureIn(root, "git", "rev-parse", "--abbrev-ref", "HEAD")
@@ -92,7 +92,7 @@ func FullRelpath(cfg *config.Config, short string) string {
 	if short == "" {
 		return ""
 	}
-	pfx := strings.TrimSuffix(strings.TrimPrefix(cfg.ArgoWorkloadPostsyncHooksGitPath, "./"), "/")
+	pfx := strings.TrimSuffix(strings.TrimPrefix(cfg.ArgoCD.PostsyncHooksGitPath, "./"), "/")
 	if pfx != "" {
 		return pfx + "/argo-postsync-hooks/" + short
 	}
@@ -103,8 +103,8 @@ func FullRelpath(cfg *config.Config, short string) string {
 // Prefers the env override, otherwise registry.k8s.io/kubectl:<tag> with
 // <tag> derived from the manifest via SmokeKubectlOCITag.
 func ResolveKubectlImage(cfg *config.Config) string {
-	if cfg.ArgoWorkloadPostsyncHooksKubectlImg != "" {
-		return cfg.ArgoWorkloadPostsyncHooksKubectlImg
+	if cfg.ArgoCD.PostsyncHooksKubectlImg != "" {
+		return cfg.ArgoCD.PostsyncHooksKubectlImg
 	}
 	return "registry.k8s.io/kubectl:" + SmokeKubectlOCITag(cfg)
 }

@@ -46,7 +46,7 @@ func cnpgSuppressedByManagedPG(cfg *config.Config) bool {
 // keycloak, keycloak-realm-operator) into a single multi-doc YAML
 // and applies it to the workload via its kubeconfig.
 func ApplyWorkloadArgoCDApplications(cfg *config.Config) {
-	if !cfg.ArgoCDEnabled || !cfg.WorkloadArgoCDEnabled {
+	if !cfg.ArgoCD.Enabled || !cfg.ArgoCD.WorkloadEnabled {
 		return
 	}
 	wk, err := writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
@@ -101,7 +101,7 @@ storageClass:
 			oci += "/" + cfg.Providers.Proxmox.CSIChartName
 		}
 		var h1P, h1K, h2P, h2K string
-		if cfg.Providers.Proxmox.CSISmokeEnabled && cfg.ArgoWorkloadPostsyncHooksEnabled {
+		if cfg.Providers.Proxmox.CSISmokeEnabled && cfg.ArgoCD.PostsyncHooksEnabled {
 			h1P = postsync.FullRelpath(cfg, "proxmox-csi-pvc")
 			h2P = postsync.FullRelpath(cfg, "proxmox-csi-rollout")
 			h1K = postsync.SmokeRenderKustomizeBlock(cfg)
@@ -226,7 +226,7 @@ storageClass:
 // in-cluster Argo CD Application on the workload to reach
 // Healthy + Synced state.
 func WaitForWorkloadArgoCDApplicationsHealthy(cfg *config.Config) {
-	if !cfg.ArgoCDEnabled || !cfg.WorkloadArgoCDEnabled {
+	if !cfg.ArgoCD.Enabled || !cfg.ArgoCD.WorkloadEnabled {
 		return
 	}
 	add := func(apps *[]string, enabled bool, name string) {
@@ -273,7 +273,7 @@ func WaitForWorkloadArgoCDApplicationsHealthy(cfg *config.Config) {
 	bg := context.Background()
 	for _, app := range apps {
 		logx.Log("Waiting for Argo Application %s (workload) to become Synced+Healthy...", app)
-		if err := waitArgoApplicationCondition(cli, bg, cfg.WorkloadArgoCDNamespace, app, "Synced", "Healthy", 30*time.Minute); err != nil {
+		if err := waitArgoApplicationCondition(cli, bg, cfg.ArgoCD.WorkloadNamespace, app, "Synced", "Healthy", 30*time.Minute); err != nil {
 			logx.Die("Argo Application %s (workload) did not reach Synced+Healthy: %v", app, err)
 		}
 	}

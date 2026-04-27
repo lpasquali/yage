@@ -176,7 +176,7 @@ func CiliumCLI(cfg *config.Config) error {
 	return nil
 }
 
-// ArgoCDCLI ensures the argocd CLI matches cfg.ArgoCDVersion,
+// ArgoCDCLI ensures the argocd CLI matches cfg.ArgoCD.Version,
 // installing the upstream release binary when missing or out of date.
 // Linux-only.
 func ArgoCDCLI(cfg *config.Config) error {
@@ -185,10 +185,10 @@ func ArgoCDCLI(cfg *config.Config) error {
 	}
 	if shell.CommandExists("argocd") {
 		have := firstVersionOn("argocd", "version", "--client", "2>&1")
-		if versionx.Match(have, cfg.ArgoCDVersion) {
+		if versionx.Match(have, cfg.ArgoCD.Version) {
 			return nil
 		}
-		logx.Warn("argocd CLI (%s) does not match ARGOCD_VERSION=%s — reinstalling...", orUnknown(have), cfg.ArgoCDVersion)
+		logx.Warn("argocd CLI (%s) does not match ARGOCD_VERSION=%s — reinstalling...", orUnknown(have), cfg.ArgoCD.Version)
 	} else {
 		logx.Warn("argocd CLI not found — installing...")
 	}
@@ -198,7 +198,7 @@ func ArgoCDCLI(cfg *config.Config) error {
 	default:
 		logx.Die("Unsupported architecture for argocd CLI on Linux: %s (need amd64 or arm64).", arch)
 	}
-	url := fmt.Sprintf("https://github.com/argoproj/argo-cd/releases/download/%s/argocd-linux-%s", cfg.ArgoCDVersion, arch)
+	url := fmt.Sprintf("https://github.com/argoproj/argo-cd/releases/download/%s/argocd-linux-%s", cfg.ArgoCD.Version, arch)
 	return installBinary("argocd", url)
 }
 

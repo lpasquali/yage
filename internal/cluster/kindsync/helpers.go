@@ -72,10 +72,10 @@ func proxmoxEnvMap(cfg *config.Config) map[string]string {
 	put(m, "PROXMOX_CSI_NAMESPACE", cfg.Providers.Proxmox.CSINamespace)
 	put(m, "PROXMOX_CSI_CONFIG_PROVIDER", cfg.Providers.Proxmox.CSIConfigProvider)
 	put(m, "PROXMOX_CSI_SMOKE_ENABLED", boolStr(cfg.Providers.Proxmox.CSISmokeEnabled))
-	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_URL", cfg.ArgoWorkloadPostsyncHooksGitURL)
-	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_PATH", cfg.ArgoWorkloadPostsyncHooksGitPath)
-	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_REF", cfg.ArgoWorkloadPostsyncHooksGitRef)
-	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_KUBECTL_IMAGE", cfg.ArgoWorkloadPostsyncHooksKubectlImg)
+	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_URL", cfg.ArgoCD.PostsyncHooksGitURL)
+	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_PATH", cfg.ArgoCD.PostsyncHooksGitPath)
+	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_REF", cfg.ArgoCD.PostsyncHooksGitRef)
+	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_KUBECTL_IMAGE", cfg.ArgoCD.PostsyncHooksKubectlImg)
 	return m
 }
 

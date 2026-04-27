@@ -30,7 +30,7 @@ type PostSyncBlock struct {
 // Returns a zero block when hooks are disabled, no short name, or the
 // git URL cannot be discovered.
 func derivePostSync(cfg *config.Config, hookShort string) PostSyncBlock {
-	if !cfg.ArgoWorkloadPostsyncHooksEnabled || hookShort == "" {
+	if !cfg.ArgoCD.PostsyncHooksEnabled || hookShort == "" {
 		return PostSyncBlock{}
 	}
 	url := postsync.DiscoverURL(cfg)
@@ -55,7 +55,7 @@ func HelmGit(cfg *config.Config, name, destNS, repoURL, relPath, ref, syncWave, 
 	hook := derivePostSync(cfg, hookShort)
 	var sb strings.Builder
 	if hook.URL != "" {
-		sb.WriteString(headerAnnot(name, cfg.WorkloadArgoCDNamespace, syncWave, ""))
+		sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave, ""))
 		fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n  sources:\n", destNS)
 		fmt.Fprintf(&sb, "    - repoURL: %s\n", repoURL)
 		fmt.Fprintf(&sb, "      path: %s\n", relPath)
@@ -76,7 +76,7 @@ func HelmGit(cfg *config.Config, name, destNS, repoURL, relPath, ref, syncWave, 
 		sb.WriteString(indent(hook.Kz, "  "))
 		sb.WriteString(syncPolicyTail())
 	} else {
-		sb.WriteString(headerAnnot(name, cfg.WorkloadArgoCDNamespace, syncWave, ""))
+		sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave, ""))
 		fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n  source:\n", destNS)
 		fmt.Fprintf(&sb, "    repoURL: %s\n", repoURL)
 		fmt.Fprintf(&sb, "    path: %s\n", relPath)
@@ -123,7 +123,7 @@ func Kyverno(cfg *config.Config, name, ns, repoURL, chart, version, syncWave, ho
 	tolFragment := kyvernoTolerationFragment(cfg)
 
 	var sb strings.Builder
-	sb.WriteString(headerAnnot(name, cfg.WorkloadArgoCDNamespace, syncWave,
+	sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave,
 		`argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true`))
 	fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n", ns)
 	if hook.URL != "" {
@@ -207,7 +207,7 @@ func Helm(cfg *config.Config, name, ns, repoURL, chart, version, syncWave, value
 	hook := derivePostSync(cfg, hookShort)
 
 	var sb strings.Builder
-	sb.WriteString(headerAnnot(name, cfg.WorkloadArgoCDNamespace, syncWave, ""))
+	sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave, ""))
 	if hook.URL != "" {
 		fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n  sources:\n", ns)
 		fmt.Fprintf(&sb, "    - repoURL: %s\n", repoURL)
@@ -251,7 +251,7 @@ func HelmOCI(cfg *config.Config, name, ns, ociURL, version, syncWave, valuesYAML
 	}
 	indented, indentedMS := indentValuesBoth(valuesYAML)
 
-	useMulti := cfg.ArgoWorkloadPostsyncHooksEnabled && cfg.Providers.Proxmox.CSISmokeEnabled &&
+	useMulti := cfg.ArgoCD.PostsyncHooksEnabled && cfg.Providers.Proxmox.CSISmokeEnabled &&
 		hook1Path != "" && hook1Kz != "" && hook2Path != "" && hook2Kz != ""
 	var hURL, sref string
 	if useMulti {
@@ -265,7 +265,7 @@ func HelmOCI(cfg *config.Config, name, ns, ociURL, version, syncWave, valuesYAML
 	}
 
 	var sb strings.Builder
-	sb.WriteString(headerAnnot(name, cfg.WorkloadArgoCDNamespace, syncWave, ""))
+	sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave, ""))
 	if useMulti {
 		fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n  sources:\n", ns)
 		fmt.Fprintf(&sb, "    - repoURL: %s\n", ociURL)
@@ -311,7 +311,7 @@ func KustomizeGit(cfg *config.Config, name, destNS, repoURL, relPath, ref, syncW
 	safeRef := shellQuoteEscape(ref)
 	hook := derivePostSync(cfg, hookShort)
 	var sb strings.Builder
-	sb.WriteString(headerAnnot(name, cfg.WorkloadArgoCDNamespace, syncWave, ""))
+	sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave, ""))
 	fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n", destNS)
 	if hook.URL != "" {
 		sb.WriteString("  sources:\n")

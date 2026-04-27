@@ -176,10 +176,10 @@ func Run(cfg *config.Config) int {
 			WorkloadRolloutCAPITouchRollout(cfg)
 		}
 		if cfg.WorkloadRolloutMode == "argocd" || cfg.WorkloadRolloutMode == "all" {
-			if !cfg.ArgoCDEnabled {
+			if !cfg.ArgoCD.Enabled {
 				logx.Die("ARGOCD_ENABLED is false — cannot use argocd rollout. Use --workload-rollout capi, or set ARGOCD_ENABLED=true.")
 			}
-			if !cfg.WorkloadArgoCDEnabled {
+			if !cfg.ArgoCD.WorkloadEnabled {
 				logx.Die("WORKLOAD_ARGOCD_ENABLED is false — no workload Argo.")
 			}
 			logx.Log("workload-rollout: CAAPH + app-of-apps Git — re-sync from the workload Argo CD (e.g. `argocd app sync %s` with workload kubeconfig, or refresh the root/child Applications in the UI).", cfg.WorkloadClusterName)
@@ -191,7 +191,7 @@ func Run(cfg *config.Config) int {
 	// -------------------------------------------------------------------------
 	// Standalone: --argocd-print-access / --argocd-port-forward
 	// -------------------------------------------------------------------------
-	if cfg.ArgoCDPrintAccessStandalone || cfg.ArgoCDPortForwardStandalone {
+	if cfg.ArgoCD.PrintAccessStandalone || cfg.ArgoCD.PortForwardStandalone {
 		shell.RequireCmd("kubectl")
 		kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
 		_ = kindsync.SyncBootstrapConfigToKind(cfg)
@@ -213,10 +213,10 @@ func Run(cfg *config.Config) int {
 		if !workloadKubeconfigSecretExists(cfg) {
 			_ = argocd.StandaloneDiscoverWorkloadKubeconfigRef(cfg)
 		}
-		if cfg.ArgoCDPrintAccessStandalone {
+		if cfg.ArgoCD.PrintAccessStandalone {
 			argocd.PrintAccessInfo(cfg)
 		}
-		if cfg.ArgoCDPortForwardStandalone {
+		if cfg.ArgoCD.PortForwardStandalone {
 			argocd.RunPortForwards(cfg)
 		}
 		return 0
@@ -297,7 +297,7 @@ func Run(cfg *config.Config) int {
 	if err := installer.Helm(); err != nil {
 		logx.Die("ensure_helm_present failed: %v", err)
 	}
-	if cfg.ArgoCDEnabled {
+	if cfg.ArgoCD.Enabled {
 		if err := installer.ArgoCDCLI(cfg); err != nil {
 			logx.Die("ensure_argocd_cli failed: %v", err)
 		}
@@ -317,7 +317,7 @@ func Run(cfg *config.Config) int {
 	shell.RequireCmd("clusterctl")
 	shell.RequireCmd("cilium")
 	shell.RequireCmd("helm")
-	if cfg.ArgoCDEnabled {
+	if cfg.ArgoCD.Enabled {
 		shell.RequireCmd("argocd")
 		if cfg.KyvernoEnabled {
 			shell.RequireCmd("kyverno")
@@ -746,7 +746,7 @@ func Run(cfg *config.Config) int {
 	waitInfraProviderAfterClusterctlInit(cfg, mgmtCli)
 
 	// --- Capacity check: confirm the planned clusters fit inside
-	// cfg.ResourceBudgetFraction (default 0.75) of the available
+	// cfg.Capacity.ResourceBudgetFraction (default 0.75) of the available
 	// Proxmox host CPU/memory/storage. Aborts before any VM is created.
 	if err := preflightCapacity(cfg); err != nil {
 		logx.Die("%v", err)
@@ -763,7 +763,7 @@ func Run(cfg *config.Config) int {
 			logx.Log("Proxmox pool '%s' ensured (workload).", cfg.Providers.Proxmox.Pool)
 		}
 	}
-	if cfg.InfraProvider == "proxmox" && cfg.PivotEnabled && cfg.Providers.Proxmox.Mgmt.Pool != "" {
+	if cfg.InfraProvider == "proxmox" && cfg.Pivot.Enabled && cfg.Providers.Proxmox.Mgmt.Pool != "" {
 		if err := pveapi.EnsurePool(cfg, cfg.Providers.Proxmox.Mgmt.Pool); err != nil {
 			logx.Warn("Proxmox pool %s: %v — mgmt VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Mgmt.Pool, err)
 		} else {
@@ -785,16 +785,16 @@ func Run(cfg *config.Config) int {
 	// pivot is silently downgraded to "kind stays as the management
 	// plane" so PivotEnabled-by-default does not break runs against
 	// providers without a pivot path.
-	if cfg.PivotEnabled {
+	if cfg.Pivot.Enabled {
 		if pt, perr := provider.For(cfg); perr == nil {
 			if _, terr := pt.PivotTarget(cfg); errors.Is(terr, provider.ErrNotApplicable) {
 				logx.Log("pivot: %s does not yet implement PivotTarget — keeping kind as the management plane.", cfg.InfraProvider)
-				cfg.PivotEnabled = false
+				cfg.Pivot.Enabled = false
 			}
 		}
 	}
-	if cfg.PivotEnabled {
-		if cfg.PivotDryRun {
+	if cfg.Pivot.Enabled {
+		if cfg.Pivot.DryRun {
 			logx.Log("Pivot phase: PIVOT DRY-RUN — provisioning mgmt cluster + clusterctl-init, then `clusterctl move --dry-run`. Workload stays on kind; no state moves.")
 		} else {
 			logx.Log("Pivot phase: pivoting CAPI from kind → Proxmox-hosted management cluster...")
@@ -813,7 +813,7 @@ func Run(cfg *config.Config) int {
 		if err := pivot.MoveCAPIState(cfg, mgmtKubeconfig); err != nil {
 			logx.Die("pivot: MoveCAPIState: %v", err)
 		}
-		if cfg.PivotDryRun {
+		if cfg.Pivot.DryRun {
 			logx.Log("pivot: dry-run complete. Inspect the management cluster:")
 			logx.Log("  KUBECONFIG=%s kubectl get nodes", mgmtKubeconfig)
 			logx.Log("  KUBECONFIG=%s kubectl -n capi-system get pods", mgmtKubeconfig)
@@ -841,8 +841,8 @@ func Run(cfg *config.Config) int {
 	// kind is torn down, no workload churn. Re-run without the flag
 	// (or send the same yage --print-command output) to provision the
 	// workload.
-	if cfg.StopBeforeWorkload {
-		if cfg.PivotEnabled {
+	if cfg.Pivot.StopBeforeWorkload {
+		if cfg.Pivot.Enabled {
 			logx.Log("--stop-before-workload: mgmt cluster is up, no workload manifest applied. Done.")
 		} else {
 			logx.Log("--stop-before-workload: kind is the management plane (no pivot ran), no workload manifest applied. Done.")
@@ -901,15 +901,15 @@ func Run(cfg *config.Config) int {
 
 	// Metrics-server on workload.
 	if cfg.EnableWorkloadMetricsServer {
-		if cfg.ArgoCDEnabled && cfg.WorkloadArgoCDEnabled {
-			logx.Log("workload metrics-server: deploy with your app-of-apps repo (%s); ENABLE_WORKLOAD_METRICS_SERVER is informational when Argo delivers apps from Git.", cfg.WorkloadAppOfAppsGitURL)
+		if cfg.ArgoCD.Enabled && cfg.ArgoCD.WorkloadEnabled {
+			logx.Log("workload metrics-server: deploy with your app-of-apps repo (%s); ENABLE_WORKLOAD_METRICS_SERVER is informational when Argo delivers apps from Git.", cfg.ArgoCD.AppOfAppsGitURL)
 		} else {
 			InstallMetricsServerOnWorkload(cfg)
 		}
 	}
 
 	// Proxmox CSI config Secret on the workload.
-	if cfg.Providers.Proxmox.CSIEnabled && cfg.ArgoCDEnabled && cfg.WorkloadArgoCDEnabled {
+	if cfg.Providers.Proxmox.CSIEnabled && cfg.ArgoCD.Enabled && cfg.ArgoCD.WorkloadEnabled {
 		csi.LoadVarsFromConfig(cfg)
 		if cfg.Providers.Proxmox.CSIURL == "" {
 			cfg.Providers.Proxmox.CSIURL = pveapi.APIJSONURL(cfg)
@@ -925,16 +925,16 @@ func Run(cfg *config.Config) int {
 	}
 
 	// Pre-install argocd-redis Secret on the workload.
-	if cfg.ArgoCDEnabled && cfg.WorkloadArgoCDEnabled {
+	if cfg.ArgoCD.Enabled && cfg.ArgoCD.WorkloadEnabled {
 		argocd.ApplyRedisSecretToWorkload(cfg, func() (string, error) {
 			return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
 		})
 	}
 
 	// --- Argo CD on workload ---
-	if cfg.ArgoCDEnabled {
+	if cfg.ArgoCD.Enabled {
 		logx.Log("Argo CD on the workload: Argo CD Operator + ArgoCD CR, then CAAPH argocd-apps (root Application name %s; see --workload-app-of-apps-git-*).", cfg.WorkloadClusterName)
-		if cfg.WorkloadArgoCDEnabled {
+		if cfg.ArgoCD.WorkloadEnabled {
 			caaph.ApplyWorkloadArgoHelmProxies(cfg, func() {
 				caaph.ApplyWorkloadArgoCDOperatorAndCR(cfg, func() (string, error) {
 					return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
@@ -953,7 +953,7 @@ func Run(cfg *config.Config) int {
 
 	// --- Pivot teardown: delete the kind cluster after a successful pivot
 	// (skipped when --pivot-keep-kind / --no-delete-kind / pivot disabled).
-	if cfg.PivotEnabled {
+	if cfg.Pivot.Enabled {
 		if err := pivot.TeardownKind(cfg); err != nil {
 			logx.Warn("pivot: TeardownKind: %v", err)
 		}
@@ -985,7 +985,7 @@ func validateMinVCPU(cfg *config.Config) error {
 		{"workload control-plane", cfg.Providers.Proxmox.ControlPlaneNumSockets, cfg.Providers.Proxmox.ControlPlaneNumCores, atoi(cfg.ControlPlaneMachineCount) > 0},
 		{"workload worker", cfg.Providers.Proxmox.WorkerNumSockets, cfg.Providers.Proxmox.WorkerNumCores, atoi(cfg.WorkerMachineCount) > 0},
 	}
-	if cfg.PivotEnabled {
+	if cfg.Pivot.Enabled {
 		roles = append(roles,
 			role{"mgmt control-plane", cfg.Providers.Proxmox.Mgmt.ControlPlaneNumSockets, cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores, atoi(cfg.Mgmt.ControlPlaneMachineCount) > 0},
 			role{"mgmt worker", cfg.Providers.Proxmox.WorkerNumSockets, cfg.Providers.Proxmox.WorkerNumCores, atoi(cfg.Mgmt.WorkerMachineCount) > 0},
@@ -1010,9 +1010,9 @@ func validateMinVCPU(cfg *config.Config) error {
 
 // preflightCapacity queries the active provider's Inventory and
 // compares it against the configured cluster sizing × replicas.
-// Returns nil when the plan fits inside cfg.ResourceBudgetFraction
+// Returns nil when the plan fits inside cfg.Capacity.ResourceBudgetFraction
 // × capacity. Returns a non-nil error otherwise — unless
-// cfg.AllowResourceOvercommit is set, in which case the error is
+// cfg.Capacity.AllowOvercommit is set, in which case the error is
 // downgraded to a warning and nil is returned.
 //
 // Capacity acquisition lives behind the Provider interface
@@ -1042,7 +1042,7 @@ func preflightCapacity(cfg *config.Config) error {
 	used := existingUsageFromInventory(inv)
 
 	plan := capacity.PlanFor(cfg)
-	threshold := cfg.ResourceBudgetFraction
+	threshold := cfg.Capacity.ResourceBudgetFraction
 	if threshold <= 0 || threshold > 1 {
 		threshold = capacity.DefaultThreshold
 	}
@@ -1061,7 +1061,7 @@ func preflightCapacity(cfg *config.Config) error {
 		logx.Log("Existing-VM census: %d cores / %d MiB / %d GB already allocated",
 			used.CPUCores, used.MemoryMiB, used.StorageGB)
 	}
-	tolerancePct := cfg.OvercommitTolerancePct
+	tolerancePct := cfg.Capacity.OvercommitTolerancePct
 	if tolerancePct <= 0 {
 		tolerancePct = capacity.DefaultOvercommitTolerancePct
 	}
@@ -1075,7 +1075,7 @@ func preflightCapacity(cfg *config.Config) error {
 			threshold*100, tolerancePct, msg)
 		return nil
 	case capacity.VerdictAbort:
-		if cfg.AllowResourceOvercommit {
+		if cfg.Capacity.AllowOvercommit {
 			logx.Warn("ALLOW_RESOURCE_OVERCOMMIT=true — proceeding despite overcommit: %s", msg)
 			return nil
 		}

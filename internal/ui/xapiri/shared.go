@@ -129,14 +129,14 @@ func (s *state) step1_environment() error {
 	// dedicated bool yet).
 	switch s.env {
 	case envDev:
-		s.cfg.ArgoCDEnabled = false
-		s.cfg.WorkloadArgoCDEnabled = false
+		s.cfg.ArgoCD.Enabled = false
+		s.cfg.ArgoCD.WorkloadEnabled = false
 	case envStaging:
-		s.cfg.ArgoCDEnabled = true
-		s.cfg.WorkloadArgoCDEnabled = false
+		s.cfg.ArgoCD.Enabled = true
+		s.cfg.ArgoCD.WorkloadEnabled = false
 	case envProd:
-		s.cfg.ArgoCDEnabled = true
-		s.cfg.WorkloadArgoCDEnabled = true
+		s.cfg.ArgoCD.Enabled = true
+		s.cfg.ArgoCD.WorkloadEnabled = true
 		s.cfg.CertManagerEnabled = true
 	}
 	return nil

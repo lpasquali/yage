@@ -28,7 +28,7 @@ import (
 // kubeconfig from the kind-side Secret, materialises it to a temp file,
 // and returns the kubeconfig path.
 //
-// No-op when cfg.PivotEnabled is false (returns "", nil).
+// No-op when cfg.Pivot.Enabled is false (returns "", nil).
 //
 // Caller is responsible for `os.Remove(kubeconfigPath)` once the pivot
 // is done; we don't hold the temp file ourselves so subsequent steps
@@ -39,7 +39,7 @@ import (
 // cfg.MgmtControlPlane*, cfg.ClusterctlCfg (set by the kind init phase),
 // cfg.KindClusterName (kubeconfig context lookup).
 func EnsureManagementCluster(cfg *config.Config) (string, error) {
-	if !cfg.PivotEnabled {
+	if !cfg.Pivot.Enabled {
 		return "", nil
 	}
 
@@ -142,7 +142,7 @@ func EnsureManagementCluster(cfg *config.Config) (string, error) {
 // Returns nil on parity, otherwise the first failure encountered after
 // the timeout.
 func VerifyParity(cfg *config.Config, mgmtKubeconfig string) error {
-	if !cfg.PivotEnabled {
+	if !cfg.Pivot.Enabled {
 		return nil
 	}
 	if mgmtKubeconfig == "" {
@@ -152,7 +152,7 @@ func VerifyParity(cfg *config.Config, mgmtKubeconfig string) error {
 	if err != nil {
 		return fmt.Errorf("load mgmt kubeconfig: %w", err)
 	}
-	timeout := parseDuration(cfg.PivotVerifyTimeout, 10*time.Minute)
+	timeout := parseDuration(cfg.Pivot.VerifyTimeout, 10*time.Minute)
 	deadline := time.Now().Add(timeout)
 
 	expectedSecrets := []string{
@@ -250,13 +250,13 @@ func VerifyParity(cfg *config.Config, mgmtKubeconfig string) error {
 }
 
 // TeardownKind deletes the kind cluster after a successful pivot. Honors
-// cfg.PivotKeepKind and cfg.NoDeleteKind — when either is set the
+// cfg.Pivot.KeepKind and cfg.NoDeleteKind — when either is set the
 // function logs and returns without doing anything.
 func TeardownKind(cfg *config.Config) error {
-	if !cfg.PivotEnabled {
+	if !cfg.Pivot.Enabled {
 		return nil
 	}
-	if cfg.PivotKeepKind {
+	if cfg.Pivot.KeepKind {
 		logx.Log("PivotKeepKind=true; leaving kind cluster %s alive.", cfg.KindClusterName)
 		return nil
 	}

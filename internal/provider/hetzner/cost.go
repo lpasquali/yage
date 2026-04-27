@@ -112,7 +112,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	}
 
 	// Optional management cluster (pivot retains it).
-	if cfg.PivotEnabled {
+	if cfg.Pivot.Enabled {
 		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mgmtType := "cx23"
 		mgmtPrice, err := liveServerMonthly(mgmtType, region)
@@ -143,7 +143,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 	tierLabel := orDefault(cfg.Providers.Hetzner.OverheadTier, "prod")
 	totalServers := cp + wk
-	if cfg.PivotEnabled {
+	if cfg.Pivot.Enabled {
 		totalServers += atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 	}
 	note := fmt.Sprintf(

@@ -56,16 +56,16 @@ func (c *Config) ReapplyWorkloadGitDefaults() {
 		return
 	}
 	base := os.Getenv("WORKLOAD_ARGO_GIT_BASE_URL_DEFAULT")
-	if c.WorkloadAppOfAppsGitURL == "" && base != "" {
-		c.WorkloadAppOfAppsGitURL = base + "/workload-app-of-apps"
+	if c.ArgoCD.AppOfAppsGitURL == "" && base != "" {
+		c.ArgoCD.AppOfAppsGitURL = base + "/workload-app-of-apps"
 	}
 	ex := os.Getenv("WORKLOAD_GIT_EXAMPLES_EXAMPLE")
-	if c.WorkloadAppOfAppsGitPath == "" && ex != "" {
-		c.WorkloadAppOfAppsGitPath = "examples/" + ex
+	if c.ArgoCD.AppOfAppsGitPath == "" && ex != "" {
+		c.ArgoCD.AppOfAppsGitPath = "examples/" + ex
 	}
 	defRef := os.Getenv("WORKLOAD_GIT_EXAMPLES_EXAMPLE_DEFAULT_REF")
-	if c.WorkloadAppOfAppsGitRef == "" && defRef != "" {
-		c.WorkloadAppOfAppsGitRef = defRef
+	if c.ArgoCD.AppOfAppsGitRef == "" && defRef != "" {
+		c.ArgoCD.AppOfAppsGitRef = defRef
 	}
 }
 

@@ -73,8 +73,8 @@ func TestK3sOverflowAlsoFails(t *testing.T) {
 // 666 mCPU / 1365 MiB.
 func TestAllocationsThirdsAfterReserve(t *testing.T) {
 	cfg := defaultishCfg()
-	cfg.SystemAppsCPUMillicores = 2000
-	cfg.SystemAppsMemoryMiB = 4096
+	cfg.Capacity.SystemAppsCPUMillicores = 2000
+	cfg.Capacity.SystemAppsMemoryMiB = 4096
 	a := AllocationsFor(cfg)
 	if a.TotalCPUMillicores != 4000 || a.TotalMemoryMiB != 8192 {
 		t.Fatalf("total wrong: %+v", a)
@@ -98,8 +98,8 @@ func TestAllocationsThirdsAfterReserve(t *testing.T) {
 func TestAllocationsOverReserved(t *testing.T) {
 	cfg := defaultishCfg()
 	cfg.WorkerMachineCount = "1"
-	cfg.SystemAppsCPUMillicores = 8000 // way more than 1 worker provides
-	cfg.SystemAppsMemoryMiB = 16384
+	cfg.Capacity.SystemAppsCPUMillicores = 8000 // way more than 1 worker provides
+	cfg.Capacity.SystemAppsMemoryMiB = 16384
 	a := AllocationsFor(cfg)
 	if !a.IsOverReserved() {
 		t.Fatalf("should be over-reserved: %+v", a)
@@ -110,7 +110,7 @@ func TestAllocationsOverReserved(t *testing.T) {
 // is enabled.
 func TestPivotAddsMgmt(t *testing.T) {
 	cfg := defaultishCfg()
-	cfg.PivotEnabled = true
+	cfg.Pivot.Enabled = true
 	cfg.Mgmt.ControlPlaneMachineCount = "1"
 	cfg.Mgmt.WorkerMachineCount = "0"
 	p := PlanForK3s(cfg)

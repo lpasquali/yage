@@ -17,7 +17,7 @@ func TestSnapshotRoundtrip(t *testing.T) {
 	src.WorkloadClusterName = "edge-1"
 	src.NodeIPRanges = "10.0.0.10-10.0.0.20"
 	src.Gateway = "10.0.0.1"
-	src.ArgoCDEnabled = false
+	src.ArgoCD.Enabled = false
 	src.KyvernoEnabled = false
 	src.VMSSHKeys = "ssh-ed25519 AAAA…"
 
@@ -56,8 +56,8 @@ func TestSnapshotRoundtrip(t *testing.T) {
 	if dst.NodeIPRanges != "10.0.0.10-10.0.0.20" {
 		t.Errorf("NodeIPRanges not restored: got %q", dst.NodeIPRanges)
 	}
-	if dst.ArgoCDEnabled {
-		t.Errorf("ArgoCDEnabled should be false after roundtrip")
+	if dst.ArgoCD.Enabled {
+		t.Errorf("ArgoCD.Enabled should be false after roundtrip")
 	}
 	if dst.KyvernoEnabled {
 		t.Errorf("KyvernoEnabled should be false after roundtrip")

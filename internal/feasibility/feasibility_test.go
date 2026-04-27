@@ -192,8 +192,10 @@ func TestCheck_FreeTierCliff(t *testing.T) {
 func TestCheck_OnPrem(t *testing.T) {
 	setupAirgap(t)
 	cfg := &config.Config{
-		ResourceBudgetFraction: 0.66,
-		OvercommitTolerancePct: 15.0,
+		Capacity: config.CapacityConfig{
+			ResourceBudgetFraction: 0.66,
+			OvercommitTolerancePct: 15.0,
+		},
 		HardwareCostUSD:        12000,
 		HardwareUsefulLifeYears: 5,
 		HardwareWatts:          400,

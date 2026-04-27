@@ -246,12 +246,12 @@ func (r *renderer) workload(cfg *config.Config) {
 func (r *renderer) pivot(cfg *config.Config) {
 	// --pivot is the new default; emit --no-pivot only when the
 	// operator explicitly opted out.
-	if !cfg.PivotEnabled {
+	if !cfg.Pivot.Enabled {
 		r.lines = append(r.lines, "    --no-pivot")
 	}
-	r.flagBool("--pivot-keep-kind", cfg.PivotKeepKind)
-	r.flagBool("--pivot-dry-run", cfg.PivotDryRun)
-	r.flagBool("--stop-before-workload", cfg.StopBeforeWorkload)
+	r.flagBool("--pivot-keep-kind", cfg.Pivot.KeepKind)
+	r.flagBool("--pivot-dry-run", cfg.Pivot.DryRun)
+	r.flagBool("--stop-before-workload", cfg.Pivot.StopBeforeWorkload)
 }
 
 func (r *renderer) airgap(cfg *config.Config) {

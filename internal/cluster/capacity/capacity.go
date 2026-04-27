@@ -144,7 +144,7 @@ func PlanFor(cfg *config.Config) Plan {
 	add("workload worker", wwk,
 		cfg.Providers.Proxmox.WorkerNumSockets, cfg.Providers.Proxmox.WorkerNumCores,
 		cfg.Providers.Proxmox.WorkerMemoryMiB, cfg.Providers.Proxmox.WorkerBootVolumeSize)
-	if cfg.PivotEnabled {
+	if cfg.Pivot.Enabled {
 		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mwk := atoiOr(cfg.Mgmt.WorkerMachineCount, 0)
 		add("mgmt control-plane", mcp,
@@ -183,7 +183,7 @@ func PlanForK3s(cfg *config.Config) Plan {
 	wwk := atoiOr(cfg.WorkerMachineCount, 0)
 	add("workload control-plane (k3s)", wcp, K3sCPCores, K3sCPMemMiB, K3sCPDiskGB)
 	add("workload worker (k3s)", wwk, K3sCPCores, K3sWorkerMem, K3sWorkerDisk)
-	if cfg.PivotEnabled {
+	if cfg.Pivot.Enabled {
 		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mwk := atoiOr(cfg.Mgmt.WorkerMachineCount, 0)
 		add("mgmt control-plane (k3s)", mcp, K3sCPCores, K3sCPMemMiB, K3sCPDiskGB)

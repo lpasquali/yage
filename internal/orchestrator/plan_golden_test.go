@@ -110,20 +110,20 @@ func baseCfg() *config.Config {
 	c.ClusterctlVersion = "v1.8.5"
 	c.CiliumCLIVersion = "v0.16.20"
 	c.CiliumVersion = "1.16.5"
-	c.ArgoCDVersion = "v2.13.2"
-	c.ArgoCDOperatorVersion = "v0.12.2"
+	c.ArgoCD.Version = "v2.13.2"
+	c.ArgoCD.OperatorVersion = "v0.12.2"
 	c.KyvernoCLIVersion = "v1.13.2"
 	c.CmctlVersion = "v2.1.1"
 	c.OpenTofuVersion = "1.8.5"
 	c.CAPMOXVersion = "v0.7.0"
 
 	// ArgoCD on workload — defaults.
-	c.ArgoCDEnabled = true
-	c.WorkloadArgoCDEnabled = true
-	c.WorkloadArgoCDNamespace = "argocd"
-	c.WorkloadAppOfAppsGitURL = "https://github.com/example/app-of-apps"
-	c.WorkloadAppOfAppsGitPath = "apps"
-	c.WorkloadAppOfAppsGitRef = "main"
+	c.ArgoCD.Enabled = true
+	c.ArgoCD.WorkloadEnabled = true
+	c.ArgoCD.WorkloadNamespace = "argocd"
+	c.ArgoCD.AppOfAppsGitURL = "https://github.com/example/app-of-apps"
+	c.ArgoCD.AppOfAppsGitPath = "apps"
+	c.ArgoCD.AppOfAppsGitRef = "main"
 
 	// Cilium — fixed strings so the workload-section bullet is stable.
 	c.CiliumKubeProxyReplacement = "true"
@@ -133,14 +133,14 @@ func baseCfg() *config.Config {
 	c.CiliumGatewayAPIEnabled = "false"
 
 	// Capacity / allocation knobs (deterministic numbers).
-	c.ResourceBudgetFraction = 0.75
-	c.OvercommitTolerancePct = 100
-	c.SystemAppsCPUMillicores = 2000
-	c.SystemAppsMemoryMiB = 4096
+	c.Capacity.ResourceBudgetFraction = 0.75
+	c.Capacity.OvercommitTolerancePct = 100
+	c.Capacity.SystemAppsCPUMillicores = 2000
+	c.Capacity.SystemAppsMemoryMiB = 4096
 
 	// Pivot defaults (off; proxmox-pivot scenario flips this).
-	c.PivotEnabled = false
-	c.PivotVerifyTimeout = "5m"
+	c.Pivot.Enabled = false
+	c.Pivot.VerifyTimeout = "5m"
 
 	return c
 }
@@ -340,7 +340,7 @@ func TestPlanGolden_AWSEKS(t *testing.T) {
 func TestPlanGolden_ProxmoxPivot(t *testing.T) {
 	hermeticEnv(t)
 	cfg := proxmoxCfg()
-	cfg.PivotEnabled = true
+	cfg.Pivot.Enabled = true
 
 	c := &cfg.Mgmt
 	c.ClusterName = "yage-mgmt"

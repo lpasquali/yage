@@ -209,7 +209,7 @@ func (p *Provider) AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bo
 // is unset, return ErrNotApplicable so the orchestrator falls
 // through to keeping kind as the mgmt cluster.
 func (p *Provider) PivotTarget(cfg *config.Config) (provider.PivotTarget, error) {
-	if !cfg.PivotEnabled {
+	if !cfg.Pivot.Enabled {
 		return provider.PivotTarget{}, provider.ErrNotApplicable
 	}
 	if cfg.MgmtKubeconfigPath == "" {

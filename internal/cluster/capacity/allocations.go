@@ -47,7 +47,7 @@ type WorkloadAllocations struct {
 
 // AllocationsFor computes the workload-cluster-side allocation plan.
 // Worker machine count drives the total; system reserve is taken from
-// cfg.SystemAppsCPUMillicores / SystemAppsMemoryMiB; remainder splits
+// cfg.Capacity.SystemAppsCPUMillicores / SystemAppsMemoryMiB; remainder splits
 // into thirds.
 //
 // Negative remainders indicate over-reserve: the system-apps bucket
@@ -62,8 +62,8 @@ func AllocationsFor(cfg *config.Config) WorkloadAllocations {
 	totalCPU := cpuPer * workers
 	totalMem := memPer * int64(workers)
 
-	sysCPU := cfg.SystemAppsCPUMillicores
-	sysMem := cfg.SystemAppsMemoryMiB
+	sysCPU := cfg.Capacity.SystemAppsCPUMillicores
+	sysMem := cfg.Capacity.SystemAppsMemoryMiB
 	if sysCPU == 0 {
 		sysCPU = 2000
 	}

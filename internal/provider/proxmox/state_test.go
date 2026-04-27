@@ -16,7 +16,7 @@ import (
 func TestPivotTarget_Disabled(t *testing.T) {
 	p := &Provider{}
 	cfg := &config.Config{}
-	cfg.PivotEnabled = false
+	cfg.Pivot.Enabled = false
 	_, err := p.PivotTarget(cfg)
 	if !errors.Is(err, provider.ErrNotApplicable) {
 		t.Fatalf("got err=%v, want ErrNotApplicable", err)
@@ -29,7 +29,7 @@ func TestPivotTarget_Disabled(t *testing.T) {
 func TestPivotTarget_MissingKubeconfig(t *testing.T) {
 	p := &Provider{}
 	cfg := &config.Config{}
-	cfg.PivotEnabled = true
+	cfg.Pivot.Enabled = true
 	_, err := p.PivotTarget(cfg)
 	if err == nil {
 		t.Fatal("expected error when MgmtKubeconfigPath is empty")
@@ -44,7 +44,7 @@ func TestPivotTarget_MissingKubeconfig(t *testing.T) {
 func TestPivotTarget_Ready(t *testing.T) {
 	p := &Provider{}
 	cfg := &config.Config{}
-	cfg.PivotEnabled = true
+	cfg.Pivot.Enabled = true
 	cfg.MgmtKubeconfigPath = "/tmp/mgmt.kubeconfig"
 	target, err := p.PivotTarget(cfg)
 	if err != nil {

@@ -140,15 +140,15 @@ func Parse(c *config.Config, argv []string) {
 		case "--memory-adjustment":
 			c.Providers.Proxmox.MemoryAdjustment = shiftVal(a)
 		case "--disable-argocd":
-			c.ArgoCDEnabled = false
+			c.ArgoCD.Enabled = false
 		case "--disable-workload-argocd":
-			c.WorkloadArgoCDEnabled = false
+			c.ArgoCD.WorkloadEnabled = false
 		case "--argocd-version":
 			logx.Die("--argocd-version was removed; use --argocd-app-version for Argo CD image / ArgoCD CR spec.version (ARGOCD_VERSION).")
 		case "--argocd-app-version":
-			c.ArgoCDVersion = shiftVal(a)
+			c.ArgoCD.Version = shiftVal(a)
 		case "--argocd-server-insecure":
-			c.ArgoCDServerInsecure = shiftVal(a)
+			c.ArgoCD.ServerInsecure = shiftVal(a)
 		case "--workload-gitops-mode":
 			v := shiftVal(a)
 			if v != "caaph" {
@@ -156,34 +156,34 @@ func Parse(c *config.Config, argv []string) {
 			}
 			c.WorkloadGitopsMode = "caaph"
 		case "--workload-app-of-apps-git-url":
-			c.WorkloadAppOfAppsGitURL = shiftVal(a)
+			c.ArgoCD.AppOfAppsGitURL = shiftVal(a)
 		case "--workload-app-of-apps-git-path":
-			c.WorkloadAppOfAppsGitPath = shiftVal(a)
+			c.ArgoCD.AppOfAppsGitPath = shiftVal(a)
 		case "--workload-app-of-apps-git-ref":
-			c.WorkloadAppOfAppsGitRef = shiftVal(a)
+			c.ArgoCD.AppOfAppsGitRef = shiftVal(a)
 		case "--argocd-print-access", "--argocd-print-access-only":
-			c.ArgoCDPrintAccessStandalone = true
+			c.ArgoCD.PrintAccessStandalone = true
 			if v, ok := optPositional(); ok {
 				switch v {
 				case "workload":
-					c.ArgoCDPrintAccessTarget = "workload"
+					c.ArgoCD.PrintAccessTarget = "workload"
 				case "kind", "both":
 					logx.Warn("Argo CD on the management (kind) cluster is not used by this script — use workload only.")
-					c.ArgoCDPrintAccessTarget = "workload"
+					c.ArgoCD.PrintAccessTarget = "workload"
 				}
 			}
 		case "--argocd-port-forward", "--argocd-port-forward-only":
-			c.ArgoCDPortForwardStandalone = true
+			c.ArgoCD.PortForwardStandalone = true
 			if v, ok := optPositional(); ok {
 				switch v {
 				case "workload":
-					c.ArgoCDPortForwardTarget = "workload"
-					if c.ArgoCDPrintAccessTarget == "" {
-						c.ArgoCDPrintAccessTarget = "workload"
+					c.ArgoCD.PortForwardTarget = "workload"
+					if c.ArgoCD.PrintAccessTarget == "" {
+						c.ArgoCD.PrintAccessTarget = "workload"
 					}
 				case "kind", "both":
 					logx.Warn("Port-forward targets the provisioned cluster only (workload) — not kind.")
-					c.ArgoCDPortForwardTarget = "workload"
+					c.ArgoCD.PortForwardTarget = "workload"
 				}
 			}
 		case "--workload-rollout":
@@ -215,13 +215,13 @@ func Parse(c *config.Config, argv []string) {
 		case "--disable-proxmox-csi-smoketest":
 			c.Providers.Proxmox.CSISmokeEnabled = false
 		case "--disable-argocd-workload-postsync-hooks":
-			c.ArgoWorkloadPostsyncHooksEnabled = false
+			c.ArgoCD.PostsyncHooksEnabled = false
 		case "--argocd-workload-postsync-hooks-git-url":
-			c.ArgoWorkloadPostsyncHooksGitURL = shiftVal(a)
+			c.ArgoCD.PostsyncHooksGitURL = shiftVal(a)
 		case "--argocd-workload-postsync-hooks-git-path":
-			c.ArgoWorkloadPostsyncHooksGitPath = shiftVal(a)
+			c.ArgoCD.PostsyncHooksGitPath = shiftVal(a)
 		case "--argocd-workload-postsync-hooks-git-ref":
-			c.ArgoWorkloadPostsyncHooksGitRef = shiftVal(a)
+			c.ArgoCD.PostsyncHooksGitRef = shiftVal(a)
 		case "--disable-kyverno":
 			c.KyvernoEnabled = false
 		case "--kyverno-version":
@@ -306,17 +306,17 @@ func Parse(c *config.Config, argv []string) {
 		case "--worker-count":
 			c.WorkerMachineCount = shiftVal(a)
 		case "--pivot":
-			c.PivotEnabled = true
+			c.Pivot.Enabled = true
 		case "--no-pivot":
-			c.PivotEnabled = false
+			c.Pivot.Enabled = false
 		case "--pivot-keep-kind":
-			c.PivotKeepKind = true
+			c.Pivot.KeepKind = true
 		case "--pivot-dry-run":
-			c.PivotDryRun = true
+			c.Pivot.DryRun = true
 		case "--stop-before-workload":
 			// Exit after the pivot completes but before the workload
 			// manifest is applied. Integration-test escape hatch.
-			c.StopBeforeWorkload = true
+			c.Pivot.StopBeforeWorkload = true
 		case "--dry-run":
 			c.DryRun = true
 		case "--cost-compare":
@@ -441,10 +441,10 @@ func Parse(c *config.Config, argv []string) {
 			// §17 / §21.4.
 			c.NodeImage = strings.TrimSpace(shiftVal(a))
 		case "--allow-resource-overcommit":
-			c.AllowResourceOvercommit = true
+			c.Capacity.AllowOvercommit = true
 		case "--overcommit-tolerance-pct":
 			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil && f >= 0 {
-				c.OvercommitTolerancePct = f
+				c.Capacity.OvercommitTolerancePct = f
 			}
 		case "--hardware-cost-usd":
 			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil && f >= 0 {
@@ -468,11 +468,11 @@ func Parse(c *config.Config, argv []string) {
 			}
 		case "--system-apps-cpu-millicores":
 			if n, err := strconv.Atoi(shiftVal(a)); err == nil {
-				c.SystemAppsCPUMillicores = n
+				c.Capacity.SystemAppsCPUMillicores = n
 			}
 		case "--system-apps-memory-mib":
 			if n, err := strconv.ParseInt(shiftVal(a), 10, 64); err == nil {
-				c.SystemAppsMemoryMiB = n
+				c.Capacity.SystemAppsMemoryMiB = n
 			}
 		case "--bootstrap-mode":
 			c.BootstrapMode = strings.ToLower(shiftVal(a))
@@ -587,10 +587,10 @@ func Parse(c *config.Config, argv []string) {
 		case "--resource-budget-fraction":
 			v := shiftVal(a)
 			if f, err := strconv.ParseFloat(v, 64); err == nil {
-				c.ResourceBudgetFraction = f
+				c.Capacity.ResourceBudgetFraction = f
 			}
 		case "--pivot-verify-timeout":
-			c.PivotVerifyTimeout = shiftVal(a)
+			c.Pivot.VerifyTimeout = shiftVal(a)
 		case "--mgmt-cluster-name":
 			c.Mgmt.ClusterName = shiftVal(a)
 		case "--mgmt-cluster-namespace":
@@ -646,7 +646,7 @@ func Parse(c *config.Config, argv []string) {
 		case "--cilium-gateway-api":
 			c.CiliumGatewayAPIEnabled = shiftVal(a)
 		case "--argocd-disable-operator-ingress":
-			c.ArgoCDDisableOperatorManagedIngress = shiftVal(a)
+			c.ArgoCD.DisableOperatorManagedIngress = shiftVal(a)
 		case "--cilium-hubble":
 			c.CiliumHubble = shiftVal(a)
 		case "--cilium-hubble-ui":

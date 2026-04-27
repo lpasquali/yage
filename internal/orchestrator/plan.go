@@ -106,20 +106,20 @@ func planStandalone(w io.Writer, cfg *config.Config) {
 		section(w, "Standalone: --workload-rollout")
 		bullet(w, "mode=%s, workload=%s/%s", cfg.WorkloadRolloutMode, cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName)
 		fmt.Fprintln(w, "    (no other phases would run)")
-	case cfg.ArgoCDPrintAccessStandalone:
+	case cfg.ArgoCD.PrintAccessStandalone:
 		section(w, "Standalone: --argocd-print-access")
 		bullet(w, "print Argo CD access info for workload %s/%s", cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName)
 		fmt.Fprintln(w, "    (no other phases would run)")
-	case cfg.ArgoCDPortForwardStandalone:
+	case cfg.ArgoCD.PortForwardStandalone:
 		section(w, "Standalone: --argocd-port-forward")
-		bullet(w, "kubectl port-forward Argo CD on 127.0.0.1:%s", firstNonEmptyStr(cfg.ArgoCDPortForwardPort, "8443"))
+		bullet(w, "kubectl port-forward Argo CD on 127.0.0.1:%s", firstNonEmptyStr(cfg.ArgoCD.PortForwardPort, "8443"))
 		fmt.Fprintln(w, "    (no other phases would run)")
 	}
 }
 
 func planPrePhase(w io.Writer, cfg *config.Config) {
 	if cfg.BootstrapKindStateOp != "" || cfg.WorkloadRolloutStandalone ||
-		cfg.ArgoCDPrintAccessStandalone || cfg.ArgoCDPortForwardStandalone {
+		cfg.ArgoCD.PrintAccessStandalone || cfg.ArgoCD.PortForwardStandalone {
 		return
 	}
 	section(w, "Pre-phase")
@@ -142,7 +142,7 @@ func planPhase1(w io.Writer, cfg *config.Config) {
 		{"clusterctl", cfg.ClusterctlVersion},
 		{"cilium", cfg.CiliumCLIVersion},
 		{"helm", "latest"},
-		{"argocd", cfg.ArgoCDVersion},
+		{"argocd", cfg.ArgoCD.Version},
 		{"kyverno", cfg.KyvernoCLIVersion},
 		{"cmctl", cfg.CmctlVersion},
 		{"tofu", cfg.OpenTofuVersion},
@@ -223,15 +223,15 @@ func describePivot(pw plan.Writer, cfg *config.Config, prov provider.Provider, p
 
 func planPhase210ArgoCD(w io.Writer, cfg *config.Config) {
 	section(w, "Argo CD on workload")
-	if !cfg.ArgoCDEnabled {
+	if !cfg.ArgoCD.Enabled {
 		skip(w, "ARGOCD_ENABLED=false (--disable-argocd)")
 		return
 	}
-	bullet(w, "Argo CD Operator + ArgoCD CR (version %s, operator %s)", cfg.ArgoCDVersion, cfg.ArgoCDOperatorVersion)
-	if cfg.WorkloadArgoCDEnabled {
+	bullet(w, "Argo CD Operator + ArgoCD CR (version %s, operator %s)", cfg.ArgoCD.Version, cfg.ArgoCD.OperatorVersion)
+	if cfg.ArgoCD.WorkloadEnabled {
 		bullet(w, "CAAPH argocd-apps HelmChartProxy → root Application '%s'", cfg.WorkloadClusterName)
-		if cfg.WorkloadAppOfAppsGitURL != "" {
-			bullet(w, "  app-of-apps: %s @ %s, path %s", cfg.WorkloadAppOfAppsGitURL, cfg.WorkloadAppOfAppsGitRef, cfg.WorkloadAppOfAppsGitPath)
+		if cfg.ArgoCD.AppOfAppsGitURL != "" {
+			bullet(w, "  app-of-apps: %s @ %s, path %s", cfg.ArgoCD.AppOfAppsGitURL, cfg.ArgoCD.AppOfAppsGitRef, cfg.ArgoCD.AppOfAppsGitPath)
 		}
 	}
 }
@@ -239,9 +239,9 @@ func planPhase210ArgoCD(w io.Writer, cfg *config.Config) {
 func planFinal(w io.Writer, cfg *config.Config) {
 	section(w, "Final — kind teardown")
 	switch {
-	case !cfg.PivotEnabled:
+	case !cfg.Pivot.Enabled:
 		skip(w, "PIVOT_ENABLED=false (kind stays — it IS the management cluster)")
-	case cfg.PivotKeepKind:
+	case cfg.Pivot.KeepKind:
 		skip(w, "--pivot-keep-kind set")
 	case cfg.NoDeleteKind:
 		skip(w, "--no-delete-kind set")
@@ -257,7 +257,7 @@ func planFinal(w io.Writer, cfg *config.Config) {
 func planCapacity(w io.Writer, cfg *config.Config) {
 	section(w, "Capacity budget")
 	plan := capacity.PlanFor(cfg)
-	threshold := cfg.ResourceBudgetFraction
+	threshold := cfg.Capacity.ResourceBudgetFraction
 	if threshold <= 0 || threshold > 1 {
 		threshold = capacity.DefaultThreshold
 	}
@@ -314,7 +314,7 @@ func planCapacity(w io.Writer, cfg *config.Config) {
 		bullet(w, "  %s", n)
 	}
 
-	tolerancePct := cfg.OvercommitTolerancePct
+	tolerancePct := cfg.Capacity.OvercommitTolerancePct
 	if tolerancePct <= 0 {
 		tolerancePct = capacity.DefaultOvercommitTolerancePct
 	}

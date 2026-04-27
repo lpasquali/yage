@@ -73,7 +73,7 @@ func capdTargetingConfig(t *testing.T) *config.Config {
 		t.Fatalf("create temp mgmt kubeconfig: %v", err)
 	}
 	cfg := &config.Config{}
-	cfg.PivotEnabled = true
+	cfg.Pivot.Enabled = true
 	cfg.InfraProvider = "docker" // CAPD registers under "docker"
 	cfg.MgmtKubeconfigPath = mgmtKubeconfig
 	cfg.WorkloadClusterNamespace = "default"

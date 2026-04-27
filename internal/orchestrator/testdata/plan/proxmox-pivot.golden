@@ -3,7 +3,7 @@
 ────────────────────────────────────────────────────────────────────────────
 
 ▸ Pre-phase
-    • ClusterSetID = test-clusterset (identity suffix: test)
+    • ClusterSetID = test-clusterset
 
 ▸ Dependency install — host CLIs for the operator
     • system packages: git, curl, python3 (apt/dnf/yum/apk)
@@ -25,13 +25,14 @@
     • outputs piped into clusterctl + CSI configs
 
 ▸ clusterctl credentials
-    • synthesize ephemeral clusterctl config from Proxmox env (URL/TOKEN/SECRET)
+    • synthesize ephemeral clusterctl config from provider env vars
 
 ▸ kind cluster
     • create kind cluster 'capi-test' (config: <ephemeral default>)
 
 ▸ clusterctl init on kind
     • providers: infrastructure=proxmox, ipam=in-cluster, addon=helm
+    • infra provider image pinned/built if needed
     • CAPMOX image: v0.7.0 (build arm64 if needed)
 
 ▸ Workload Cluster — Proxmox
@@ -76,10 +77,10 @@
     ◦ skip: host-capacity query: no Proxmox credentials available (set --admin-username/--admin-token or --proxmox-token/--proxmox-secret) (run with valid provider creds for live numbers)
 
 ▸ Workload allocations (per-bucket budget on workers)
-    • total worker capacity:    8000 millicores, 16384 MiB (workers=2 × 1 sockets × 4 cores × 8192 MiB)
+    • total worker capacity:    8000 millicores, 16384 MiB (workers=2)
     • system-apps reserve:      2000 millicores, 4096 MiB
     •   ├─ argocd (operator + server + repo + redis), kyverno, cert-manager,
-    •   ├─ proxmox-csi (controller), keycloak (SSO), external-secrets, infisical
+    •   ├─ CSI controller (provider-specific), keycloak (SSO), external-secrets, infisical
     •   └─ tune via SYSTEM_APPS_CPU_MILLICORES / SYSTEM_APPS_MEMORY_MIB
     • remaining after reserve:  6000 millicores, 12288 MiB
     •   ├─ database:           2000 millicores, 4096 MiB  (cnpg, postgres, redis, …)

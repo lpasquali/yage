@@ -20,6 +20,9 @@ import (
 // piped back into clusterctl + CSI configs.
 func (p *Provider) DescribeIdentity(w provider.PlanWriter, cfg *config.Config) {
 	w.Section("Identity bootstrap — Proxmox (OpenTofu)")
+	if cfg.Providers.Proxmox.RecreateIdentities {
+		w.Bullet("RECREATE_PROXMOX_IDENTITIES: tear down + reapply CAPI/CSI identity Terraform")
+	}
 	if cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 		w.Bullet("interactive prompt (PROXMOX_ADMIN_USERNAME / PROXMOX_ADMIN_TOKEN unset)")
 	} else {
@@ -30,6 +33,22 @@ func (p *Provider) DescribeIdentity(w provider.PlanWriter, cfg *config.Config) {
 	w.Bullet("tofu apply: create CSI user '%s' + token prefix '%s'",
 		cfg.Providers.Proxmox.CSIUserID, cfg.Providers.Proxmox.CSITokenPrefix)
 	w.Bullet("outputs piped into clusterctl + CSI configs")
+}
+
+// DescribeClusterctlInit emits the Proxmox-specific bullet inside
+// the "clusterctl init on kind" section (the orchestrator has already
+// written the section header — only w.Bullet / w.Skip here).
+func (p *Provider) DescribeClusterctlInit(w provider.PlanWriter, cfg *config.Config) {
+	w.Bullet("CAPMOX image: %s (build arm64 if needed)", firstNonEmptyStr(cfg.CAPMOXVersion, "<resolve from CAPMOX_REPO>"))
+}
+
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // DescribeWorkload emits the Proxmox workload-cluster plan section:

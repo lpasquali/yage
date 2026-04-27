@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Project Board Backfill
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every day at 06:00 UTC — catches items created while project-sync.yml was not running.
+    - cron: "0 6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    uses: lpasquali/rune-ci/.github/workflows/project-backfill-logic.yml@144ef855dbf0420e5d9a8de2c8d8f89c2e789265
+    secrets:
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}

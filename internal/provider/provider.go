@@ -165,6 +165,16 @@ type Provider interface {
 	// come from the orchestrator and are NOT in this map.
 	TemplateVars(cfg *config.Config) map[string]string
 
+	// RenderMgmtManifest generates the CAPI manifest for the management
+	// cluster and applies all provider-specific patches (sizing, topology
+	// labels, template IDs). Returns the on-disk path of the rendered
+	// manifest. clusterctlCfgPath must be non-empty and point to an
+	// existing file (the same ephemeral config written by
+	// SyncClusterctlConfigFile). Returns ErrNotApplicable when the
+	// provider has no management-cluster bootstrap story (i.e. kind
+	// remains the permanent management cluster).
+	RenderMgmtManifest(cfg *config.Config, clusterctlCfgPath string) (string, error)
+
 	// Pivoter returns the destination kubeconfig + namespaces for
 	// the kind → managed-mgmt cluster move. Only providers that ship
 	// a working management-cluster bootstrap (Proxmox, plus anything

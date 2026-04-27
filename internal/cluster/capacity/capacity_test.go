@@ -106,6 +106,125 @@ func TestAllocationsOverReserved(t *testing.T) {
 	}
 }
 
+// TestCheckCombined covers the overcommit verdict trichotomy of
+// CheckCombined: VerdictFits / VerdictTight / VerdictAbort.
+//
+// Key constants (defaults):
+//   soft budget  = DefaultThreshold      = 2/3 ≈ 66.67 %
+//   hard ceiling = 1 + DefaultOvercommitTolerancePct/100 = 1.15 (115 %)
+//
+// The hard-abort ceiling applies to memory/disk ONLY — heavy CPU
+// overcommit produces VerdictTight, not VerdictAbort.
+func TestCheckCombined(t *testing.T) {
+	// host used by most cases: 8 cores / 8192 MiB / 200 GB
+	host8 := &HostCapacity{
+		Nodes:     []string{"pve"},
+		CPUCores:  8,
+		MemoryMiB: 8 * 1024, // 8 GiB
+		StorageGB: 200,
+	}
+
+	cases := []struct {
+		name        string
+		host        *HostCapacity
+		existing    *ExistingUsage
+		plan        Plan
+		wantVerdict Verdict
+	}{
+		{
+			// CPU at 300 % of host (24/8) — well above soft budget.
+			// Mem and disk within soft budget → memDiskMaxFrac ≤ 2/3 ≤ 1.15,
+			// so VerdictTight is returned, NOT VerdictAbort.
+			name: "cpu_heavily_overcommitted_tight_not_abort",
+			host: host8,
+			existing: &ExistingUsage{
+				CPUCores:  18,
+				MemoryMiB: 1024, // 12.5 % of host → well within soft
+				StorageGB: 10,   // 5 % of host
+			},
+			plan: Plan{
+				CPUCores:  6,
+				MemoryMiB: 1024, // combined 2048/8192 = 25 %
+				StorageGB: 10,   // combined 20/200 = 10 %
+			},
+			wantVerdict: VerdictTight,
+		},
+		{
+			// existing + planned memory exceeds hard ceiling (115 % of 8192 MiB
+			// = 9420.8 MiB). CPU within soft budget.
+			name: "memory_over_hard_ceiling_abort",
+			host: host8,
+			existing: &ExistingUsage{
+				CPUCores:  2,
+				MemoryMiB: 5120, // 62.5 % of host
+				StorageGB: 20,
+			},
+			plan: Plan{
+				CPUCores:  2,
+				MemoryMiB: 5120, // combined 10240 MiB = 125 % > 115 % ceiling
+				StorageGB: 20,   // combined 40/200 = 20 %
+			},
+			wantVerdict: VerdictAbort,
+		},
+		{
+			// existing + planned disk exceeds hard ceiling (115 % of 200 GB
+			// = 230 GB). CPU and memory within soft budget.
+			name: "disk_over_hard_ceiling_abort",
+			host: host8,
+			existing: &ExistingUsage{
+				CPUCores:  2,
+				MemoryMiB: 1024, // 12.5 %
+				StorageGB: 120,  // 60 %
+			},
+			plan: Plan{
+				CPUCores:  2,
+				MemoryMiB: 1024, // combined 2048/8192 = 25 %
+				StorageGB: 120,  // combined 240/200 = 120 % > 115 % ceiling
+			},
+			wantVerdict: VerdictAbort,
+		},
+		{
+			// All resources comfortably within soft budget (2/3).
+			// existing is nil — exercises the nil-existing code path.
+			name: "all_within_soft_budget_fits",
+			host: host8,
+			existing: nil,
+			plan: Plan{
+				CPUCores:  4,    // 50 % of 8 cores
+				MemoryMiB: 4096, // 50 % of 8192 MiB
+				StorageGB: 80,   // 40 % of 200 GB
+			},
+			wantVerdict: VerdictFits,
+		},
+		{
+			// CPU slightly over soft threshold (75 %) but mem/disk well within
+			// hard ceiling → VerdictTight.
+			name: "cpu_over_soft_mem_disk_within_ceiling_tight",
+			host: host8,
+			existing: &ExistingUsage{
+				CPUCores:  2,
+				MemoryMiB: 512,
+				StorageGB: 10,
+			},
+			plan: Plan{
+				CPUCores:  4,   // combined 6/8 = 75 % > 66.67 % soft
+				MemoryMiB: 512, // combined 1024/8192 ≈ 12.5 %
+				StorageGB: 10,  // combined 20/200 = 10 %
+			},
+			wantVerdict: VerdictTight,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			verdict, msg := CheckCombined(tc.plan, tc.host, tc.existing, 0, 0)
+			if verdict != tc.wantVerdict {
+				t.Errorf("got %s, want %s — %s", verdict, tc.wantVerdict, msg)
+			}
+		})
+	}
+}
+
 // TestPivotAddsMgmt — k3s plan includes mgmt cluster only when pivot
 // is enabled.
 func TestPivotAddsMgmt(t *testing.T) {

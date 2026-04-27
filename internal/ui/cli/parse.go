@@ -47,6 +47,10 @@ func Parse(c *config.Config, argv []string) {
 		}
 
 		switch a {
+		case "--config":
+			// Already consumed by config.ConfigFilePath before Parse runs.
+			// Consume the argument so it isn't treated as an unknown flag.
+			c.ConfigFile = shiftVal(a)
 		case "-b", "--build-all":
 			c.BuildAll = true
 		case "-f", "--force":

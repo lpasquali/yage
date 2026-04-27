@@ -52,6 +52,14 @@ import (
 
 func main() {
 	cfg := config.Load()
+	// Apply YAML config file before CLI flags so CLI wins over everything.
+	if path := config.ConfigFilePath(os.Args[1:]); path != "" {
+		if err := config.ApplyYAMLFile(cfg, path); err != nil {
+			fmt.Fprintln(os.Stderr, "✗", err.Error())
+			os.Exit(1)
+		}
+		cfg.ConfigFile = path
+	}
 	cli.Parse(cfg, os.Args[1:])
 
 	// Airgap completion (§17 / §21.4): install the operator's CA

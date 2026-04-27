@@ -70,6 +70,13 @@ func (MinStub) TemplateVars(cfg *config.Config) map[string]string {
 	return nil
 }
 
+// RenderMgmtManifest default: ErrNotApplicable. Providers without a
+// management-cluster bootstrap story (i.e. kind stays as permanent
+// management cluster) return this; the orchestrator skips the phase.
+func (MinStub) RenderMgmtManifest(cfg *config.Config, clusterctlCfgPath string) (string, error) {
+	return "", ErrNotApplicable
+}
+
 // PivotTarget default: ErrNotApplicable. Most providers don't yet
 // have a managed mgmt-cluster bootstrap story; only Proxmox
 // returns a real target today.

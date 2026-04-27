@@ -1054,6 +1054,12 @@ type Config struct {
 	ControlPlaneMachineCount          string
 	WorkerMachineCount              string
 
+	// ---- Observability ----
+	// TraceEndpoint is the gRPC endpoint for OTEL span export (e.g.
+	// "localhost:4317"). When empty the global tracer is the zero-overhead
+	// NoopTracer. Set via --trace-endpoint or YAGE_TRACE_ENDPOINT.
+	TraceEndpoint string
+
 }
 
 // Load reads environment variables and applies defaults to produce a
@@ -1135,6 +1141,7 @@ func Load() *Config {
 	c.InternalCABundle = strings.TrimSpace(getenv("YAGE_INTERNAL_CA_BUNDLE", ""))
 	c.HelmRepoMirror = strings.TrimRight(strings.TrimSpace(getenv("YAGE_HELM_REPO_MIRROR", "")), "/")
 	c.NodeImage = strings.TrimSpace(getenv("YAGE_NODE_IMAGE", ""))
+	c.TraceEndpoint = getenv("YAGE_TRACE_ENDPOINT", "")
 
 	// CSI add-on selection (§20 / Phase F). YAGE_CSI_DRIVERS is a
 	// comma-separated list of driver names — empty values get

@@ -272,6 +272,7 @@ func (r *renderer) airgap(cfg *config.Config) {
 	r.flag("--internal-ca-bundle", cfg.InternalCABundle)
 	r.flag("--helm-repo-mirror", cfg.HelmRepoMirror)
 	r.flag("--node-image", cfg.NodeImage)
+	r.flag("--trace-endpoint", cfg.TraceEndpoint)
 }
 
 func (r *renderer) proxmox(cfg *config.Config) {

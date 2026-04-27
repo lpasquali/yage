@@ -48,6 +48,21 @@ func (s *state) runOnPremFork() int {
 	if err := s.step5_5_onprem_tco(); err != nil {
 		return s.exit(err)
 	}
+	// Provider-specific credential + network steps.
+	// Proxmox gets a structured flow; other on-prem providers use
+	// the generic reflection walk.
+	if s.cfg.InfraProvider == "proxmox" {
+		if err := s.step6_proxmox(); err != nil {
+			return s.exit(err)
+		}
+		if err := s.step6_5_proxmox_network(); err != nil {
+			return s.exit(err)
+		}
+		if err := s.step7_review(); err != nil {
+			return s.exit(err)
+		}
+		return s.exit(s.step8_persistAndDecide())
+	}
 	if err := s.runSharedTail(); err != nil {
 		return s.exit(err)
 	}

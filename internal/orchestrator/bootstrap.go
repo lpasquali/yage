@@ -30,6 +30,7 @@ import (
 	"github.com/lpasquali/yage/internal/cluster/kind"
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/platform/kubectl"
+	"github.com/lpasquali/yage/internal/obs"
 	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/platform/opentofux"
 	"github.com/lpasquali/yage/internal/capi/pivot"
@@ -42,7 +43,7 @@ import (
 )
 
 // Run executes the top-level bootstrap flow. Returns an exit code.
-func Run(cfg *config.Config) int {
+func Run(ctx context.Context, cfg *config.Config) int {
 	// Apply the KIND_CLUSTER_NAME default.
 	if cfg.KindClusterName == "" {
 		if cfg.ClusterName != "" {
@@ -265,7 +266,7 @@ func Run(cfg *config.Config) int {
 	// =========================================================================
 	// Dependency install phase
 	// =========================================================================
-	logx.Log("Installing all dependencies...")
+	ctx, phDeps := obs.StartPhase(ctx, "dependency-install")
 
 	if err := installer.SystemDependencies(); err != nil {
 		logx.Die("ensure_system_dependencies failed: %v", err)
@@ -371,14 +372,16 @@ func Run(cfg *config.Config) int {
 	}
 
 	EnsureKindConfig(cfg)
-	logx.Log("Dependency install complete: all dependencies installed.")
+	phDeps.End()
 
 	// =========================================================================
 	// Bootstrap phase
 	// =========================================================================
-	logx.Log("Running orchestrator...")
 
 	// --- Proxmox identity bootstrap ---
+	ctx, phIdentity := obs.StartPhase(ctx, "identity-bootstrap",
+		obs.Str("provider", cfg.InfraProvider),
+	)
 	recreateOpenTofuDone := false
 	phase0IdentityBootstrap := false
 	if cfg.InfraProvider == "proxmox" {
@@ -470,6 +473,7 @@ func Run(cfg *config.Config) int {
 			logx.Die("%v", err)
 		}
 	}
+	phIdentity.End()
 
 	var clusterctlCfgPath string
 	if cfg.InfraProvider == "proxmox" {
@@ -563,8 +567,10 @@ func Run(cfg *config.Config) int {
 	}
 
 	// --- Check for existing kind clusters ---
+	ctx, phKind := obs.StartPhase(ctx, "kind-cluster",
+		obs.Str("cluster", cfg.KindClusterName),
+	)
 	kindClusterReused := false
-	logx.Log("Checking for existing kind clusters...")
 	{
 		out, _, _ := shell.Capture("kind", "get", "clusters")
 		kindExists := false
@@ -653,6 +659,8 @@ func Run(cfg *config.Config) int {
 		}
 	}
 
+	phKind.End()
+
 	// Load arm64 images or build them when the registry doesn't have arm64.
 	if kindClusterReused {
 		logx.Log("Reusing existing kind cluster — skipping arm64 image checks and kind-load (images already present from previous bootstrap).")
@@ -679,7 +687,10 @@ func Run(cfg *config.Config) int {
 	// --- Initialize Cluster API ---
 	InstallMetricsServerOnKindManagement(cfg)
 
-	logx.Log("Initializing Cluster API (infrastructure=%s, ipam=%s, addon=helm)...", cfg.InfraProvider, cfg.IPAMProvider)
+	ctx, phClusterctl := obs.StartPhase(ctx, "clusterctl-init",
+		obs.Str("provider", cfg.InfraProvider),
+		obs.Str("ipam", cfg.IPAMProvider),
+	)
 	clusterctlCfgPath = SyncClusterctlConfigFile(cfg)
 	initArgs := []string{"clusterctl", "init"}
 	if clusterctlCfgPath != "" {
@@ -724,8 +735,7 @@ func Run(cfg *config.Config) int {
 	if mgmtErr != nil {
 		logx.Die("kube client for current context: %v", mgmtErr)
 	}
-	bgInit := context.Background()
-	if dl, err := mgmtCli.Typed.AppsV1().Deployments("caaph-system").List(bgInit, metav1.ListOptions{}); err == nil && dl != nil {
+	if dl, err := mgmtCli.Typed.AppsV1().Deployments("caaph-system").List(ctx, metav1.ListOptions{}); err == nil && dl != nil {
 		for _, d := range dl.Items {
 			_ = waitDeploymentReady(mgmtCli, "caaph-system", d.Name, 300*time.Second)
 		}
@@ -751,18 +761,24 @@ func Run(cfg *config.Config) int {
 	kubectl.WaitForServiceEndpoint("capi-kubeadm-control-plane-system", "capi-kubeadm-control-plane-webhook-service", 300*time.Second)
 
 	waitInfraProviderAfterClusterctlInit(cfg, mgmtCli)
+	phClusterctl.End()
 
 	// --- Capacity check: confirm the planned clusters fit inside
 	// cfg.Capacity.ResourceBudgetFraction (default 0.75) of the available
 	// Proxmox host CPU/memory/storage. Aborts before any VM is created.
+	ctx, phCapacity := obs.StartPhase(ctx, "capacity-preflight")
 	if err := preflightCapacity(cfg); err != nil {
 		logx.Die("%v", err)
 	}
+	phCapacity.End()
 
 	// --- Pre-create Proxmox pools (organizational + ACL grouping).
 	// CAPMOX rejects a pool reference that doesn't exist, so we
 	// create the workload pool here and (when --pivot is enabled) the
 	// mgmt pool too. Idempotent: existing pools are silently kept.
+	ctx, phGroup := obs.StartPhase(ctx, "group-ensure",
+		obs.Str("provider", cfg.InfraProvider),
+	)
 	if cfg.InfraProvider == "proxmox" && cfg.Providers.Proxmox.Pool != "" {
 		if err := api.EnsurePool(cfg, cfg.Providers.Proxmox.Pool); err != nil {
 			logx.Warn("Proxmox pool %s: %v — VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Pool, err)
@@ -777,6 +793,7 @@ func Run(cfg *config.Config) int {
 			logx.Log("Proxmox pool '%s' ensured (management).", cfg.Providers.Proxmox.Mgmt.Pool)
 		}
 	}
+	phGroup.End()
 
 	// --- Pivot ---
 	// CAPI bootstrap-and-pivot pattern. With PivotEnabled (the
@@ -800,12 +817,11 @@ func Run(cfg *config.Config) int {
 			}
 		}
 	}
+	ctx, phPivot := obs.StartPhase(ctx, "pivot",
+		obs.Str("provider", cfg.InfraProvider),
+		obs.Bool("enabled", cfg.Pivot.Enabled),
+	)
 	if cfg.Pivot.Enabled {
-		if cfg.Pivot.DryRun {
-			logx.Log("Pivot phase: PIVOT DRY-RUN — provisioning mgmt cluster + clusterctl-init, then `clusterctl move --dry-run`. Workload stays on kind; no state moves.")
-		} else {
-			logx.Log("Pivot phase: pivoting CAPI from kind → Proxmox-hosted management cluster...")
-		}
 		mgmtKubeconfig, err := pivot.EnsureManagementCluster(cfg)
 		if err != nil {
 			logx.Die("pivot: EnsureManagementCluster: %v", err)
@@ -826,6 +842,7 @@ func Run(cfg *config.Config) int {
 			logx.Log("  KUBECONFIG=%s kubectl -n capi-system get pods", mgmtKubeconfig)
 			logx.Log("Re-run without --pivot-dry-run to perform the real move + handoff + kind teardown.")
 			logx.Log("(kind cluster '%s' has been left intact; workload is still managed by it.)", cfg.KindClusterName)
+			phPivot.End()
 			return 0
 		}
 		copied, err := kindsync.HandOffBootstrapSecretsToManagement(cfg, "kind-"+cfg.KindClusterName, mgmtKubeconfig)
@@ -842,6 +859,7 @@ func Run(cfg *config.Config) int {
 		}
 		logx.Log("pivot: complete; subsequent phases will target the management cluster.")
 	}
+	phPivot.End()
 
 	// --- --stop-before-workload escape hatch ---
 	// Integration tests exit here: mgmt cluster is up on the provider,
@@ -858,6 +876,9 @@ func Run(cfg *config.Config) int {
 	}
 
 	// --- Apply workload cluster manifest ---
+	ctx, phManifest := obs.StartPhase(ctx, "workload-manifest-apply",
+		obs.Str("cluster", cfg.WorkloadClusterName),
+	)
 	MaybeInteractiveSelectWorkloadCluster(cfg)
 	capimanifest.TryFillWorkloadInputsFromManagement(cfg)
 	// Re-apply proxmox-bootstrap-config so snapshot keys beat live backfill.
@@ -899,6 +920,11 @@ func Run(cfg *config.Config) int {
 		time.Sleep(10 * time.Second)
 	}
 
+	phManifest.End()
+
+	ctx, phReadiness := obs.StartPhase(ctx, "workload-readiness",
+		obs.Str("cluster", cfg.WorkloadClusterName),
+	)
 	opentofux.RecreateIdentitiesWorkloadCSISecrets(cfg)
 	caaph.ApplyWorkloadCiliumHelmChartProxy(cfg)
 	WaitForWorkloadClusterReady(cfg)
@@ -937,8 +963,13 @@ func Run(cfg *config.Config) int {
 			return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
 		})
 	}
+	phReadiness.End()
 
 	// --- Argo CD on workload ---
+	ctx, phArgo := obs.StartPhase(ctx, "argocd-bootstrap",
+		obs.Bool("enabled", cfg.ArgoCD.Enabled),
+		obs.Bool("workload", cfg.ArgoCD.WorkloadEnabled),
+	)
 	if cfg.ArgoCD.Enabled {
 		logx.Log("Argo CD on the workload: Argo CD Operator + ArgoCD CR, then CAAPH argocd-apps (root Application name %s; see --workload-app-of-apps-git-*).", cfg.WorkloadClusterName)
 		if cfg.ArgoCD.WorkloadEnabled {
@@ -957,6 +988,7 @@ func Run(cfg *config.Config) int {
 	} else {
 		logx.Warn("Argo CD disabled (--disable-argocd) — skipping CAAPH workload Argo and app-of-apps.")
 	}
+	phArgo.End()
 
 	// --- Pivot teardown: delete the kind cluster after a successful pivot
 	// (skipped when --pivot-keep-kind / --no-delete-kind / pivot disabled).

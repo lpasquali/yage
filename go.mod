@@ -1,6 +1,6 @@
 module github.com/lpasquali/yage
 
-go 1.26.0
+go 1.26.2
 
 require (
 	github.com/charmbracelet/huh v1.0.0

@@ -852,6 +852,11 @@ type Config struct {
 	// explicitly. See §18.
 	InfraProviderDefaulted bool
 
+	// ConfigFile is the path to the optional YAML config file loaded via
+	// --config <path> or YAGE_CONFIG_FILE. Used for display / debug only
+	// after the file has already been applied via config.ApplyYAMLFile.
+	ConfigFile string
+
 	// ---- CAPI providers ----
 	InfraProvider      string
 	IPAMProvider       string

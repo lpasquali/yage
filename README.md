@@ -26,29 +26,13 @@ bin/yage --dry-run          # plan without applying
 
 ## Documentation
 
-Everything lives under [`docs/`](docs/):
-
-- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the Go
-  implementation, package-by-package.
-- **[providers.md](docs/providers.md)** — how to add a new CAPI
-  infrastructure provider behind the `Provider` interface.
-- **[capacity-preflight.md](docs/capacity-preflight.md)** — the
-  soft-budget + overcommit ceiling check that runs before
-  provisioning.
-- **[cost-and-pricing.md](docs/cost-and-pricing.md)** — monthly cost
-  estimation and cross-cloud cost comparison at planning time.
-- **[abstraction-plan.md](docs/abstraction-plan.md)** — design plan
-  for the multi-cloud provider abstraction: how Proxmox-specific
-  code is kept out of the orchestrator's hot path.
-- **[AGENT_SYSTEM_PROMPT.md](docs/AGENT_SYSTEM_PROMPT.md)** —
-  system prompt for AI assistants working on this codebase.
+Full documentation is in the **[yage Documentation Site](https://lpasquali.github.io/yage-docs/)**.
 
 ## Layout
 
 ```
 cmd/yage/         entry point (main.go)
 internal/         Go packages — orchestrator, providers, capacity, cost, pivot, …
-docs/             documentation (see above)
 Makefile          build / test / install
 ```
 

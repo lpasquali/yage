@@ -57,8 +57,9 @@ func GenerateUUIDv4() string {
 
 var nonIdentityRE = regexp.MustCompile(`[^a-z0-9]+`)
 
-// DeriveIdentitySuffix ports derive_proxmox_identity_suffix. Lowercases,
-// strips non-[a-z0-9] characters, truncates to 12. Dies if empty.
+// DeriveIdentitySuffix derives a 12-char Proxmox identity suffix from
+// the source ID: lowercases, strips non-[a-z0-9] characters, truncates
+// to 12. Dies if the result is empty.
 func DeriveIdentitySuffix(sourceID string) string {
 	lower := strings.ToLower(sourceID)
 	compact := nonIdentityRE.ReplaceAllString(lower, "")
@@ -71,7 +72,7 @@ func DeriveIdentitySuffix(sourceID string) string {
 	return compact
 }
 
-// UserIDWithSuffix ports proxmox_user_id_with_suffix. Supports both
+// UserIDWithSuffix builds a suffixed user ID. Supports both
 // "user@realm" and bare "user" bases.
 func UserIDWithSuffix(userBase, suffix string) string {
 	if i := strings.Index(userBase, "@"); i >= 0 {
@@ -82,29 +83,31 @@ func UserIDWithSuffix(userBase, suffix string) string {
 	return fmt.Sprintf("%s-%s", userBase, suffix)
 }
 
-// TokenName ports proxmox_token_name (uses the current IDENTITY_SUFFIX).
+// TokenName returns the Proxmox token name for the given prefix and
+// the current IDENTITY_SUFFIX.
 func TokenName(tokenPrefix, suffix string) string {
 	return fmt.Sprintf("%s-%s", tokenPrefix, suffix)
 }
 
-// TokenNameForSet ports proxmox_token_name_for_set (explicit set id).
+// TokenNameForSet returns the Proxmox token name for the given prefix
+// and explicit cluster-set id.
 func TokenNameForSet(tokenPrefix, setID string) string {
 	return fmt.Sprintf("%s-%s", tokenPrefix, setID)
 }
 
-// TokenID ports proxmox_token_id.
+// TokenID returns the full Proxmox token id ("<user>!<token-name>").
 func TokenID(userID, tokenPrefix, suffix string) string {
 	return fmt.Sprintf("%s!%s", userID, TokenName(tokenPrefix, suffix))
 }
 
-// TokenIDForSet ports proxmox_token_id_for_set.
+// TokenIDForSet returns the full Proxmox token id using an explicit
+// cluster-set id.
 func TokenIDForSet(userID, tokenPrefix, setID string) string {
 	return fmt.Sprintf("%s!%s", userID, TokenNameForSet(tokenPrefix, setID))
 }
 
-// RefreshDerivedIdentityUserIDs ports refresh_derived_identity_user_ids.
-// Fills empty PROXMOX_CSI_USER_ID / PROXMOX_CAPI_USER_ID from the defaults
-// + IDENTITY_SUFFIX.
+// RefreshDerivedIdentityUserIDs fills empty PROXMOX_CSI_USER_ID /
+// PROXMOX_CAPI_USER_ID from the defaults + IDENTITY_SUFFIX.
 func RefreshDerivedIdentityUserIDs(cfg *config.Config) {
 	if cfg.Providers.Proxmox.CSIUserID == "" {
 		cfg.Providers.Proxmox.CSIUserID = UserIDWithSuffix(DefaultCSIUserBase, cfg.Providers.Proxmox.IdentitySuffix)
@@ -114,9 +117,10 @@ func RefreshDerivedIdentityUserIDs(cfg *config.Config) {
 	}
 }
 
-// RefreshDerivedIdentityTokenIDs ports refresh_derived_identity_token_ids.
-// Only fabricates token IDs when both id AND secret are empty — otherwise a
-// derived id paired with a real secret (from kind) produces a 401.
+// RefreshDerivedIdentityTokenIDs fills derived token IDs from the
+// configured user IDs + token prefixes. Only fabricates token IDs
+// when both id AND secret are empty — otherwise a derived id paired
+// with a real secret (from kind) produces a 401.
 func RefreshDerivedIdentityTokenIDs(cfg *config.Config) {
 	RefreshDerivedIdentityUserIDs(cfg)
 	if cfg.Providers.Proxmox.Token == "" && cfg.Providers.Proxmox.Secret == "" &&
@@ -131,17 +135,13 @@ func RefreshDerivedIdentityTokenIDs(cfg *config.Config) {
 
 var numericRE = regexp.MustCompile(`^[0-9]+$`)
 
-// DeriveCiliumClusterID ports derive_cilium_cluster_id. For numeric
-// CLUSTER_SET_IDs returns the id modulo 255 + 1; otherwise uses BSD cksum
-// of the id string. Result is 1..255.
-//
-// bash `cksum` is POSIX CRC32 over the input with the length appended; Go's
-// hash/crc32 with the IEEE table matches the first 32-bit CRC bash prints.
-// The modulo arithmetic keeps the result in [1, 255].
+// DeriveCiliumClusterID derives a Cilium cluster id (1..255) from a
+// CLUSTER_SET_ID. For numeric IDs returns id mod 255 + 1; otherwise
+// uses CRC32/IEEE of the id string folded into [1, 255].
 func DeriveCiliumClusterID(sourceID string) string {
 	var derived uint64
 	if numericRE.MatchString(sourceID) {
-		// bash "derived=$source_id"; big numbers fold through the modulo.
+		// derived = source_id; big numbers fold through the modulo.
 		n, err := strconv.ParseUint(sourceID, 10, 64)
 		if err == nil {
 			derived = n
@@ -152,15 +152,16 @@ func DeriveCiliumClusterID(sourceID string) string {
 	return strconv.FormatUint((derived%255)+1, 10)
 }
 
-// RefreshDerivedCiliumClusterID ports refresh_derived_cilium_cluster_id.
+// RefreshDerivedCiliumClusterID fills WorkloadCiliumClusterID from
+// ClusterSetID when it is empty.
 func RefreshDerivedCiliumClusterID(cfg *config.Config) {
 	if cfg.WorkloadCiliumClusterID == "" {
 		cfg.WorkloadCiliumClusterID = DeriveCiliumClusterID(cfg.ClusterSetID)
 	}
 }
 
-// APIJSONURL ports proxmox_api_json_url: appends /api2/json unless already
-// suffixed, stripping a trailing slash first.
+// APIJSONURL appends /api2/json to cfg.Providers.Proxmox.URL unless
+// it is already suffixed, stripping a trailing slash first.
 func APIJSONURL(cfg *config.Config) string {
 	u := cfg.Providers.Proxmox.URL
 	if strings.HasSuffix(u, "/api2/json") {
@@ -169,7 +170,7 @@ func APIJSONURL(cfg *config.Config) string {
 	return strings.TrimRight(u, "/") + "/api2/json"
 }
 
-// HostBaseURL ports pve_api_host_base_url: strips a trailing /api2/json so
+// HostBaseURL strips a trailing /api2/json from the configured URL so
 // callers can append the path portion themselves.
 func HostBaseURL(cfg *config.Config) string {
 	u := strings.TrimRight(cfg.Providers.Proxmox.URL, "/")
@@ -179,8 +180,9 @@ func HostBaseURL(cfg *config.Config) string {
 	return u
 }
 
-// NormalizeTokenSecret ports normalize_proxmox_token_secret: handles the
-// "<token_id>=<secret>" and "...=secret" return formats some providers use.
+// NormalizeTokenSecret strips token-id prefixes from token-secret
+// values: handles the "<token_id>=<secret>" and "...=secret" formats
+// some providers return.
 func NormalizeTokenSecret(rawSecret, tokenID string) string {
 	if tokenID != "" && strings.HasPrefix(rawSecret, tokenID+"=") {
 		return strings.TrimPrefix(rawSecret, tokenID+"=")
@@ -191,7 +193,8 @@ func NormalizeTokenSecret(rawSecret, tokenID string) string {
 	return rawSecret
 }
 
-// ValidateTokenSecret ports validate_proxmox_token_secret. Dies on failure.
+// ValidateTokenSecret dies when the secret is empty or still carries
+// a "<token_id>=" prefix.
 func ValidateTokenSecret(label, secret string) {
 	if secret == "" {
 		logx.Die("%s is empty after normalization.", label)
@@ -207,8 +210,9 @@ var (
 	numericFieldRE = regexp.MustCompile(`^[0-9]+$`)
 )
 
-// ValidateClusterSetIDFormat ports validate_cluster_set_id_format. Dies
-// with the same error message as bash on an invalid CLUSTER_SET_ID.
+// ValidateClusterSetIDFormat validates CLUSTER_SET_ID and dies on a
+// malformed value (must be a positive integer, a UUID v4, or a
+// 12-hex Proxmox identity suffix).
 func ValidateClusterSetIDFormat(cfg *config.Config) {
 	id := cfg.ClusterSetID
 	switch {
@@ -226,9 +230,10 @@ func ValidateClusterSetIDFormat(cfg *config.Config) {
 	}
 }
 
-// InferIdentityFromTokenIDs ports infer_proxmox_identity_from_token_ids.
-// Returns true on successful inference and mutates cfg; false when the
-// token ID strings are missing or do not share the same suffix.
+// InferIdentityFromTokenIDs infers Proxmox identity fields from the
+// CSI / CAPI token IDs already in cfg. Returns true on successful
+// inference and mutates cfg; false when the token ID strings are
+// missing or do not share the same suffix.
 func InferIdentityFromTokenIDs(cfg *config.Config) bool {
 	if !strings.Contains(cfg.Providers.Proxmox.CSITokenID, "!") {
 		return false

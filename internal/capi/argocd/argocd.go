@@ -176,9 +176,9 @@ func StandaloneDiscoverWorkloadKubeconfigRef(cfg *config.Config) error {
 	}
 }
 
-// PrintAccessInfo ports argocd_print_access_info. Prints a block
-// describing how to port-forward + log in to Argo CD on the workload
-// cluster, and the initial admin password when available.
+// PrintAccessInfo prints a block describing how to port-forward and
+// log in to Argo CD on the workload cluster, and the initial admin
+// password when available.
 func PrintAccessInfo(cfg *config.Config) {
 	kctx := "kind-" + cfg.KindClusterName
 	port := cfg.ArgoCDPortForwardPort
@@ -258,8 +258,8 @@ func ReadInitialAdminPasswordWithKubeconfig(kubeconfig, namespace string) string
 	return readAdminPasswordFromClient(cli, namespace)
 }
 
-// RunPortForwards ports argocd_run_port_forwards. Blocks until the
-// user interrupts; always removes the tmp kubeconfig.
+// RunPortForwards launches the Argo CD port-forwards. Blocks until
+// the user interrupts; always removes the tmp kubeconfig.
 //
 // NOTE: this is intentionally still a kubectl shell-out. Implementing
 // SPDY port-forward in-process (k8s.io/client-go/tools/portforward +
@@ -441,8 +441,7 @@ func writeWorkloadKubeconfig(cfg *config.Config, mgmtCtx string) (string, error)
 	return f.Name(), nil
 }
 
-// randomBase64 returns a URL-safe base64 string of n random bytes.
-// Matches bash `openssl rand -base64 32 | tr -d '\n\r'`.
+// randomBase64 returns a base64 string of n random bytes.
 func randomBase64(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {

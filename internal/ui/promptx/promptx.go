@@ -53,8 +53,8 @@ func ReadLine() string {
 }
 
 // Confirm prompts `msg (yes/no): ` to stderr and returns true iff the
-// answer starts with y or Y. The ANSI yellow "[?]" prefix matches the bash
-// confirm() output.
+// answer starts with y or Y. The ANSI yellow "[?]" prefix tags the
+// line as an interactive prompt.
 func Confirm(msg string) bool {
 	fmt.Fprintf(os.Stderr, "\033[1;33m[?]\033[0m %s (yes/no): ", msg)
 	resp := ReadLine()
@@ -67,7 +67,7 @@ var (
 	leadingDigitsRE = regexp.MustCompile(`^[^0-9]*([0-9]+)`)
 )
 
-// NormalizeNumericMenuChoice ports bootstrap_normalize_numeric_menu_choice.
+// NormalizeNumericMenuChoice parses a user-typed numeric menu choice.
 // Accepts:
 //   - a bare positive integer,
 //   - a "N-M" range (e.g. the menu line "1-1" pasted back), keeping N,

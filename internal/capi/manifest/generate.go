@@ -117,7 +117,7 @@ func TryFillWorkloadInputsFromManagement(cfg *config.Config) {
 		Namespace(cfg.WorkloadClusterNamespace).
 		Get(ctx, pcName, metav1.GetOptions{})
 	if err != nil {
-		// Fallback to workload cluster name (matches bash retry).
+		// Fallback to workload cluster name.
 		pcName = cfg.WorkloadClusterName
 		pcObj, err = cli.Dynamic.Resource(pcGVR).
 			Namespace(cfg.WorkloadClusterNamespace).

@@ -98,10 +98,9 @@ func InstallCAPIOnManagement(cfg *config.Config, mgmtKubeconfig string) error {
 }
 
 // MoveCAPIState runs `clusterctl move --to-kubeconfig=<mgmt>` from the
-// kind context to the new management cluster. Mirrors the bash CAPI
-// pivot step. Wrapped in a single retry (the move is read-then-recreate
-// across two clusters; transient API blips on either side make a single
-// retry pay for itself).
+// kind context to the new management cluster. Wrapped in a single
+// retry (the move is read-then-recreate across two clusters; transient
+// API blips on either side make a single retry pay for itself).
 //
 // Stops kind-side reconcilers (capmox, CAAPH) before the move so they
 // don't race the migration. Stop = scale Deployment replicas to 0 via

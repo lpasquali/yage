@@ -46,8 +46,9 @@ func derivePostSync(cfg *config.Config, hookShort string) PostSyncBlock {
 	}
 }
 
-// HelmGit ports _wl_argocd_render_helm_git.
-// releaseName and hookShort are optional — pass "" to skip them.
+// HelmGit renders an Argo CD Application that pulls a Helm chart from
+// a Git source. releaseName and hookShort are optional — pass "" to
+// skip them.
 func HelmGit(cfg *config.Config, name, destNS, repoURL, relPath, ref, syncWave, valuesYAML, releaseName, hookShort string) string {
 	safeRef := shellQuoteEscape(ref)
 	indented, indentedMS := indentValuesBoth(valuesYAML)
@@ -95,8 +96,8 @@ func HelmGit(cfg *config.Config, name, destNS, repoURL, relPath, ref, syncWave, 
 	return sb.String()
 }
 
-// kyvernoTolerationFragment ports _kyverno_argocd_values_toleration_fragment.
-// Pre-indented with 8 spaces (matches bash sed 's/^/        /').
+// kyvernoTolerationFragment returns the Kyverno control-plane
+// toleration fragment, pre-indented with 8 spaces.
 func kyvernoTolerationFragment(cfg *config.Config) string {
 	if !isTrue(cfg.KyvernoTolerateControlPlane) {
 		return ""
@@ -112,7 +113,7 @@ func kyvernoTolerationFragment(cfg *config.Config) string {
 `
 }
 
-// Kyverno ports _wl_argocd_render_kyverno.
+// Kyverno renders the Kyverno workload Argo CD Application YAML.
 func Kyverno(cfg *config.Config, name, ns, repoURL, chart, version, syncWave, hookShort string) string {
 	target := version
 	if target == "" {
@@ -194,7 +195,8 @@ func kyvernoIgnoreDiffs() string {
 `
 }
 
-// Helm ports _wl_argocd_render_helm (HTTP repo).
+// Helm renders an Argo CD Application that pulls a chart from an HTTP
+// Helm repository.
 func Helm(cfg *config.Config, name, ns, repoURL, chart, version, syncWave, valuesYAML, hookShort string) string {
 	target := version
 	if target == "" {
@@ -239,9 +241,9 @@ func Helm(cfg *config.Config, name, ns, repoURL, chart, version, syncWave, value
 	return sb.String()
 }
 
-// HelmOCI ports _wl_argocd_render_helm_oci. Optional PostSync hooks: both
-// kustomize blocks must be non-empty for the sources/ multi-source to
-// activate.
+// HelmOCI renders an Argo CD Application that pulls an OCI Helm chart.
+// Optional PostSync hooks: both kustomize blocks must be non-empty for
+// the sources/ multi-source to activate.
 func HelmOCI(cfg *config.Config, name, ns, ociURL, version, syncWave, valuesYAML, hook1Path, hook1Kz, hook2Path, hook2Kz string) string {
 	target := version
 	if target == "" {
@@ -301,9 +303,10 @@ func HelmOCI(cfg *config.Config, name, ns, ociURL, version, syncWave, valuesYAML
 	return sb.String()
 }
 
-// KustomizeGit ports _wl_argocd_render_kustomize_git.
-// kustomizeBlock is expected pre-indented for a `source:` child
-// (4-space indent) — the multi-source branch re-indents it by 2.
+// KustomizeGit renders an Argo CD Application that pulls a kustomize
+// tree from a Git source. kustomizeBlock is expected pre-indented for
+// a `source:` child (4-space indent) — the multi-source branch
+// re-indents it by 2.
 func KustomizeGit(cfg *config.Config, name, destNS, repoURL, relPath, ref, syncWave, kustomizeBlock, hookShort string) string {
 	safeRef := shellQuoteEscape(ref)
 	hook := derivePostSync(cfg, hookShort)

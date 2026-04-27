@@ -23,8 +23,9 @@
 // values YAML, and (where applicable) ensures a per-driver Secret on
 // the workload cluster.
 //
-// Phase F (this commit, scoped) ships AWS-EBS, Azure-Disk, and
-// GCP-PD. The remaining drivers in §20.1 land in follow-ups.
+// The full §20.1 driver matrix is implemented incrementally; drivers
+// that aren't yet registered are silently dropped from the install
+// set with a warning.
 package csi
 
 import (

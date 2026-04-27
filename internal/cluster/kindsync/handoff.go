@@ -14,7 +14,7 @@ package kindsync
 // The set of Secrets handled mirrors what
 // SyncBootstrapConfigToKind + SyncProxmoxBootstrapLiteralCredentialsToKind
 // write into kind, plus the live capmox-system/capmox-manager-credentials
-// copy that bash carries across as part of the same hand-off.
+// copy that ships across as part of the same hand-off.
 //
 // CAPI inventory (Cluster, Machines, KubeadmConfig, etc.) is *not* this
 // package's concern — clusterctl move handles that. We own the
@@ -36,10 +36,10 @@ import (
 )
 
 // capmoxLiveNamespace / capmoxLiveSecretName are the live capmox-controller
-// credentials that bash also carries across in the same hand-off step.
-// These are not bootstrap-state per se, but a deleted in-cluster copy is
-// restored on next sync only after this Secret reappears, so we keep it
-// in lockstep with the rest of the move.
+// credentials carried across in the same hand-off step. These are not
+// bootstrap-state per se, but a deleted in-cluster copy is restored on
+// next sync only after this Secret reappears, so we keep it in
+// lockstep with the rest of the move.
 const (
 	capmoxLiveNamespace  = "capmox-system"
 	capmoxLiveSecretName = "capmox-manager-credentials"

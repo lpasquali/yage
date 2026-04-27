@@ -34,7 +34,8 @@
 //
 // CSI: cinder-csi-plugin is the canonical OpenStack CSI; lands as
 // a Driver under internal/csi/openstackcinder/ in a follow-up. The
-// provider seam no longer carries a CSI hook (Wave 3 removed it).
+// provider seam intentionally carries no CSI hook — CSI flows
+// through internal/csi instead.
 package openstack
 
 import (

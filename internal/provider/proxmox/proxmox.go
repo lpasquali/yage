@@ -29,10 +29,10 @@ type Provider struct{ provider.MinStub }
 func (p *Provider) Name() string              { return "proxmox" }
 func (p *Provider) InfraProviderName() string { return "proxmox" }
 
-// EnsureIdentity ports the Proxmox identity bootstrap: OpenTofu
-// applies the BPG provider templates that create the CAPI + CSI
-// users + tokens + ACL bindings on the PVE cluster. Idempotent —
-// `tofu apply` is a no-op when the state matches.
+// EnsureIdentity runs the Proxmox identity bootstrap: OpenTofu applies
+// the BPG provider templates that create the CAPI + CSI users + tokens
+// + ACL bindings on the PVE cluster. Idempotent — `tofu apply` is a
+// no-op when the state matches.
 func (p *Provider) EnsureIdentity(cfg *config.Config) error {
 	return opentofux.ApplyIdentity(cfg)
 }

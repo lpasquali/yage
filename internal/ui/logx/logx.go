@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package logx mirrors the bash log/warn/die helpers from the original bash port.
+// Package logx provides log/warn/die helpers with emoji-prefixed
+// output that yage uses for all user-facing console messages.
 //
-// Bash equivalents:
+// Output shapes:
 //
-//	log()  { printf '✅ 🎉 %s\n' "$*"; }
-//	warn() { printf '⚠️ 🙈 %s\n' "$*" >&2; }
-//	die()  { printf '❌ 💩 %s\n' "$*" >&2; exit 1; }
-//	err is used in some helpers as "printf '❌ ... %s\n' "$*" >&2" without exit.
+//	Log  -> "✅ 🎉 <msg>"  (stdout)
+//	Warn -> "⚠️ 🙈 <msg>"  (stderr)
+//	Die  -> "❌ 💩 <msg>"  (stderr, then os.Exit(1))
 package logx
 
 import (

@@ -123,11 +123,13 @@ type Provider interface {
 	// doesn't emit by default).
 	PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error
 
-	// (EnsureCSISecret was removed in Wave 3. CSI now flows through
-	// internal/csi as a registered Driver — see internal/csi/driver.go
-	// and the per-driver packages under internal/csi/<name>/. Drivers
-	// that need a Secret implement Driver.EnsureSecret; those that
-	// authenticate via cloud-native identity return ErrNotApplicable.)
+	// CSI flows through internal/csi as a registered Driver — see
+	// internal/csi/driver.go and the per-driver packages under
+	// internal/csi/<name>/. Drivers that need a Secret implement
+	// Driver.EnsureSecret; those that authenticate via cloud-native
+	// identity return ErrNotApplicable. The Provider interface
+	// intentionally has no CSI hook — providers register their own
+	// CSI driver via internal/csi instead.
 
 	// EstimateMonthlyCostUSD returns a monthly billing estimate in
 	// USD for the planned cluster. Implementations fetch every price

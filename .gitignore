@@ -12,6 +12,6 @@ bin
 
 # Claude Code agent worktrees (transient — never commit)
 .claude/
-
+.cursor
 # Vendored upstream repos (clones, not submodules)
 /cluster-api-provider-proxmox/

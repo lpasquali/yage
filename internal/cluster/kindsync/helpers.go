@@ -31,12 +31,12 @@ func kindClusterExists(name string) bool {
 }
 
 // proxmoxEnvMap returns the set of PROXMOX_* / ARGO_WORKLOAD_POSTSYNC_*
-// values the bash Python blocks read from os.environ, keyed by their
-// bash-style name so the kindSecret.LookupValue callback stays simple.
+// values to round-trip into the kind Secret, keyed by their upper-snake
+// env-var name so the kindSecret.LookupValue callback stays simple.
 //
 // Values are read from cfg, not os.Environ(), so CLI flags correctly win
 // over the shell. Only non-empty keys go into the map — a missing lookup
-// returns "" which is the bash "skip" signal.
+// returns "" which is the "skip" signal.
 func proxmoxEnvMap(cfg *config.Config) map[string]string {
 	put := func(m map[string]string, k, v string) {
 		if v != "" {

@@ -39,8 +39,8 @@ import (
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
 )
 
-// PatchClusterCAAPHHelmLabels ports patch_capi_cluster_caaph_helm_labels.
-// Adds four labels to the Cluster doc in the workload manifest:
+// PatchClusterCAAPHHelmLabels adds four labels to the Cluster doc in
+// the workload manifest:
 //
 //	caaph: enabled
 //	caaph.cilium.cluster-id: "<WORKLOAD_CILIUM_CLUSTER_ID>"
@@ -204,9 +204,9 @@ func PatchClusterCAAPHHelmLabels(cfg *config.Config, manifestPath string) error 
 	return nil
 }
 
-// CiliumHelmChartProxyYAML ports caaph_print_helmchartproxy_cilium_yaml.
-// Returns the full HelmChartProxy YAML document the caller will
-// `kubectl apply -f -` against the management cluster.
+// CiliumHelmChartProxyYAML returns the full HelmChartProxy YAML
+// document the caller will `kubectl apply -f -` against the management
+// cluster.
 func CiliumHelmChartProxyYAML(cfg *config.Config, kprOn bool) string {
 	ver := strings.TrimPrefix(cfg.CiliumVersion, "v")
 	if ver == "" {

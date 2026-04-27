@@ -28,8 +28,8 @@ func httpClient(insecure bool) *http.Client {
 }
 
 // fetchJSON issues a GET with the PVEAPIToken auth header. The authValue
-// must be the full header value (including the "PVEAPIToken=" prefix)
-// unless it already starts with that prefix — mirrors bash's auto-prefix.
+// must be the full header value (including the "PVEAPIToken=" prefix);
+// when the prefix is missing, fetchJSON adds it.
 func fetchJSON(u, authValue string, insecure bool, out any) error {
 	if !strings.HasPrefix(strings.ToLower(authValue), "pveapitoken=") {
 		authValue = "PVEAPIToken=" + authValue
@@ -107,7 +107,7 @@ func ResolveRegionAndNodeFromPVEAuth(cfg *config.Config, authValue string) error
 					continue
 				}
 				all = append(all, n.Node)
-				// "local" is often 1/true but bash coerces via str().lower().
+				// "local" is often 1/true; coerce to a stable string.
 				s := fmt.Sprint(n.Local)
 				if s == "1" || s == "true" {
 					locals = append(locals, n.Node)
@@ -117,7 +117,7 @@ func ResolveRegionAndNodeFromPVEAuth(cfg *config.Config, authValue string) error
 			case len(locals) > 0:
 				cfg.Providers.Proxmox.Node = locals[0]
 			case len(all) > 0:
-				// Sort for deterministic pick (bash uses sorted()).
+				// Sort for deterministic pick.
 				cfg.Providers.Proxmox.Node = minString(all)
 			}
 		}
@@ -368,8 +368,8 @@ func ResolveAvailableClusterSetIDForRoles(cfg *config.Config) error {
 // POST). Uses the admin token (the clusterctl token usually doesn't
 // have Pool.Allocate). Caller skips when name is empty.
 //
-// Bash equivalent: pveum pool add <name> ; we don't have pveum here,
-// so we POST /api2/json/pools directly.
+// Equivalent to `pveum pool add <name>` against the Proxmox REST API
+// (POST /api2/json/pools).
 func EnsurePool(cfg *config.Config, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return nil

@@ -37,9 +37,9 @@ func StateDir() string {
 // stateFile returns ${StateDir}/terraform.tfstate (OpenTofu's default).
 func stateFile() string { return filepath.Join(StateDir(), "terraform.tfstate") }
 
-// WriteEmbeddedFiles ports write_embedded_terraform_files. Creates
-// StateDir and writes the identity HCL to the configured filename
-// (cfg.Providers.Proxmox.IdentityTF, default: proxmox-identity.tf).
+// WriteEmbeddedFiles creates StateDir and writes the identity HCL to
+// the configured filename (cfg.Providers.Proxmox.IdentityTF, default:
+// proxmox-identity.tf).
 func WriteEmbeddedFiles(cfg *config.Config) error {
 	dir := StateDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -52,9 +52,10 @@ func WriteEmbeddedFiles(cfg *config.Config) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte(IdentityHCL), 0o644)
 }
 
-// InstallBPGProvider ports install_bpg_proxmox_provider. Writes a
-// throwaway main.tf into a scratch dir and runs `tofu init -upgrade` to
-// warm ~/.terraform.d/plugin-cache. OpenTofu honours that cache dir.
+// InstallBPGProvider warms the BPG Proxmox provider into the local
+// OpenTofu plugin cache. Writes a throwaway main.tf into a scratch dir
+// and runs `tofu init -upgrade` to warm ~/.terraform.d/plugin-cache;
+// OpenTofu honours that cache dir.
 func InstallBPGProvider(cfg *config.Config) error {
 	home, _ := os.UserHomeDir()
 	cache := filepath.Join(home, ".terraform.d", "plugin-cache")
@@ -72,7 +73,7 @@ func InstallBPGProvider(cfg *config.Config) error {
 	logx.Log("Installing OpenTofu provider bpg/proxmox...")
 	c := exec.Command("tofu", "-chdir="+tmp, "init", "-backend=false", "-upgrade")
 	c.Env = append(os.Environ(), "TF_PLUGIN_CACHE_DIR="+cache)
-	// Discard chatty stdout like bash `>/dev/null`.
+	// Discard chatty stdout.
 	c.Stdout = nil
 	c.Stderr = os.Stderr
 	return c.Run()

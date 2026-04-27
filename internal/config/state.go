@@ -1,38 +1,42 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Methods and small predicates over *Config. These replace bash helpers
-// that simply query the current global state (is_workload_gitops_caaph_mode,
-// persist_local_secrets, _clusterctl_cfg_file_present, …).
+// Methods and small predicates over *Config that query current state
+// (workload GitOps mode, secret persistence, clusterctl config presence,
+// …).
 package config
 
 import "os"
 
-// IsWorkloadGitopsCaaphMode ports is_workload_gitops_caaph_mode.
-// Empty defaults to caaph (per the header and bash ${WORKLOAD_GITOPS_MODE:-caaph}).
+// IsWorkloadGitopsCaaphMode reports whether the workload GitOps mode
+// is "caaph". Empty defaults to "caaph".
 func (c *Config) IsWorkloadGitopsCaaphMode() bool {
 	return c.WorkloadGitopsMode == "" || c.WorkloadGitopsMode == "caaph"
 }
 
-// PersistLocalSecrets ports persist_local_secrets. When false (default),
-// credentials are pushed only to kind Secrets — the well-known local YAML
-// paths are never written.
+// PersistLocalSecrets reports whether credentials should also be
+// persisted to local YAML files. When false (default), credentials are
+// pushed only to kind Secrets — the well-known local YAML paths are
+// never written.
 func (c *Config) PersistLocalSecrets() bool {
 	return c.BootstrapPersistLocalSecrets
 }
 
-// ClusterctlCfgFilePresent ports _clusterctl_cfg_file_present.
+// ClusterctlCfgFilePresent reports whether the clusterctl config file
+// path is set and points to a regular file.
 func (c *Config) ClusterctlCfgFilePresent() bool {
 	return c.ClusterctlCfg != "" && isRegularFile(c.ClusterctlCfg)
 }
 
-// ProxmoxAdminCfgFilePresent ports _proxmox_admin_cfg_file_present.
+// ProxmoxAdminCfgFilePresent reports whether the Proxmox admin config
+// file path is set and points to a regular file.
 func (c *Config) ProxmoxAdminCfgFilePresent() bool {
 	return c.Providers.Proxmox.AdminConfig != "" && isRegularFile(c.Providers.Proxmox.AdminConfig)
 }
 
-// HaveClusterctlCredsInEnv ports have_clusterctl_creds_in_env: the trio
-// the CAPI/CAPMOX provider needs before it will initialize.
+// HaveClusterctlCredsInEnv reports whether the Proxmox URL/token/secret
+// trio that the CAPI/CAPMOX provider needs before it will initialize is
+// present.
 func (c *Config) HaveClusterctlCredsInEnv() bool {
 	return c.Providers.Proxmox.URL != "" && c.Providers.Proxmox.Token != "" && c.Providers.Proxmox.Secret != ""
 }
@@ -43,12 +47,10 @@ func (c *Config) HaveAWSCloudCreds() bool {
 	return os.Getenv("AWS_ACCESS_KEY_ID") != "" && os.Getenv("AWS_SECRET_ACCESS_KEY") != ""
 }
 
-// ReapplyWorkloadGitDefaults ports reapply_workload_git_defaults. When a
-// merge from the in-cluster config Secret cleared the workload app-of-
-// apps Git fields (empty values in config.yaml), re-derive defaults from
-// any matching WORKLOAD_ARGO_GIT_BASE_URL_DEFAULT /
-// WORKLOAD_GIT_EXAMPLES_* env vars. These are rarely set today but the
-// bash honours them — preserved here for parity.
+// ReapplyWorkloadGitDefaults re-derives the workload app-of-apps Git
+// fields from the WORKLOAD_ARGO_GIT_BASE_URL_DEFAULT /
+// WORKLOAD_GIT_EXAMPLES_* env vars when a merge from the in-cluster
+// config Secret cleared them.
 func (c *Config) ReapplyWorkloadGitDefaults() {
 	if !c.IsWorkloadGitopsCaaphMode() {
 		return
@@ -67,9 +69,8 @@ func (c *Config) ReapplyWorkloadGitDefaults() {
 	}
 }
 
-// SyncCAPIControllerImagesToClusterctlVersion ports
-// bootstrap_sync_capi_controller_images_to_clusterctl_version. Re-derives
-// the three registry.k8s.io CAPI controller image URIs from the current
+// SyncCAPIControllerImagesToClusterctlVersion re-derives the three
+// registry.k8s.io CAPI controller image URIs from the current
 // ClusterctlVersion so that a merged-in version (e.g. from the bootstrap
 // config Secret) keeps the pre-load / kind-load images aligned.
 func (c *Config) SyncCAPIControllerImagesToClusterctlVersion() {

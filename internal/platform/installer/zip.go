@@ -11,7 +11,8 @@ import (
 )
 
 // extractZipMemberImpl is the zip-backed implementation referenced from
-// extractZipMember. Split out to keep installer.go focused on the bash port.
+// extractZipMember. Split out to keep installer.go focused on the
+// installer flow.
 func extractZipMemberImpl(zipPath, name, dest string) error {
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {

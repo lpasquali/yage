@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package k8sclient is the in-process replacement for the kubectl shell-outs
-// scattered across the rest of the orchestrator. A single Client carries the
-// typed clientset, dynamic client, REST mapper, and a server-side-apply
-// helper, all bound to a specific kubeconfig context.
+// Package k8sclient provides the in-process Kubernetes client used by
+// the rest of the orchestrator (no kubectl shell-outs). A single
+// Client carries the typed clientset, dynamic client, REST mapper,
+// and a server-side-apply helper, all bound to a specific kubeconfig
+// context.
 //
-// The constructors mirror what the bash code did with `kubectl --context`:
+// The constructors mirror the kubeconfig selection that `kubectl
+// --context` performs:
 //   - ForContext: load kubeconfig (KUBECONFIG or ~/.kube/config), select context
 //   - ForKubeconfigFile: load a specific kubeconfig file (workload clusters)
 //   - ForCurrent: current-context fallback

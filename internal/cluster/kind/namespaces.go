@@ -10,11 +10,11 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 )
 
-// BackupNamespaces ports kind_bootstrap_state_backup_namespaces. When
+// BackupNamespaces returns the namespace list to back up. When
 // BOOTSTRAP_KIND_BACKUP_NAMESPACES is set, it is split on commas/spaces,
-// trimmed, deduplicated, and sorted. Otherwise the list is the union of
-// PROXMOX_BOOTSTRAP_SECRET_NAMESPACE and WORKLOAD_CLUSTER_NAMESPACE (if
-// either is set), sorted and deduplicated.
+// trimmed, deduplicated, and sorted. Otherwise the list is the union
+// of PROXMOX_BOOTSTRAP_SECRET_NAMESPACE and WORKLOAD_CLUSTER_NAMESPACE
+// (if either is set), sorted and deduplicated.
 func BackupNamespaces(cfg *config.Config) []string {
 	var raw []string
 	if cfg.BootstrapKindBackupNamespaces != "" {

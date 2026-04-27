@@ -1119,11 +1119,11 @@ type Config struct {
 	StopBeforeWorkload bool
 }
 
-// Load reads environment variables and applies the same defaults the bash
-// script did on source. CLI flag parsing runs *after* Load() and can
-// overwrite any field in place.
+// Load reads environment variables and applies defaults to produce a
+// fresh *Config. CLI flag parsing runs *after* Load() and can overwrite
+// any field in place.
 //
-// Bash defaults are referenced inline for the non-obvious ones; trivial
+// Defaults for non-obvious fields are referenced inline; trivial
 // defaults are applied with the getenv helper.
 func Load() *Config {
 	c := &Config{}
@@ -1747,8 +1747,8 @@ func envBool(key string, def bool) bool {
 	return def
 }
 
-// envBoolLoose accepts "1"/"0" for *_EXPLICIT flags the bash script uses as
-// counters/booleans (lines 666-667).
+// envBoolLoose parses *_EXPLICIT-style flags that may be expressed as
+// "1"/"0" counters or boolean strings.
 func envBoolLoose(key string, def bool) bool {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {

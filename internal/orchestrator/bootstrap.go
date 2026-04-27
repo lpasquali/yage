@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package bootstrap is the orchestrator. It drives the top-level
-// bootstrap phases and the standalone modes.
+// Package orchestrator drives the top-level bootstrap phases and the
+// standalone modes (rollout, backup, argocd, …).
 package orchestrator
 
 import (

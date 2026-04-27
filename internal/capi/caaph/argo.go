@@ -110,7 +110,8 @@ func ApplyWorkloadArgoHelmProxies(cfg *config.Config, installOperator func()) {
 		cfg.WorkloadClusterName, cfg.WorkloadClusterName, cfg.WorkloadAppOfAppsGitURL)
 }
 
-// WaitWorkloadArgoCDServer ports caaph_wait_workload_argocd_server.
+// WaitWorkloadArgoCDServer polls the workload cluster for the
+// argocd-server Deployment to become Available.
 func WaitWorkloadArgoCDServer(cfg *config.Config, writeWorkloadKubeconfig func() (string, error)) {
 	if !cfg.IsWorkloadGitopsCaaphMode() || !cfg.WorkloadArgoCDEnabled {
 		return
@@ -132,8 +133,7 @@ func WaitWorkloadArgoCDServer(cfg *config.Config, writeWorkloadKubeconfig func()
 		return
 	}
 
-	// Bash polled in a 120 × 5s loop with an inner 2m kubectl wait — total
-	// about 10 minutes. Match that envelope with PollUntil(5s, 10m).
+	// Poll every 5s for up to 10 minutes.
 	err = k8sclient.PollUntil(context.Background(), 5*time.Second, 10*time.Minute,
 		func(c context.Context) (bool, error) {
 			dep, err := cli.Typed.AppsV1().Deployments(ns).Get(c, "argocd-server", metav1.GetOptions{})
@@ -157,7 +157,8 @@ func WaitWorkloadArgoCDServer(cfg *config.Config, writeWorkloadKubeconfig func()
 	logx.Log("Argo CD server is available on the workload cluster.")
 }
 
-// LogWorkloadArgoAppsStatus ports caaph_log_workload_argo_apps_status.
+// LogWorkloadArgoAppsStatus prints a status overview of the workload
+// Argo CD Applications (sync + health per app).
 func LogWorkloadArgoAppsStatus(cfg *config.Config, writeWorkloadKubeconfig func() (string, error)) {
 	if !cfg.IsWorkloadGitopsCaaphMode() || !cfg.WorkloadArgoCDEnabled {
 		return

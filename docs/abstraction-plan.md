@@ -1,7 +1,6 @@
 # Provider abstraction — analysis + plan
 
-bootstrap-capi was originally a Proxmox-only Go port of a bash
-script. The pluggable `provider.Provider` interface (12 providers
+The pluggable `provider.Provider` interface (12 providers
 registered today) covers the *peripheral* CAPI bits — clusterctl
 init args, K3s template, identity bootstrap, CSI Secret, cost
 estimator. The *core orchestration* still hardcodes Proxmox in
@@ -18,7 +17,7 @@ not authoritative — the analysis is what matters.
 | File                                      | Mentions | What it does                                                                 |
 |-------------------------------------------|---------:|------------------------------------------------------------------------------|
 | `internal/orchestrator/bootstrap.go`         | 129      | `Run()` orchestrator: identity, kind→mgmt sync, manifest patching, pivot     |
-| `internal/orchestrator/plan.go`              |  34      | Dry-run plan body: phase 2.0 / 2.9 / 2.95 are written for Proxmox            |
+| `internal/orchestrator/plan.go`              |  34      | Dry-run plan body: identity / workload-cluster / pivot phases are written for Proxmox |
 | `internal/orchestrator/admin.go`             |  35      | Proxmox admin-API helpers (pool create, etc.)                                |
 | `internal/orchestrator/purge.go`             |  12      | `--purge` flow (Terraform state, BPG provider tree, CSI configs)             |
 | `internal/orchestrator/workloadapps.go`      | (some)   | App-of-apps wiring                                                           |
@@ -294,10 +293,9 @@ Some packages don't need abstracting because they *are* Proxmox:
 
 - `internal/provider/proxmox/pveapi/` — the Proxmox API client. Lives
   under the proxmox provider package; it's the implementation detail
-  behind `provider/proxmox/`. (Moved here in Wave 3 — was
-  `internal/pveapi/` originally.)
+  behind `provider/proxmox/`.
 - `internal/platform/opentofux/` — the BPG identity stack. Same — lives
-  inside `provider/proxmox/identity.go` after refactor.
+  inside `provider/proxmox/identity.go`.
 - `internal/capi/manifest/k3s_template.yaml` — could split into
   per-provider templates under `internal/provider/<name>/`. Already
   some providers have inline templates (Hetzner, AWS).
@@ -393,28 +391,26 @@ type Provider interface {
 }
 ```
 
-### Phase naming — drop the bash numbers
+### Phase naming — descriptive, not numeric
 
-The bash script's `Phase 2.0 / 2.4 / 2.8 / 2.9 / 2.95` numbering
-is cruft. Named phases are clearer and don't pretend the order is
-ordinal-numeric:
+Phase labels are descriptive. The plan body uses names that don't
+pretend the order is ordinal-numeric:
 
-| Old (bash-derived)                                          | New (named)                        |
-|-------------------------------------------------------------|------------------------------------|
-| `Phase 2.0 — Proxmox identity bootstrap (OpenTofu)`         | `Identity bootstrap`               |
-| `Phase 2.1 — clusterctl credentials`                        | `clusterctl credentials`           |
-| `Phase 2.4 — kind cluster`                                  | `kind management cluster`          |
-| `Phase 2.8 — clusterctl init on kind`                       | `clusterctl init`                  |
-| `Phase 2.9 — workload Cluster (Proxmox)`                    | `Workload Cluster (<provider>)`    |
-| `Phase 2.95 — Pivot to Proxmox-hosted management cluster`   | `Pivot to managed mgmt cluster`    |
-| `Phase 2.10 — Argo CD on workload`                          | `Argo CD on workload`              |
-| `Final — kind teardown`                                     | `kind teardown`                    |
+| Phase label                        |
+|------------------------------------|
+| `Identity bootstrap`               |
+| `clusterctl credentials`           |
+| `kind management cluster`          |
+| `clusterctl init`                  |
+| `Workload Cluster (<provider>)`    |
+| `Pivot to managed mgmt cluster`    |
+| `Argo CD on workload`              |
+| `kind teardown`                    |
 
 ### Worked AWS dry-run example (post-Phase-B)
 
-Here is what `bootstrap-capi --dry-run` would produce on AWS once
-Phase B lands. Compare with the current output (which wrongly
-prints Proxmox phases):
+Here is what `bootstrap-capi --dry-run` produces on AWS with
+Phase B in place:
 
 ```
 ────────────────────────────────────────────────────────────────────────────
@@ -937,9 +933,8 @@ with `io.Writer` everywhere — keeps tests cheap.
 
 ### Hierarchy: flat
 
-The Proxmox-bash phase numbers (2.0, 2.1, 2.4, 2.8, 2.9, 2.95, 2.10)
-get dropped — they're cruft from porting the bash script and convey
-nothing a name doesn't. New section titles use named phases:
+Section titles use named phases (no ordinal-numeric labels — names
+convey more than numbers):
 
 - "Identity bootstrap"
 - "Clusterctl init"
@@ -1010,21 +1005,10 @@ Blue nodes = delegated to provider. Everything else = central.
 
 ### Worked AWS example
 
-This is what `--dry-run` on AWS prints today vs after Phase B.
+The Phase B plan-body delegation produces this AWS dry-run shape (vs.
+the unrouted Proxmox-flavored output Phase B replaces):
 
-**Today** (AWS dry-run silently shows Proxmox text):
-
-```
-▸ Phase 2.0 — Proxmox identity bootstrap (OpenTofu)
-    • interactive prompt (PROXMOX_ADMIN_USERNAME / PROXMOX_ADMIN_TOKEN unset)
-    • tofu apply: create CAPI user 'capi@pve' + token prefix 'capi-'
-    …
-▸ Phase 2.9 — workload Cluster (Proxmox)
-    • Proxmox templates: control-plane=, worker= (catch-all PROXMOX_TEMPLATE_ID=)
-    • Proxmox CSI on workload: chart …
-```
-
-**After Phase B:**
+**Phase B output (current):**
 
 ```
 ▸ Identity bootstrap — AWS IAM
@@ -1678,9 +1662,9 @@ by `PivotTarget`.
 #### F. `EnsureCSISecret` timing assumption (vSphere)
 
 vSphere CSI needs the workload cluster's UUID, which doesn't exist
-until after `clusterctl` finishes. Today's orchestrator phases don't
-fit this — Phase 2.9 happens before the cluster is "alive" in the
-vSphere CSI sense. Not an interface bug; an orchestrator-phase
+until after `clusterctl` finishes. The orchestrator's workload-cluster
+phase doesn't fit this — it happens before the cluster is "alive" in
+the vSphere CSI sense. Not an interface bug; an orchestrator-phase
 assumption that's Proxmox-centric. Calls for either a "post-cluster-
 ready" CSI hook in the orchestrator or a two-stage CSI install for
 vSphere.
@@ -2077,28 +2061,24 @@ each tell you what's inside before you read a file.
 
 ### Open questions before applying
 
-1. **`pveapi` placement.** Originally several orchestrator-side
-   packages imported `pveapi` directly (kindsync, capimanifest,
-   opentofux, caaph, bootstrap, etc.). Moving it inside
-   `provider/proxmox/` would have forced them to import "across
-   the abstraction barrier." *Resolved in Wave 3: with Phases B/D/E
-   landed and the remaining direct importers being either Proxmox-
-   internal or about-to-migrate paths, `pveapi/` is now at
-   `internal/provider/proxmox/pveapi/`. Cross-barrier imports that
-   remain (e.g. orchestrator-side packages still depending on
-   pveapi) are tracked as follow-ups inside the proxmox provider's
-   responsibilities.*
+1. **`pveapi` placement.** Several orchestrator-side packages
+   import `pveapi` (kindsync, capimanifest, opentofux, caaph,
+   bootstrap, etc.). Placing it inside `provider/proxmox/` makes
+   them import "across the abstraction barrier." *`pveapi/` lives
+   at `internal/provider/proxmox/pveapi/`. Cross-barrier imports
+   (orchestrator-side packages depending on pveapi) are tracked as
+   follow-ups inside the proxmox provider's responsibilities.*
 
 2. **`bootstrap` → `orchestrator` rename.** Reads better but every
    import path changes. *Recommendation: yes — name reflects role
    and avoids confusion with bootstrap-mode CLI flags
    (`BootstrapMode`, `BootstrapKindStateOp`).*
 
-3. **`x` suffixes** (argocdx, ciliumx, csix, kubectlx). These were
-   "thing-but-our-version" disambiguators during the bash port.
-   Moving them under `capi/` lets the suffix go: `capi/argocd`,
-   `capi/cilium`, `capi/csi`, `platform/kubectl`. *Recommendation:
-   drop the `x` suffix when each package moves.*
+3. **`x` suffixes** (argocdx, ciliumx, csix, kubectlx). These act
+   as "thing-but-our-version" disambiguators. Moving them under
+   `capi/` lets the suffix go: `capi/argocd`, `capi/cilium`,
+   `capi/csi`, `platform/kubectl`. *Recommendation: drop the `x`
+   suffix when each package moves.*
 
 4. **`wlargocd` vs `capi/argocd`** — both render Argo CD wiring.
    `wlargocd` is the workload-side Application YAML; the (renamed)
@@ -2464,7 +2444,7 @@ no log spam in the steady state.
 
 ## 19. Parallelization plan — remaining work
 
-After Phases A–E and §15–§18 landed, eight items remain. This
+With Phases A–E and §15–§18 in place, eight items remain. This
 section plans how to execute them with maximum parallelism. It's
 NOT just a TODO list — it's a wave-by-wave dispatch plan that
 respects file-conflict and logical-dependency constraints.

@@ -11,11 +11,10 @@ import (
 )
 
 // ExitCleanup tracks ephemeral files created by the bootstrap so that
-// bootstrap_exit_cleanup_all can remove them on process exit. Matches
-// the bash BOOTSTRAP_*_EPHEMERAL globals + `trap bootstrap_exit_cleanup_all EXIT`.
+// the registered cleanup can remove them on process exit.
 //
 // Go doesn't have a real EXIT trap — deferred functions don't run on
-// os.Exit (which logx.Die calls). To keep parity we:
+// os.Exit (which logx.Die calls). To make cleanup reliable we:
 //
 //   - Install a SIGINT / SIGTERM handler that runs cleanup once, then
 //     propagates the signal to the default handler.
@@ -33,8 +32,8 @@ type ExitCleanup struct {
 
 var defaultCleanup = &ExitCleanup{}
 
-// RegisterExitTrap ports bootstrap_register_exit_trap. Idempotent; the
-// first call installs a signal handler.
+// RegisterExitTrap installs the SIGINT/SIGTERM cleanup handler.
+// Idempotent; the first call installs the handler.
 func RegisterExitTrap() {
 	defaultCleanup.once.Do(func() {
 		ch := make(chan os.Signal, 1)
@@ -42,8 +41,8 @@ func RegisterExitTrap() {
 		go func() {
 			<-ch
 			defaultCleanup.run()
-			// Let the process die with a conventional exit code — matches
-			// the bash trap behaviour (cleanup, then propagate).
+			// Let the process die with a conventional exit code
+			// (cleanup, then propagate the signal).
 			os.Exit(130)
 		}()
 	})
@@ -53,8 +52,8 @@ func RegisterExitTrap() {
 // times — subsequent calls are no-ops after a successful first call.
 func Cleanup() { defaultCleanup.run() }
 
-// Ephemeral-file setters called from bootstrap_ensure_kind_config /
-// bootstrap_ensure_capi_manifest_path / bootstrap_sync_clusterctl_config_file.
+// Ephemeral-file setters called as the orchestrator creates each
+// ephemeral artifact (kind config, CAPI manifest, clusterctl config).
 func SetEphemeralKindConfig(path string)       { defaultCleanup.ephemeralKindCfg = path }
 func SetEphemeralCAPIManifest(path string)     { defaultCleanup.ephemeralCAPI = path }
 func SetEphemeralClusterctlConfig(path string) { defaultCleanup.ephemeralClusterCt = path }

@@ -7,8 +7,8 @@ package pricing
 // the orchestrator (`cmd/yage/main.go`) hands to the pricing
 // package once at startup. Pricing fetchers read from the
 // package-level `creds` global rather than calling os.Getenv
-// directly — this keeps the credential-source decision (env var
-// today, kind Secret after Phase D) in one place.
+// directly — this keeps the credential-source decision (env var,
+// kind Secret) in one place.
 //
 // See docs/abstraction-plan.md §16.
 type Credentials struct {

@@ -1,21 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package installer ports install_binary and every ensure_* helper from
-// the original bash port (lines ~1994-2858). These functions install or upgrade
-// third-party CLIs to pinned versions, mirroring the bash behavior:
+// Package installer provides install_binary and the ensure_* helpers
+// that install or upgrade third-party CLIs to pinned versions:
 //
 //   - If the binary is missing, install.
 //   - If the binary is present and versionx.Match reports the pinned version,
 //     do nothing.
 //   - Otherwise warn about the mismatch and reinstall.
 //
-// The underlying download primitive is installBinary, equivalent to:
-//
-//	install_binary <name> <url>
-//
-// which curls the URL into /tmp and then `install`s it into /usr/local/bin
-// with the privilege-escalation helper.
+// The underlying download primitive is installBinary: it curls the URL
+// into /tmp and then `install`s it into /usr/local/bin with the
+// privilege-escalation helper.
 package installer
 
 import (
@@ -122,7 +118,8 @@ func Kind(cfg *config.Config) error {
 	return nil
 }
 
-// Kubectl mirrors ensure_kubectl(): installs from dl.k8s.io.
+// Kubectl ensures kubectl matches cfg.KubectlVersion, installing from
+// dl.k8s.io when missing or out of date.
 func Kubectl(cfg *config.Config) error {
 	if shell.CommandExists("kubectl") {
 		have := kubectlClientGitVersion()
@@ -140,7 +137,8 @@ func Kubectl(cfg *config.Config) error {
 	return installBinary("kubectl", url)
 }
 
-// Clusterctl mirrors ensure_clusterctl().
+// Clusterctl ensures clusterctl matches cfg.ClusterctlVersion,
+// installing the upstream release binary when missing or out of date.
 func Clusterctl(cfg *config.Config) error {
 	if shell.CommandExists("clusterctl") {
 		have := clusterctlGitVersion()
@@ -158,7 +156,8 @@ func Clusterctl(cfg *config.Config) error {
 	return installBinary("clusterctl", url)
 }
 
-// CiliumCLI mirrors ensure_cilium_cli().
+// CiliumCLI ensures cilium CLI matches cfg.CiliumCLIVersion,
+// installing the upstream tarball when missing or out of date.
 func CiliumCLI(cfg *config.Config) error {
 	if shell.CommandExists("cilium") {
 		have := firstVersionOn("cilium", "version", "2>&1")
@@ -177,7 +176,9 @@ func CiliumCLI(cfg *config.Config) error {
 	return nil
 }
 
-// ArgoCDCLI mirrors ensure_argocd_cli(). Linux-only.
+// ArgoCDCLI ensures the argocd CLI matches cfg.ArgoCDVersion,
+// installing the upstream release binary when missing or out of date.
+// Linux-only.
 func ArgoCDCLI(cfg *config.Config) error {
 	if runtime.GOOS != "linux" {
 		logx.Die("argocd CLI install is supported on Linux only (amd64/arm64), not %s.", runtime.GOOS)
@@ -201,8 +202,8 @@ func ArgoCDCLI(cfg *config.Config) error {
 	return installBinary("argocd", url)
 }
 
-// KyvernoCLI mirrors ensure_kyverno_cli(). Linux-only; amd64 uses x86_64 in
-// the asset name.
+// KyvernoCLI ensures the kyverno CLI matches cfg.KyvernoCLIVersion.
+// Linux-only; amd64 uses x86_64 in the asset name.
 func KyvernoCLI(cfg *config.Config) error {
 	if runtime.GOOS != "linux" {
 		logx.Die("kyverno CLI install is supported on Linux only (amd64/arm64), not %s.", runtime.GOOS)
@@ -233,7 +234,8 @@ func KyvernoCLI(cfg *config.Config) error {
 	return nil
 }
 
-// Cmctl mirrors ensure_cmctl(). Linux-only.
+// Cmctl ensures the cmctl (cert-manager) CLI matches
+// cfg.CmctlVersion. Linux-only.
 func Cmctl(cfg *config.Config) error {
 	if runtime.GOOS != "linux" {
 		logx.Die("cmctl install is supported on Linux only (amd64/arm64), not %s.", runtime.GOOS)
@@ -259,9 +261,8 @@ func Cmctl(cfg *config.Config) error {
 	return nil
 }
 
-// SystemDependencies mirrors ensure_system_dependencies(): git, curl, python3.
-// Python3 is still required for the unported bash→Python inline scripts; as
-// those get ported over, python3 can be removed from this list.
+// SystemDependencies installs the host system packages yage needs:
+// git, curl, python3.
 func SystemDependencies() error {
 	logx.Log("Checking and installing system-wide dependencies...")
 	for _, p := range []string{"git", "curl", "python3"} {
@@ -371,9 +372,9 @@ func fetchAll(url string) (string, error) {
 }
 
 // HasArm64Image reports whether an image has an arm64 variant in its
-// Docker manifest list. Replaces the bash `docker manifest inspect |
-// python3` pipeline with native Go JSON parsing. Returns false on any
-// error (docker missing, network, image absent).
+// Docker manifest list. Wraps `docker manifest inspect` with native Go
+// JSON parsing. Returns false on any error (docker missing, network,
+// image absent).
 func HasArm64Image(image string) bool {
 	if !shell.CommandExists("docker") {
 		return false
@@ -428,8 +429,9 @@ func BuildIfNoArm64(cfg *config.Config, image, repo, tag, dir, cluster string) e
 	return shell.Run("kind", "load", "docker-image", image, "--name", cluster)
 }
 
-// OpenTofu mirrors ensure_opentofu(): downloads the OpenTofu release zip
-// and extracts the `tofu` binary into /usr/local/bin.
+// OpenTofu ensures the `tofu` binary matches cfg.OpenTofuVersion,
+// downloading the OpenTofu release zip and extracting `tofu` into
+// /usr/local/bin when missing or out of date.
 //
 // `tofu version -json` emits the same schema Terraform did, including the
 // `terraform_version` key — we reuse the existing parser for that reason.
@@ -462,10 +464,8 @@ func OpenTofu(cfg *config.Config) error {
 
 // --- helpers ---
 
-// firstVersionOn runs `name args...` and extracts the first "vX.Y.Z"-looking
-// token from stdout+stderr, matching the bash idiom:
-//
-//	cmd --version 2>&1 | grep -oE 'v?[0-9][0-9.]+' | head -1
+// firstVersionOn runs `name args...` and extracts the first
+// "vX.Y.Z"-looking token from stdout+stderr.
 func firstVersionOn(name string, args ...string) string {
 	// strip the 2>&1 shell sentinel if present in args
 	cleaned := make([]string, 0, len(args))
@@ -567,8 +567,8 @@ func orUnknown(v string) string {
 	return v
 }
 
-// installSystemPackage mirrors the apt-get/dnf/yum/apk branching from
-// ensure_system_dependencies for a single package name.
+// installSystemPackage installs a single OS package, branching by the
+// available package manager (apt-get / dnf / yum / apk).
 func installSystemPackage(pkg string) error {
 	switch {
 	case shell.CommandExists("apt-get"):

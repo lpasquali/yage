@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package sysinfo ports small bash helpers around OS/arch detection and
-// "is_true"-style bool parsing.
+// Package sysinfo provides OS/arch detection helpers and an
+// "is_true"-style bool parser.
 package sysinfo
 
 import (
@@ -12,7 +12,6 @@ import (
 )
 
 // Arch maps `uname -m` to the Go-release binary convention.
-// Mirrors _arch() in the original bash port.
 func Arch() string {
 	out, err := exec.Command("uname", "-m").Output()
 	if err != nil {
@@ -45,8 +44,8 @@ func OS() string {
 	return strings.ToLower(strings.TrimSpace(string(out)))
 }
 
-// IsTrue mirrors the bash is_true() helper: matches the affirmative strings
-// case-insensitively and treats everything else as false.
+// IsTrue matches affirmative strings case-insensitively and treats
+// everything else as false.
 func IsTrue(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "1", "t", "true", "y", "yes", "on":

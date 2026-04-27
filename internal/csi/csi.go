@@ -13,7 +13,7 @@
 //   2. DefaultsFor(cfg.InfraProvider) — the per-provider default
 //      list when the operator hasn't picked. Same drop-unknown-
 //      with-warning behavior, since DefaultsFor() may name drivers
-//      that haven't shipped yet (Phase F is scoped to AWS/Azure/GCP).
+//      that aren't yet registered.
 //
 // Selector returns a fresh slice on every call; callers may sort or
 // trim freely without affecting the registry.
@@ -32,9 +32,8 @@ import (
 //
 // Unknown driver names produce a logx.Warn line and are skipped —
 // the orchestrator continues with whatever drivers DID register.
-// That keeps a partial Phase F (today: AWS/Azure/GCP only) from
-// breaking dry-run plans for providers whose default driver hasn't
-// landed yet.
+// That keeps a partial driver set from breaking dry-run plans for
+// providers whose default driver hasn't been registered yet.
 func Selector(cfg *config.Config) []Driver {
 	names := cfg.CSI.Drivers
 	if len(names) == 0 {

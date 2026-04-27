@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package shell ports RUN_PRIVILEGED and adds small exec helpers the rest of
-// the bootstrap relies on (capture stdout, run with tty, etc.).
-//
-// Bash equivalent of the root-elevation helper:
-//
-//	RUN_PRIVILEGED() { [[ "$(id -u)" -eq 0 ]] && "$@" || sudo "$@"; }
+// Package shell provides RUN_PRIVILEGED root-elevation and small exec
+// helpers (capture stdout, run with tty, etc.). RunPrivileged invokes
+// the command directly when the process already runs as root,
+// otherwise re-invokes it via sudo.
 package shell
 
 import (
@@ -159,16 +157,16 @@ func CommandExists(name string) bool {
 	return err == nil
 }
 
-// RequireCmd dies with the bash die() format when `name` is not on $PATH.
-// Mirrors require_cmd.
+// RequireCmd dies with the standard die() format when `name` is not
+// on $PATH.
 func RequireCmd(name string) {
 	if !CommandExists(name) {
 		die("Required command not found on PATH: " + name)
 	}
 }
 
-// RequireFile dies with the bash die() format when `path` is not a regular
-// file. Mirrors require_file.
+// RequireFile dies with the standard die() format when `path` is not
+// a regular file.
 func RequireFile(path string) {
 	fi, err := os.Stat(path)
 	if err != nil || fi.IsDir() {

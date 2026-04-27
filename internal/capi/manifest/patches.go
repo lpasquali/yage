@@ -31,12 +31,11 @@ import (
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
 )
 
-// ApplyRoleResourceOverrides ports apply_role_resource_overrides.
-// Rewrites disk/sizeGb/numSockets/numCores/memoryMiB for every
-// ProxmoxMachineTemplate block whose metadata.name contains "control-plane"
-// or "worker", converts a few comma-scalar fields to YAML lists
-// (allowedNodes, dnsServers, addresses), and ensures a
-// schedulerHints.memoryAdjustment block on ProxmoxCluster.
+// ApplyRoleResourceOverrides rewrites disk/sizeGb/numSockets/numCores/
+// memoryMiB for every ProxmoxMachineTemplate block whose metadata.name
+// contains "control-plane" or "worker", converts a few comma-scalar
+// fields to YAML lists (allowedNodes, dnsServers, addresses), and
+// ensures a schedulerHints.memoryAdjustment block on ProxmoxCluster.
 func ApplyRoleResourceOverrides(cfg *config.Config) error {
 	raw, err := os.ReadFile(cfg.CAPIManifest)
 	if err != nil {
@@ -90,9 +89,8 @@ func patchPMTBlock(text, role string, h struct {
 	disk, size, sockets, cores, mem, template string
 },
 ) string {
-	// Bash uses a single regex with dotall + greedy; Go's RE2 can do that
-	// but not with negative lookahead on the doc separator. We split
-	// doc-by-doc, apply per-doc, and rejoin.
+	// Go's RE2 can do dotall + greedy but not negative lookahead on the
+	// doc separator. We split doc-by-doc, apply per-doc, and rejoin.
 	parts := strings.Split(text, "\n---\n")
 	for i, doc := range parts {
 		if !strings.Contains(doc, "kind: ProxmoxMachineTemplate") {
@@ -123,7 +121,7 @@ func replaceFirstPerLine(s, pattern, repl string) string {
 }
 
 // scalarCSVToYAMLList converts `<key>: "a,b,c"` (or single value) into a
-// YAML block sequence. Matches the bash scalar_to_yaml_list closure.
+// YAML block sequence.
 func scalarCSVToYAMLList(text, key string) string {
 	pat := regexp.MustCompile(`(?m)^( *)(` + regexp.QuoteMeta(key) + `):\s*"?([^"\n\[]+)"?\s*$`)
 	return pat.ReplaceAllStringFunc(text, func(line string) string {
@@ -153,7 +151,7 @@ func scalarCSVToYAMLList(text, key string) string {
 // ProxmoxCluster .spec when it is not already present. Identifies the
 // correct document by matching kind + apiVersion at line start (not
 // strings.Contains, which false-positives on the CAPI Cluster's
-// infrastructureRef). Matches bash inject_memory_adjustment.
+// infrastructureRef).
 var reKindProxmoxCluster = regexp.MustCompile(`(?m)^kind:\s*ProxmoxCluster\s*$`)
 var reAPIInfraProxmox = regexp.MustCompile(`(?m)^apiVersion:\s*infrastructure\.cluster\.x-k8s\.io/`)
 var reSchedulerHints = regexp.MustCompile(`(?m)^  schedulerHints:`)
@@ -310,8 +308,8 @@ func PatchProxmoxMachineTemplateSpecRevisions(cfg *config.Config) (string, error
 
 	pmtKind := regexp.MustCompile(`(?m)^kind:\s*ProxmoxMachineTemplate\s*$`)
 	infraAPI := regexp.MustCompile(`(?m)^apiVersion:\s*infrastructure\.cluster\.x-k8s\.io/`)
-	// metadata block up to `spec:` (indent 0) — bash uses non-greedy .*?
-	// with DOTALL; Go's RE2 needs us to find the boundary ourselves.
+	// metadata block up to `spec:` (indent 0). Go's RE2 lacks non-greedy
+	// dotall, so we find the boundary ourselves.
 	nameRE := regexp.MustCompile(`(?m)^  name:\s*(\S+)\s*$`)
 	// Trailing -t<8hex> strip.
 	stemRE := regexp.MustCompile(`^(.*)-t[0-9a-f]{8}$`)

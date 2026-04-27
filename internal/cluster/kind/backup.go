@@ -20,16 +20,18 @@ import (
 	"github.com/lpasquali/yage/internal/platform/shell"
 )
 
-// Backup ports kind_bootstrap_state_backup.
+// Backup writes a tar.gz snapshot of the kind management cluster's
+// bootstrap state.
 //
-// TODO: backup is intentionally still implemented via `kubectl get ... -o json`
-// shell-outs. Re-implementing it on top of the typed/dynamic client in
-// internal/k8sclient would be straightforward, but the resulting tarball
-// layout (bytes inside data/<ns>/objects.jsonl in particular) MUST stay
-// byte-compatible with the bash-produced format so existing backups remain
-// restorable. Reaching that compatibility bar against arbitrary
-// CRDs+namespace contents is high-risk; the kubectl-based path is the
-// canonical reference. Migrate when there is a comprehensive round-trip test.
+// Backup is intentionally implemented via `kubectl get ... -o json`
+// shell-outs. The resulting tarball layout (bytes inside
+// data/<ns>/objects.jsonl in particular) MUST stay byte-compatible
+// with the documented format so existing backups remain restorable.
+// Re-implementing it on top of the typed/dynamic client in
+// internal/k8sclient would be straightforward, but reaching that
+// compatibility bar against arbitrary CRDs + namespace contents is
+// high-risk; the kubectl-based path is the canonical reference.
+// Migrate when there is a comprehensive round-trip test.
 //
 // Steps:
 //  1. require kubectl on PATH and the kind-<KIND_CLUSTER_NAME> context to exist.
@@ -132,7 +134,7 @@ func Backup(cfg *config.Config, outPath string) error {
 		if err := writeArchive(tmp, outPathFinal, nil); err != nil {
 			return err
 		}
-		// bash removes $abs after writing $abs.gz — harmless if it doesn't exist
+		// remove $abs after writing $abs.gz — harmless if it doesn't exist
 		_ = os.Remove(abs)
 		logx.Log("Wrote %s (%s) — encrypt: none", outPathFinal, humanSize(outPathFinal))
 	case "age":

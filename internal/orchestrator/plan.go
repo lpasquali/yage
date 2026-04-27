@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package bootstrap — global dry-run plan printer.
+// Global dry-run plan printer for the orchestrator package.
 //
 // PrintPlan is invoked from Run() when cfg.DryRun is true. It walks the
 // orchestrator's phases and prints a structured "this is what the next

@@ -23,9 +23,10 @@ import (
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
-// ResolveBootstrapContext ports _resolve_bootstrap_kubectl_context.
-// Returns "kind-<KIND_CLUSTER_NAME>" if that context exists, otherwise
-// the current context if it is a kind context, otherwise "" + false.
+// ResolveBootstrapContext returns the kubeconfig context name yage
+// should target for bootstrap: "kind-<KIND_CLUSTER_NAME>" if that
+// context exists, otherwise the current context if it is a kind
+// context, otherwise "" + false.
 func ResolveBootstrapContext(cfg *config.Config) (string, bool) {
 	name := cfg.KindClusterName
 	if name == "" {
@@ -44,9 +45,9 @@ func ResolveBootstrapContext(cfg *config.Config) (string, bool) {
 	return "", false
 }
 
-// WaitForServiceEndpoint ports wait_for_service_endpoint. Polls every 5s up
-// to timeout (default 300s) for at least one endpoint address on the
-// named Service. Dies on timeout, matching bash.
+// WaitForServiceEndpoint polls every 5s up to timeout (default 300s)
+// for at least one endpoint address on the named Service. Dies on
+// timeout.
 func WaitForServiceEndpoint(ns, svc string, timeout time.Duration) {
 	if timeout == 0 {
 		timeout = 300 * time.Second
@@ -71,8 +72,8 @@ func WaitForServiceEndpoint(ns, svc string, timeout time.Duration) {
 	logx.Die("Timed out waiting for webhook endpoint: %s/%s", ns, svc)
 }
 
-// ApplyWorkloadManifestToManagementCluster ports
-// apply_workload_cluster_manifest_to_management_cluster.
+// ApplyWorkloadManifestToManagementCluster server-side-applies the
+// workload Cluster manifest against the kind management context.
 //
 // Splits the multi-doc YAML on "\n---\n" boundaries; for each document,
 // when it is a ProxmoxCluster and a non-deleting object of that name
@@ -81,8 +82,7 @@ func WaitForServiceEndpoint(ns, svc string, timeout time.Duration) {
 // connection-refused on reruns); otherwise server-side-applies the doc
 // through the dynamic client.
 //
-// Returns an error on the first failure, matching the bash `|| return $rc`
-// semantics.
+// Returns an error on the first failure.
 func ApplyWorkloadManifestToManagementCluster(cfg *config.Config, manifestPath string) error {
 	if _, err := os.Stat(manifestPath); err != nil {
 		logx.Die("Manifest not found: %s", manifestPath)
@@ -99,8 +99,7 @@ func ApplyWorkloadManifestToManagementCluster(cfg *config.Config, manifestPath s
 
 	ctx := context.Background()
 
-	// Split on "\n---\n" boundaries, trim, drop empty shards. Matches the
-	// exact split used in the bash inline Python.
+	// Split on "\n---\n" boundaries, trim, drop empty shards.
 	for _, p := range strings.Split(string(raw), "\n---\n") {
 		doc := strings.TrimSpace(p)
 		if doc == "" {

@@ -16,9 +16,9 @@ import (
 	"github.com/lpasquali/yage/internal/platform/shell"
 )
 
-// writeKindDir ports kind_bootstrap_state_backup_write_kind_dir.
-// Creates <tmp>/kind/{kind-config.yaml, meta.json, README} so the archive
-// has everything needed to recreate the kind cluster on a fresh host.
+// writeKindDir creates <tmp>/kind/{kind-config.yaml, meta.json, README}
+// so the archive has everything needed to recreate the kind cluster
+// on a fresh host.
 //
 // kind-config.yaml is taken from:
 //  1. cfg.KindConfig when that file exists on disk ("KIND_CONFIG_file"),

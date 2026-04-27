@@ -7,8 +7,9 @@ The Go binary lives in `cmd/yage` and dispatches to
 
 `yage` provisions a Cluster API management plane (in a local kind
 cluster) and brings up a workload cluster on top of it across any of
-twelve registered providers (Proxmox is the most-mature path; others
-are in flight). It layers in a CNI (Cilium), a CSI (per-provider),
+twelve registered providers (Proxmox is the most-wired path; the
+other providers vary in surface coverage). It layers in a CNI
+(Cilium), a CSI (per-provider),
 and a GitOps app-of-apps surface (Argo CD on the workload, fed by
 CAAPH HelmChartProxy from the management cluster). The Go code is
 organised as one orchestrator package and a dozen-plus focused leaf
@@ -373,7 +374,7 @@ final phase follows the same flip. When `PIVOT_ENABLED=false` (the default),
 kind remains the management plane and workload Cluster CRs are applied to
 it directly.
 
-The eight pivot steps, with their Go entry points in the new
+The eight pivot steps, with their Go entry points in the
 `internal/capi/pivot/` package:
 
 1. **EnsureManagementCluster** — provision the single-node mgmt cluster on
@@ -596,7 +597,7 @@ Counts produced from
 - `internal/cluster/kind/backup.go:163,169,188,337` — backup-side `kubectl get`
   and `kubectl api-resources` and `kubectl config get-contexts`, used to
   enumerate every namespaced resource type per namespace and dump them as
-  JSON Lines. Equivalent to the bash backup; same trade-off as restore.
+  JSON Lines. Same trade-off as restore.
 - `internal/capi/argocd/argocdx.go:314` — long-lived `kubectl port-forward`
   for `--argocd-port-forward`. The port-forwarding behaviour with proper
   signal forwarding and re-connect is essentially what the kubectl
@@ -639,9 +640,8 @@ in-process to replace shell-outs:
 - `sigs.k8s.io/kind` v0.31.0 — pulled in for the kind config types used
   by `internal/cluster/kind` / `EnsureKindConfig`.
 - `helm.sh/helm/v3` — _not yet a direct dep in go.mod_; CAAPH authoring
-  is currently rendered through `internal/capi/helmvalues` + `sigs.k8s.io/yaml`
-  rather than embedding helm. Listed here as a future swap target the
-  prompt anticipated.
+  is rendered through `internal/capi/helmvalues` + `sigs.k8s.io/yaml`
+  rather than embedding helm. Listed here as a future swap target.
 - `sigs.k8s.io/cluster-api` — _not yet a direct dep in go.mod_; Cluster
   / KubeadmControlPlane / MachineDeployment are still authored as YAML
   through `clusterctl generate cluster` and patched in

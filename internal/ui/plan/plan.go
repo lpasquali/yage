@@ -11,8 +11,8 @@
 //
 // Three concrete renderers ship with the package:
 //
-//   - TextWriter writes to an io.Writer in the same Unicode marker
-//     style the bash-era plan used (▸ section, • bullet, ◦ skip:).
+//   - TextWriter writes to an io.Writer using the Unicode marker
+//     style of the plan output (▸ section, • bullet, ◦ skip:).
 //     This is what the production --dry-run path constructs.
 //   - CapturingWriter records every call as a structured Event.
 //     Snapshot tests in internal/orchestrator use it to assert plan

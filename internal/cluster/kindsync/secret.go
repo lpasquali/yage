@@ -21,7 +21,7 @@ import (
 //
 // The label block is preserved from the existing object when present.
 // Missing AllowedKeys are not erased on the kind side (data is merged,
-// not replaced) — matches the bash Python behaviour.
+// not replaced).
 type kindSecret struct {
 	Context     string
 	Namespace   string
@@ -32,10 +32,9 @@ type kindSecret struct {
 	LookupValue func(key string) string
 }
 
-// apply mirrors the `printf '%s' "$existing_json" | python3 -c '...' |
-// kubectl apply -f -` pipeline in bash. Returns nil on success; warns
-// and returns an error on a failed apply so callers can log and move on
-// (the bash uses `|| warn` then continues).
+// apply server-side-applies the merged Secret. Returns nil on success;
+// warns and returns an error on a failed apply so callers can log and
+// move on.
 func (s kindSecret) apply() error {
 	cli, err := k8sclient.ForContext(s.Context)
 	if err != nil {
@@ -78,8 +77,7 @@ func (s kindSecret) apply() error {
 	return nil
 }
 
-// ensureNamespace mirrors the idempotent
-// `kubectl create ns ... --dry-run=client -o yaml | kubectl apply -f -`.
+// ensureNamespace idempotently creates the namespace if absent.
 func ensureNamespace(kctx, ns string) error {
 	cli, err := k8sclient.ForContext(kctx)
 	if err != nil {

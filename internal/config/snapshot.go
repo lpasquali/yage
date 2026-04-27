@@ -25,7 +25,7 @@ import (
 
 // SnapshotField is a single entry in the snapshot schema.
 type SnapshotField struct {
-	// EnvName is the bash-style upper-snake key used on the wire.
+	// EnvName is the upper-snake env-var key used on the wire.
 	EnvName string
 	// ExplicitName is the name of the companion *_EXPLICIT env flag that
 	// tells merge logic to keep the current value (CLI-locked). Empty
@@ -40,9 +40,9 @@ type SnapshotField struct {
 // Snapshot returns the ordered field schema bound to c. Callers may
 // iterate this slice to emit YAML or walk it to overlay a KV map.
 //
-// Fields are listed in the same visual order as the bash
-// `_bootstrap_cfg_snapshot_vars` array (L3622-L3668) so a diff against
-// bash is straightforward. Boolean fields are serialised as "true"/"false".
+// Fields are listed in a stable visual order so the round-tripped
+// config.yaml stays diff-friendly. Boolean fields are serialised as
+// "true"/"false".
 func (c *Config) Snapshot() []SnapshotField {
 	sp := func(envName string, p *string) SnapshotField {
 		return SnapshotField{EnvName: envName, Get: func() string { return *p }, Set: func(v string) { *p = v }}
@@ -232,9 +232,8 @@ func (c *Config) Snapshot() []SnapshotField {
 	}
 }
 
-// SnapshotYAML ports _get_all_bootstrap_variables_as_yaml. Emits one
-// `KEY: "value"` line per non-empty snapshot field, with the value JSON-
-// quoted to match bash's `json.dumps` quoting.
+// SnapshotYAML emits one `KEY: "value"` line per non-empty snapshot
+// field, with the value JSON-quoted.
 //
 // Token/secret values never appear — the set is non-secret by
 // construction (those keys are absent from the snapshot schema). No

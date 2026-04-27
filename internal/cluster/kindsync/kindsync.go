@@ -21,12 +21,10 @@ import (
 	"github.com/lpasquali/yage/internal/platform/shell"
 )
 
-// SyncBootstrapConfigToKind ports sync_bootstrap_config_to_kind.
-// Requires kubectl + kind on PATH and the resolved kind context to match
-// an existing kind cluster. Delegates the real work to the (still
-// unported) _get_all_bootstrap_variables_as_yaml /
-// apply_bootstrap_config_to_management_cluster pair — emits a warn for
-// now so callers see the gap.
+// SyncBootstrapConfigToKind syncs the current cfg snapshot into the
+// kind management cluster as a Secret. Requires kubectl + kind on
+// PATH and the resolved kind context to match an existing kind
+// cluster.
 func SyncBootstrapConfigToKind(cfg *config.Config) error {
 	if !shell.CommandExists("kind") {
 		return nil
@@ -156,10 +154,9 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 	return nil
 }
 
-// applyAdminYAMLToKind ports _apply_proxmox_bootstrap_admin_yaml_to_kind.
-// Merges existing Secret data with a generated proxmox-admin.yaml blob
-// (PROXMOX_URL + PROXMOX_ADMIN_* lines). No-op when all admin env vars
-// are empty and there is nothing to write.
+// applyAdminYAMLToKind merges existing Secret data with a generated
+// proxmox-admin.yaml blob (PROXMOX_URL + PROXMOX_ADMIN_* lines). No-op
+// when all admin env vars are empty and there is nothing to write.
 func applyAdminYAMLToKind(cfg *config.Config, kctx, targetSecret string) error {
 	if targetSecret == "" {
 		return nil
@@ -179,8 +176,8 @@ func applyAdminYAMLToKind(cfg *config.Config, kctx, targetSecret string) error {
 		return nil
 	}
 
-	// Build the flat YAML body: lines of `KEY: "value"` using JSON quoting
-	// for values, matching the bash pyjson.dumps().
+	// Build the flat YAML body: lines of `KEY: "value"` using JSON
+	// quoting for values.
 	var sb strings.Builder
 	for _, k := range adminKeys {
 		v := env[k]
@@ -235,10 +232,10 @@ func applyAdminYAMLToKind(cfg *config.Config, kctx, targetSecret string) error {
 	return nil
 }
 
-// UpdateCapmoxManagerSecretOnKind ports update_capmox_manager_secret_on_kind.
-// Writes url/token/secret into capmox-system/capmox-manager-credentials —
-// required so a deleted in-cluster capmox credential is restored on the
-// next sync without waiting for the full Argo / CAAPH loop.
+// UpdateCapmoxManagerSecretOnKind writes url/token/secret into
+// capmox-system/capmox-manager-credentials. Required so a deleted
+// in-cluster capmox credential is restored on the next sync without
+// waiting for the full Argo / CAAPH loop.
 func UpdateCapmoxManagerSecretOnKind(cfg *config.Config) error {
 	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Secret == "" {
 		return nil
@@ -266,9 +263,9 @@ func UpdateCapmoxManagerSecretOnKind(cfg *config.Config) error {
 	return nil
 }
 
-// RolloutRestartCapmoxController ports rollout_restart_capmox_controller.
-// Best-effort: if the deployment is not ready, warn and continue — bash
-// uses `|| warn` so never fails the script.
+// RolloutRestartCapmoxController triggers a rollout-restart of the
+// capmox-controller-manager Deployment. Best-effort: if the deployment
+// is not ready, warn and continue rather than failing.
 func RolloutRestartCapmoxController(cfg *config.Config) {
 	kctx := "kind-" + cfg.KindClusterName
 	cli, err := k8sclient.ForContext(kctx)
@@ -285,11 +282,12 @@ func RolloutRestartCapmoxController(cfg *config.Config) {
 	}
 }
 
-// RolloutRestartProxmoxCSIOnWorkload ports rollout_restart_proxmox_csi_on_workload.
-// Fetches the workload cluster's kubeconfig from the capi Secret on kind,
-// builds an in-process client against it, and restarts
-// proxmox-csi-plugin-controller in the CSI namespace on the workload.
-// No-op when the kubeconfig secret or the target deployment are missing.
+// RolloutRestartProxmoxCSIOnWorkload restarts proxmox-csi-plugin-
+// controller in the CSI namespace on the workload cluster. Fetches
+// the workload cluster's kubeconfig from the capi Secret on kind,
+// builds an in-process client against it, and triggers the rollout.
+// No-op when the kubeconfig secret or the target deployment are
+// missing.
 func RolloutRestartProxmoxCSIOnWorkload(cfg *config.Config) {
 	kctx := "kind-" + cfg.KindClusterName
 	kcfg, err := writeWorkloadKubeconfig(cfg, kctx)

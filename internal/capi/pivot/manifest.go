@@ -210,10 +210,10 @@ func renderManagementManifest(cfg *config.Config, clusterctlCfgPath string) (str
 // values taking precedence.
 //
 // The capimanifest helpers operate on cfg.CAPIManifest globally, so we
-// shadow the relevant fields for the duration of the call. We also
-// re-implement role-resource overrides locally because the bash helper
-// (and its Go port) hard-codes the workload cp/worker config and we
-// need to substitute MGMT_CONTROL_PLANE_* for control-plane PMTs.
+// shadow the relevant fields for the duration of the call. Role-resource
+// overrides are re-implemented locally because the shared helper hard-
+// codes the workload cp/worker config and we need to substitute
+// MGMT_CONTROL_PLANE_* for control-plane PMTs.
 func applyMgmtPatches(cfg *config.Config, manifestPath string) error {
 	// 1) Role/resource overrides — locally implemented (mgmt sizing).
 	if err := mgmtRoleResourceOverrides(cfg, manifestPath); err != nil {

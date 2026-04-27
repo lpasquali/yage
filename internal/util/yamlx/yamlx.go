@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package yamlx ports the tiny flat-YAML helpers the bootstrap uses to
-// read/write ${PROXMOX_BOOTSTRAP_CONFIG_FILE} and other non-nested config
-// files. The bash implementation handles only top-level scalar key:value
-// pairs; we deliberately preserve that narrow contract so behavior matches.
+// Package yamlx provides tiny flat-YAML helpers used to read/write
+// ${PROXMOX_BOOTSTRAP_CONFIG_FILE} and other non-nested config files.
+// The contract is intentionally narrow: only top-level scalar
+// key:value pairs are recognised.
 package yamlx
 
 import (
@@ -13,10 +13,11 @@ import (
 	"strings"
 )
 
-// Matches the bash regex `^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$`.
+// keyValueRE matches a flat top-level "key: value" line.
 var keyValueRE = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$`)
 
-// GetValue ports _get_yaml_value. Returns "" for:
+// GetValue reads a top-level scalar key:value pair from a flat YAML
+// file at path. Returns "" for:
 //   - empty path or key,
 //   - nonexistent file,
 //   - read errors,
@@ -34,7 +35,7 @@ func GetValue(path, key string) string {
 		return ""
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
-		// bash: strip "# ..." comments, rtrim
+		// strip "# ..." comments, rtrim
 		if i := strings.IndexByte(line, '#'); i >= 0 {
 			line = line[:i]
 		}

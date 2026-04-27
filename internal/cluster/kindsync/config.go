@@ -358,9 +358,9 @@ func ApplyBootstrapConfigToManagementCluster(cfg *config.Config) error {
 	return nil
 }
 
-// TryLoadBootstrapConfigFromKind ports try_load_bootstrap_config_from_kind.
-// Used very early (before CLI is parsed) to populate cfg from an existing
-// kind Secret. Returns silently when not available.
+// TryLoadBootstrapConfigFromKind populates cfg from an existing kind
+// Secret. Used very early (before CLI is parsed). Returns silently
+// when not available.
 func TryLoadBootstrapConfigFromKind(cfg *config.Config) {
 	ctx, ok := kubectl.ResolveBootstrapContext(cfg)
 	if !ok {
@@ -413,10 +413,10 @@ func getSecretJSON(kctx, ns, name string) string {
 }
 
 // applySecret server-side-applies a Secret on the given context. The Type
-// is forced to corev1.SecretTypeOpaque, matching the bash `--from-file` /
-// `--from-literal` defaults. Labels, when non-nil, are written through;
-// pass nil to leave any pre-existing labels alone (SSA only sets fields
-// the manifest specifies).
+// is forced to corev1.SecretTypeOpaque, matching kubectl's
+// `--from-file` / `--from-literal` defaults. Labels, when non-nil,
+// are written through; pass nil to leave any pre-existing labels
+// alone (SSA only sets fields the manifest specifies).
 func applySecret(ctx context.Context, cli *k8sclient.Client, ns, name string, data map[string][]byte, labels map[string]string) error {
 	sec := corev1.Secret{
 		TypeMeta: metav1.TypeMeta{

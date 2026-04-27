@@ -8,7 +8,7 @@
 // raw manifests, NOT a Helm chart on a stable repo URL. yage points
 // at the kubernetes-sigs published URL for parity with the other
 // hyperscale drivers; operators using a private mirror can override
-// later via --csi-values-file (out of Phase F MVP). HelmChart
+// later via --csi-values-file. HelmChart
 // returns the upstream chart coordinates; if your environment
 // can't reach those, the orchestrator will surface the chart-pull
 // error at install time and operators can fall back to a manifest-

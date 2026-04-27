@@ -17,9 +17,8 @@ import (
 	"github.com/lpasquali/yage/internal/platform/shell"
 )
 
-// BootstrapDir ports workload_postsync_hooks_bootstrap_dir. In Go this
-// is the directory of the running executable (not BASH_SOURCE). Good
-// enough because the repo root is the same place for either shape.
+// BootstrapDir returns the directory of the running executable; used
+// as the anchor for git-derived URL/ref discovery.
 func BootstrapDir() string {
 	exe, err := os.Executable()
 	if err != nil {
@@ -29,7 +28,7 @@ func BootstrapDir() string {
 	return filepath.Dir(exe)
 }
 
-// DiscoverURL ports workload_postsync_hooks_discover_url. Prefers the
+// DiscoverURL returns the workload postsync-hooks Git URL. Prefers the
 // env override, falls back to the origin remote of the containing git
 // repo (translating git@host:path to https://host/path and appending
 // .git when absent).
@@ -62,7 +61,7 @@ func DiscoverURL(cfg *config.Config) string {
 	return url
 }
 
-// DiscoverRef ports workload_postsync_hooks_discover_ref. Prefers the
+// DiscoverRef returns the workload postsync-hooks Git ref. Prefers the
 // env override, otherwise git branch, otherwise short commit, otherwise
 // "main".
 func DiscoverRef(cfg *config.Config) string {
@@ -86,9 +85,9 @@ func DiscoverRef(cfg *config.Config) string {
 	return "main"
 }
 
-// FullRelpath ports workload_postsync_hooks_full_relpath. Returns
-// "<prefix>/argo-postsync-hooks/<short>" or the path without the prefix
-// when ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_PATH is unset.
+// FullRelpath returns "<prefix>/argo-postsync-hooks/<short>" or the
+// path without the prefix when ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_PATH
+// is unset.
 func FullRelpath(cfg *config.Config, short string) string {
 	if short == "" {
 		return ""
@@ -100,7 +99,7 @@ func FullRelpath(cfg *config.Config, short string) string {
 	return "argo-postsync-hooks/" + short
 }
 
-// ResolveKubectlImage ports workload_postsync_hooks_resolve_kubectl_image.
+// ResolveKubectlImage returns the kubectl image used by postsync hooks.
 // Prefers the env override, otherwise registry.k8s.io/kubectl:<tag> with
 // <tag> derived from the manifest via SmokeKubectlOCITag.
 func ResolveKubectlImage(cfg *config.Config) string {
@@ -110,7 +109,8 @@ func ResolveKubectlImage(cfg *config.Config) string {
 	return "registry.k8s.io/kubectl:" + SmokeKubectlOCITag(cfg)
 }
 
-// KustomizeBlockForJob ports workload_postsync_kustomize_block_for_job.
+// KustomizeBlockForJob renders the workload postsync kustomize block
+// that overrides the kubectl image for the named Job.
 func KustomizeBlockForJob(cfg *config.Config, job string) string {
 	ns := cfg.WorkloadPostsyncNamespace
 	if ns == "" {
@@ -132,10 +132,10 @@ func KustomizeBlockForJob(cfg *config.Config, job string) string {
 `, ns, job, img)
 }
 
-// SmokeK8sVersionForImage ports proxmox_csi_smoke_k8s_version_for_image.
-// Scans CAPI_MANIFEST for a Cluster-topology.version, else
-// KubeadmControlPlane.spec.version; falls back to
-// cfg.WorkloadKubernetesVersion (default v1.35.0).
+// SmokeK8sVersionForImage returns the Kubernetes version to use for
+// the Proxmox CSI smoke-test image. Scans CAPI_MANIFEST for a
+// Cluster-topology.version, else KubeadmControlPlane.spec.version;
+// falls back to cfg.WorkloadKubernetesVersion (default v1.35.0).
 func SmokeK8sVersionForImage(cfg *config.Config) string {
 	fallback := cfg.WorkloadKubernetesVersion
 	if fallback == "" {
@@ -183,8 +183,8 @@ func SmokeK8sVersionForImage(cfg *config.Config) string {
 	return fallback
 }
 
-// SmokeKubectlOCITag ports proxmox_csi_smoke_kubectl_oci_tag: vX.Y.Z,
-// extending X.Y to X.Y.0.
+// SmokeKubectlOCITag returns the kubectl OCI tag (vX.Y.Z) used by the
+// smoke-test image, extending X.Y to X.Y.0 when needed.
 func SmokeKubectlOCITag(cfg *config.Config) string {
 	v := strings.TrimPrefix(SmokeK8sVersionForImage(cfg), "v")
 	if regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(v) {
@@ -193,7 +193,8 @@ func SmokeKubectlOCITag(cfg *config.Config) string {
 	return "v" + v
 }
 
-// SmokeRenderKustomizeBlock ports proxmox_csi_smoke_render_kustomize_block.
+// SmokeRenderKustomizeBlock renders the kustomize block for the
+// proxmox-csi-smoke Job (image override + storage class env).
 func SmokeRenderKustomizeBlock(cfg *config.Config) string {
 	ns := cfg.Providers.Proxmox.CSINamespace
 	sc := cfg.Providers.Proxmox.CSIStorageClassName

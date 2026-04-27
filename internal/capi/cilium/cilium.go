@@ -16,9 +16,9 @@ import (
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
 )
 
-// NeedsKubeProxyReplacement ports cilium_needs_kube_proxy_replacement.
-// CILIUM_KUBE_PROXY_REPLACEMENT is auto|true|false and interacts with
-// CILIUM_INGRESS:
+// NeedsKubeProxyReplacement reports whether Cilium should replace
+// kube-proxy. CILIUM_KUBE_PROXY_REPLACEMENT is auto|true|false and
+// interacts with CILIUM_INGRESS:
 //   - auto / unset: follows CILIUM_INGRESS.
 //   - true / yes / 1 / on: always true.
 //   - false / no / 0 / off: false, but dies if CILIUM_INGRESS is true
@@ -42,15 +42,16 @@ func NeedsKubeProxyReplacement(cfg *config.Config) bool {
 	}
 }
 
-// DefaultLBIPAMPoolCIDRFromNodes ports default_cilium_lb_ipam_pool_cidr_from_nodes.
-// Takes the first IP from the first range in NODE_IP_RANGES, combines it
-// with IP_PREFIX to form a network, and returns the with_prefixlen string
-// (the bash used Python's ipaddress.ip_network(..., strict=False)).
+// DefaultLBIPAMPoolCIDRFromNodes derives a default LB-IPAM pool CIDR
+// from cfg. Takes the first IP from the first range in NODE_IP_RANGES,
+// combines it with IP_PREFIX to form a network, and returns the
+// with_prefixlen string. Uses non-strict network parsing so a host IP
+// inside the prefix is accepted.
 //
-// Returns "" when inputs are insufficient or parsing fails — callers check
-// for empty, like bash did (the Python block had a broad try/except).
+// Returns "" when inputs are insufficient or parsing fails — callers
+// check for empty.
 func DefaultLBIPAMPoolCIDRFromNodes(cfg *config.Config) string {
-	// bash: "$NODE_IP_RANGES | cut -d, -f1 | cut -d- -f1"
+	// "$NODE_IP_RANGES | cut -d, -f1 | cut -d- -f1"
 	ranges := cfg.NodeIPRanges
 	firstRange := ranges
 	if i := strings.IndexByte(ranges, ','); i >= 0 {
@@ -106,17 +107,17 @@ func parseUnsigned(s string) (int, error) {
 	return n, nil
 }
 
-// AppendLBIPAMPoolManifest ports append_cilium_lb_ipam_pool_manifest.
-// Appends a CiliumLoadBalancerIPPool document to manifestPath using either
-// an explicit range (--cilium-lb-ipam-pool-start/--stop) or a CIDR block
-// (default: derived from the node network). Does nothing if CILIUM_LB_IPAM
-// is false, the manifest file doesn't exist, or no pool config is set.
+// AppendLBIPAMPoolManifest appends a CiliumLoadBalancerIPPool document
+// to manifestPath using either an explicit range
+// (--cilium-lb-ipam-pool-start/--stop) or a CIDR block (default:
+// derived from the node network). Does nothing if CILIUM_LB_IPAM is
+// false, the manifest file doesn't exist, or no pool config is set.
 func AppendLBIPAMPoolManifest(cfg *config.Config, manifestPath string) {
 	if !sysinfo.IsTrue(cfg.CiliumLBIPAM) {
 		return
 	}
 	if _, err := os.Stat(manifestPath); err != nil {
-		// Matches bash: only append to an existing file.
+		// Only append to an existing file.
 		return
 	}
 
@@ -148,8 +149,7 @@ func AppendLBIPAMPoolManifest(cfg *config.Config, manifestPath string) {
 	}
 	defer f.Close()
 
-	// Same literal output as the bash heredoc — trailing newline placement
-	// included.
+	// Literal heredoc output — trailing newline placement included.
 	fmt.Fprintf(f, `
 ---
 apiVersion: cilium.io/v2

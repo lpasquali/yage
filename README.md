@@ -29,8 +29,7 @@ bin/yage --dry-run          # plan without applying
 Everything lives under [`docs/`](docs/):
 
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the Go
-  implementation, package-by-package, with notes on the historical
-  bash provenance.
+  implementation, package-by-package.
 - **[providers.md](docs/providers.md)** — how to add a new CAPI
   infrastructure provider behind the `Provider` interface.
 - **[capacity-preflight.md](docs/capacity-preflight.md)** — the
@@ -38,9 +37,9 @@ Everything lives under [`docs/`](docs/):
   provisioning.
 - **[cost-and-pricing.md](docs/cost-and-pricing.md)** — monthly cost
   estimation and cross-cloud cost comparison at planning time.
-- **[abstraction-plan.md](docs/abstraction-plan.md)** — five-phase
-  plan to extract Proxmox-specific code from the orchestrator (the
-  in-progress refactor toward true multi-cloud).
+- **[abstraction-plan.md](docs/abstraction-plan.md)** — design plan
+  for the multi-cloud provider abstraction: how Proxmox-specific
+  code is kept out of the orchestrator's hot path.
 - **[AGENT_SYSTEM_PROMPT.md](docs/AGENT_SYSTEM_PROMPT.md)** —
   system prompt for AI assistants working on this codebase.
 

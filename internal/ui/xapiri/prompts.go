@@ -15,10 +15,13 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"golang.org/x/term"
 )
 
 // dns1123label is the validation regexp for Kubernetes-style names
@@ -69,17 +72,15 @@ func (r *reader) promptString(label, cur string) string {
 	return v
 }
 
-// promptSecret is the sensitive variant. We don't actually disable
-// terminal echo — that requires platform-specific code (golang.org/x/term)
-// and the spec explicitly asks only that we mark them sensitive *for
-// later display*. The prompt label gets a "(sensitive)" hint so the
-// user knows to be careful; the review step masks the value.
+// promptSecret is the sensitive variant used by the reflection-based
+// step6 (cloud providers / generic path). The prompt label gets a
+// "(sensitive)" hint so the user knows to be careful; the review step
+// masks the value.  Echo is NOT disabled here — promptSecretHidden
+// does that for the Proxmox-specific flow.
 func (r *reader) promptSecret(label, cur string) string {
-	display := ""
+	display := "unset"
 	if cur != "" {
 		display = "set"
-	} else {
-		display = "unset"
 	}
 	fmt.Fprintf(r.out, "  %s (sensitive) [%s]: ", label, display)
 	v := r.readLine()
@@ -87,6 +88,39 @@ func (r *reader) promptSecret(label, cur string) string {
 		return cur
 	}
 	return v
+}
+
+// promptSecretHidden disables terminal echo while the operator types a
+// sensitive value (token, password, API secret).  When stdin is not a
+// TTY (pipes, tests, CI) it falls back to the plain visible read so
+// automation can still drive the wizard.  Returns the entered value
+// (or cur on empty input) and any I/O error that isn't EOF.
+func (r *reader) promptSecretHidden(label, cur string) (string, error) {
+	display := "unset"
+	if cur != "" {
+		display = "set"
+	}
+	fmt.Fprintf(r.out, "  %s (hidden) [%s]: ", label, display)
+
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		raw, err := term.ReadPassword(fd)
+		fmt.Fprintln(r.out) // move past the prompt line after hidden input
+		if err != nil {
+			return cur, err
+		}
+		v := strings.TrimRight(string(raw), "\r\n")
+		if v == "" {
+			return cur, nil
+		}
+		return v, nil
+	}
+	// Non-TTY fallback: visible read (CI, piped tests).
+	v := r.readLine()
+	if v == "" {
+		return cur, nil
+	}
+	return v, nil
 }
 
 // promptInt asks for a non-negative integer. Empty input keeps cur;

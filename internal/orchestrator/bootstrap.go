@@ -479,14 +479,14 @@ func Run(cfg *config.Config) int {
 				fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox VE URL (e.g. https://pve.example:8006): ")
 				cfg.Providers.Proxmox.URL = promptx.ReadLine()
 				fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox API TokenID (e.g. capmox@pve!capi): ")
-				cfg.Providers.Proxmox.Token = promptx.ReadLine()
+				cfg.Providers.Proxmox.CAPIToken = promptx.ReadLine()
 				fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox API Token secret (UUID): ")
-				cfg.Providers.Proxmox.Secret = promptx.ReadLine()
+				cfg.Providers.Proxmox.CAPISecret = promptx.ReadLine()
 				_ = kindsync.SyncBootstrapConfigToKind(cfg)
 				_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 				logx.Log("Proxmox API identity updated in kind when the management cluster is reachable. clusterctl on disk is not used by default (temp file for CLI only).")
 			} else {
-				logx.Warn("Skipping interactive creation. Set PROXMOX_URL, PROXMOX_TOKEN, and PROXMOX_SECRET, or add them to %s on kind, or set CLUSTERCTL_CFG to a local YAML you maintain.",
+				logx.Warn("Skipping interactive creation. Set PROXMOX_URL, PROXMOX_CAPI_TOKEN, and PROXMOX_CAPI_SECRET, or add them to %s on kind, or set CLUSTERCTL_CFG to a local YAML you maintain.",
 					cfg.Providers.Proxmox.BootstrapSecretNamespace)
 				logx.Warn("Expected format:")
 				fmt.Fprintln(os.Stderr)
@@ -510,15 +510,15 @@ func Run(cfg *config.Config) int {
 			if cfg.Providers.Proxmox.URL == "" {
 				cfg.Providers.Proxmox.URL = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_URL")
 			}
-			if cfg.Providers.Proxmox.Token == "" {
-				cfg.Providers.Proxmox.Token = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_TOKEN")
+			if cfg.Providers.Proxmox.CAPIToken == "" {
+				cfg.Providers.Proxmox.CAPIToken = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_TOKEN")
 			}
-			if cfg.Providers.Proxmox.Secret == "" {
-				cfg.Providers.Proxmox.Secret = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_SECRET")
+			if cfg.Providers.Proxmox.CAPISecret == "" {
+				cfg.Providers.Proxmox.CAPISecret = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_SECRET")
 			}
 		}
-		cfg.Providers.Proxmox.Secret = pveapi.NormalizeTokenSecret(cfg.Providers.Proxmox.Secret, cfg.Providers.Proxmox.Token)
-		pveapi.ValidateTokenSecret("PROXMOX_SECRET", cfg.Providers.Proxmox.Secret)
+		cfg.Providers.Proxmox.CAPISecret = pveapi.NormalizeTokenSecret(cfg.Providers.Proxmox.CAPISecret, cfg.Providers.Proxmox.CAPIToken)
+		pveapi.ValidateTokenSecret("PROXMOX_CAPI_SECRET", cfg.Providers.Proxmox.CAPISecret)
 		pveapi.RefreshDerivedIdentityTokenIDs(cfg)
 		if cfg.Providers.Proxmox.TemplateID == "" {
 			cfg.Providers.Proxmox.TemplateID = "104"
@@ -531,11 +531,11 @@ func Run(cfg *config.Config) int {
 		if cfg.Providers.Proxmox.URL == "" {
 			missingCreds = append(missingCreds, "PROXMOX_URL")
 		}
-		if cfg.Providers.Proxmox.Token == "" {
-			missingCreds = append(missingCreds, "PROXMOX_TOKEN")
+		if cfg.Providers.Proxmox.CAPIToken == "" {
+			missingCreds = append(missingCreds, "PROXMOX_CAPI_TOKEN")
 		}
-		if cfg.Providers.Proxmox.Secret == "" {
-			missingCreds = append(missingCreds, "PROXMOX_SECRET")
+		if cfg.Providers.Proxmox.CAPISecret == "" {
+			missingCreds = append(missingCreds, "PROXMOX_CAPI_SECRET")
 		}
 		if len(missingCreds) > 0 {
 			logx.Warn("Missing Proxmox configuration: %v", missingCreds)
@@ -545,7 +545,7 @@ func Run(cfg *config.Config) int {
 		// Test Proxmox API connectivity with the clusterctl token.
 		logx.Log("Testing Proxmox API connectivity at %s (clusterctl token)...", pveapi.HostBaseURL(cfg))
 		if err := pveapi.ResolveRegionAndNodeFromClusterctlAPI(cfg); err != nil {
-			logx.Die("Proxmox API connectivity check failed: %v. Verify PROXMOX_URL, PROXMOX_TOKEN, and PROXMOX_SECRET.", err)
+			logx.Die("Proxmox API connectivity check failed: %v. Verify PROXMOX_URL, PROXMOX_CAPI_TOKEN, and PROXMOX_CAPI_SECRET.", err)
 		}
 		logx.Log("Proxmox API reachable.")
 
@@ -553,6 +553,12 @@ func Run(cfg *config.Config) int {
 	} else {
 		ensureNonProxmoxClusterctlCredentials(cfg)
 		clusterctlCfgPath = SyncClusterctlConfigFile(cfg)
+	}
+	// Publish the resolved path so pivot.EnsureManagementCluster (and
+	// any other later callers) can read it from cfg rather than having
+	// it only in the local variable.
+	if clusterctlCfgPath != "" {
+		cfg.ClusterctlCfg = clusterctlCfgPath
 	}
 
 	// --- Check for existing kind clusters ---

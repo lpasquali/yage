@@ -49,10 +49,10 @@ func TestEnvVarBackcompat(t *testing.T) {
 	if got, want := c.Providers.Proxmox.URL, "https://pve.example:8006/api2/json"; got != want {
 		t.Errorf("Providers.Proxmox.URL = %q, want %q", got, want)
 	}
-	if got, want := c.Providers.Proxmox.Token, "tok-123"; got != want {
+	if got, want := c.Providers.Proxmox.CAPIToken, "tok-123"; got != want {
 		t.Errorf("Providers.Proxmox.Token = %q, want %q", got, want)
 	}
-	if got, want := c.Providers.Proxmox.Secret, "sec-456"; got != want {
+	if got, want := c.Providers.Proxmox.CAPISecret, "sec-456"; got != want {
 		t.Errorf("Providers.Proxmox.Secret = %q, want %q", got, want)
 	}
 	if got, want := c.Providers.Proxmox.Node, "pve-1"; got != want {

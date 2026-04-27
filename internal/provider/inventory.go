@@ -41,6 +41,13 @@ type Inventory struct {
 // per-class breakdown (StorageByClass) — empty/nil when the
 // provider has a single backend.
 //
+// On-prem counting convention (Proxmox, vSphere, OpenStack, …):
+//
+//	Cores / MemoryMiB — running VMs only; powered-off VMs release
+//	                    these resources back to the host.
+//	StorageGiB        — all VMs regardless of power state; disk images
+//	                    remain provisioned on storage while the VM exists.
+//
 // StorageByClass keys come from the cloud's storage-class taxonomy:
 //
 //	AWS:        gp3 / io2 / standard / sc1

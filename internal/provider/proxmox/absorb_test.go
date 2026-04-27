@@ -41,7 +41,7 @@ func TestAbsorbConfigYAML(t *testing.T) {
 	tcs := []struct {
 		name, got, want string
 	}{
-		{"Token", cfg.Providers.Proxmox.Token, "from-secret"},
+		{"Token", cfg.Providers.Proxmox.CAPIToken, "from-secret"},
 		{"Region", cfg.Providers.Proxmox.Region, "from-secret-region"},
 		{"CSIStorage", cfg.Providers.Proxmox.CSIStorage, "from-secret-storage"},
 		{"CAPIUserID", cfg.Providers.Proxmox.CAPIUserID, "capi-from-secret"},

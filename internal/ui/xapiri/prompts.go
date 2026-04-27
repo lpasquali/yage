@@ -232,29 +232,39 @@ func (r *reader) info(format string, args ...any) {
 // until the user enters an empty line.  Returns the keys joined with
 // newlines (the format cloud-init and authorized_keys both expect).
 // Pressing enter immediately keeps the existing value (cur) unchanged.
+// On second run, existing keys are shown first so the operator can
+// verify them; any new keys entered are APPENDED to the existing set.
 func (r *reader) promptSSHKeys(cur string) string {
 	fmt.Fprintf(r.out, "\n  SSH public key(s) for VM cloud-init\n")
-	fmt.Fprintf(r.out, "  enter one key per line; empty line to finish")
+	existing := strings.Split(strings.TrimSpace(cur), "\n")
 	if cur != "" {
-		// Show the count of already-configured keys as a hint.
-		n := len(strings.Split(strings.TrimSpace(cur), "\n"))
-		fmt.Fprintf(r.out, " [%d key(s) already set — empty line keeps them]", n)
+		fmt.Fprintf(r.out, "  existing keys:\n")
+		for i, k := range existing {
+			if strings.TrimSpace(k) != "" {
+				fmt.Fprintf(r.out, "    %d: %s\n", i+1, k)
+			}
+		}
+		fmt.Fprintf(r.out, "  add more keys (empty line to keep existing and finish):\n")
+	} else {
+		fmt.Fprintf(r.out, "  enter one key per line; empty line to finish:\n")
 	}
-	fmt.Fprintln(r.out)
 
-	var keys []string
+	var added []string
 	for {
-		fmt.Fprintf(r.out, "  key %d: ", len(keys)+1)
+		fmt.Fprintf(r.out, "  key %d: ", len(existing)+len(added)+1)
 		line := strings.TrimRight(r.readLine(), "\r\n ")
 		if line == "" {
 			break
 		}
-		keys = append(keys, line)
+		added = append(added, line)
 	}
-	if len(keys) == 0 {
+	if len(added) == 0 {
 		return cur // keep existing
 	}
-	return strings.Join(keys, "\n")
+	if cur == "" {
+		return strings.Join(added, "\n")
+	}
+	return cur + "\n" + strings.Join(added, "\n")
 }
 
 // maskValue returns a fixed-width placeholder for sensitive values

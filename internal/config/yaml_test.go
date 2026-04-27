@@ -30,8 +30,8 @@ ARGOCD_ENABLED: "false"
 	if cfg.Providers.Proxmox.URL != "https://pve.example.com:8006" {
 		t.Errorf("URL = %q, want pve.example.com", cfg.Providers.Proxmox.URL)
 	}
-	if cfg.Providers.Proxmox.Token != "root@pam!yage=secret123" {
-		t.Errorf("Token = %q", cfg.Providers.Proxmox.Token)
+	if cfg.Providers.Proxmox.CAPIToken != "root@pam!yage=secret123" {
+		t.Errorf("Token = %q", cfg.Providers.Proxmox.CAPIToken)
 	}
 	if cfg.InfraProvider != "proxmox" {
 		t.Errorf("InfraProvider = %q", cfg.InfraProvider)

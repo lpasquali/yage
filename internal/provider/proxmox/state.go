@@ -30,8 +30,8 @@ func (p *Provider) KindSyncFields(cfg *config.Config) map[string]string {
 		}
 	}
 	add("url", cfg.Providers.Proxmox.URL)
-	add("token", cfg.Providers.Proxmox.Token)
-	add("secret", cfg.Providers.Proxmox.Secret)
+	add("capi_token", cfg.Providers.Proxmox.CAPIToken)
+	add("capi_secret", cfg.Providers.Proxmox.CAPISecret)
 	add("region", cfg.Providers.Proxmox.Region)
 	add("node", cfg.Providers.Proxmox.Node)
 	add("source_node", cfg.Providers.Proxmox.SourceNode)
@@ -139,10 +139,10 @@ func (p *Provider) AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bo
 		switch k {
 		case "PROXMOX_URL":
 			assign(&cfg.Providers.Proxmox.URL, v)
-		case "PROXMOX_TOKEN":
-			assign(&cfg.Providers.Proxmox.Token, v)
-		case "PROXMOX_SECRET":
-			assign(&cfg.Providers.Proxmox.Secret, v)
+		case "PROXMOX_CAPI_TOKEN", "PROXMOX_TOKEN":
+			assign(&cfg.Providers.Proxmox.CAPIToken, v)
+		case "PROXMOX_CAPI_SECRET", "PROXMOX_SECRET":
+			assign(&cfg.Providers.Proxmox.CAPISecret, v)
 		case "PROXMOX_REGION":
 			assign(&cfg.Providers.Proxmox.Region, v)
 		case "PROXMOX_NODE":

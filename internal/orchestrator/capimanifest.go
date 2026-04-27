@@ -310,11 +310,11 @@ func SyncClusterctlConfigFile(cfg *config.Config) string {
 	if cfg.Providers.Proxmox.URL == "" {
 		missing = append(missing, "PROXMOX_URL")
 	}
-	if cfg.Providers.Proxmox.Token == "" {
-		missing = append(missing, "PROXMOX_TOKEN")
+	if cfg.Providers.Proxmox.CAPIToken == "" {
+		missing = append(missing, "PROXMOX_CAPI_TOKEN")
 	}
-	if cfg.Providers.Proxmox.Secret == "" {
-		missing = append(missing, "PROXMOX_SECRET")
+	if cfg.Providers.Proxmox.CAPISecret == "" {
+		missing = append(missing, "PROXMOX_CAPI_SECRET")
 	}
 	if len(missing) > 0 {
 		logx.Die("SyncClusterctlConfigFile: Proxmox credentials are not set. Missing: %s", strings.Join(missing, " "))
@@ -326,7 +326,7 @@ func SyncClusterctlConfigFile(cfg *config.Config) string {
 	}
 	defer f.Close()
 	body := fmt.Sprintf("PROXMOX_URL: %q\nPROXMOX_TOKEN: %q\nPROXMOX_SECRET: %q\n",
-		cfg.Providers.Proxmox.URL, cfg.Providers.Proxmox.Token, cfg.Providers.Proxmox.Secret)
+		cfg.Providers.Proxmox.URL, cfg.Providers.Proxmox.CAPIToken, cfg.Providers.Proxmox.CAPISecret)
 	if _, err := f.WriteString(body); err != nil {
 		logx.Die("Cannot write ephemeral clusterctl config: %v", err)
 	}

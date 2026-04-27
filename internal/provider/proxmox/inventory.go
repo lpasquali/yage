@@ -261,10 +261,15 @@ func fetchExistingUsage(cfg *config.Config) (*existingUsage, error) {
 				continue
 			}
 		}
+		// Disk is provisioned regardless of power state; CPU and RAM are
+		// only consumed by running VMs.
+		out.StorageGB += v.MaxDisk / (1024 * 1024 * 1024)
+		if v.Status != "running" {
+			continue
+		}
 		out.VMCount++
 		out.CPUCores += v.MaxCPU
 		out.MemoryMiB += v.MaxMem / (1024 * 1024)
-		out.StorageGB += v.MaxDisk / (1024 * 1024 * 1024)
 		if v.Pool != "" {
 			out.ByPool[v.Pool]++
 		} else {
@@ -280,8 +285,8 @@ func authForCfg(cfg *config.Config) (auth string, insecure bool, base string, er
 	switch {
 	case cfg.Providers.Proxmox.AdminToken != "" && cfg.Providers.Proxmox.AdminUsername != "":
 		auth = "PVEAPIToken=" + cfg.Providers.Proxmox.AdminUsername + "=" + cfg.Providers.Proxmox.AdminToken
-	case cfg.Providers.Proxmox.Token != "" && cfg.Providers.Proxmox.Secret != "":
-		auth = "PVEAPIToken=" + cfg.Providers.Proxmox.Token + "=" + cfg.Providers.Proxmox.Secret
+	case cfg.Providers.Proxmox.CAPIToken != "" && cfg.Providers.Proxmox.CAPISecret != "":
+		auth = "PVEAPIToken=" + cfg.Providers.Proxmox.CAPIToken + "=" + cfg.Providers.Proxmox.CAPISecret
 	default:
 		return "", false, "", fmt.Errorf("no Proxmox credentials available (set --admin-username/--admin-token or --proxmox-token/--proxmox-secret)")
 	}

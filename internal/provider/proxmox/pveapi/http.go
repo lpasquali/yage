@@ -166,11 +166,11 @@ func ResolveRegionAndNodeFromAdminAPI(cfg *config.Config) error {
 // using PROXMOX_TOKEN + PROXMOX_SECRET (the CAPI token), normalising
 // the secret first.
 func ResolveRegionAndNodeFromClusterctlAPI(cfg *config.Config) error {
-	if cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Secret == "" {
+	if cfg.Providers.Proxmox.CAPIToken == "" || cfg.Providers.Proxmox.CAPISecret == "" {
 		return nil
 	}
-	sec := NormalizeTokenSecret(cfg.Providers.Proxmox.Secret, cfg.Providers.Proxmox.Token)
-	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.Providers.Proxmox.Token, sec)
+	sec := NormalizeTokenSecret(cfg.Providers.Proxmox.CAPISecret, cfg.Providers.Proxmox.CAPIToken)
+	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.Providers.Proxmox.CAPIToken, sec)
 	return ResolveRegionAndNodeFromPVEAuth(cfg, auth)
 }
 
@@ -352,8 +352,8 @@ func ResolveAvailableClusterSetIDForRoles(cfg *config.Config) error {
 			if cfg.Providers.Proxmox.CSITokenID == "" || cfg.Providers.Proxmox.CSITokenID == oldCSITokenID {
 				cfg.Providers.Proxmox.CSITokenID = TokenID(cfg.Providers.Proxmox.CSIUserID, cfg.Providers.Proxmox.CSITokenPrefix, cfg.Providers.Proxmox.IdentitySuffix)
 			}
-			if cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Token == oldCAPITokenID {
-				cfg.Providers.Proxmox.Token = TokenID(cfg.Providers.Proxmox.CAPIUserID, cfg.Providers.Proxmox.CAPITokenPrefix, cfg.Providers.Proxmox.IdentitySuffix)
+			if cfg.Providers.Proxmox.CAPIToken == "" || cfg.Providers.Proxmox.CAPIToken == oldCAPITokenID {
+				cfg.Providers.Proxmox.CAPIToken = TokenID(cfg.Providers.Proxmox.CAPIUserID, cfg.Providers.Proxmox.CAPITokenPrefix, cfg.Providers.Proxmox.IdentitySuffix)
 			}
 			RefreshDerivedIdentityTokenIDs(cfg)
 			RefreshDerivedCiliumClusterID(cfg)

@@ -30,12 +30,15 @@ package kindsync
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
+	"github.com/lpasquali/yage/internal/platform/shell"
 	"github.com/lpasquali/yage/internal/provider"
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
@@ -95,6 +98,13 @@ func WriteBootstrapConfigSecret(cfg *config.Config) error {
 	add("cost.display_currency", cfg.Cost.Currency.DisplayCurrency)
 	add("cost.data_center_location", cfg.Cost.Currency.DataCenterLocation)
 
+	// Full snapshot: network fields, PROXMOX_*, WORKLOAD_CLUSTER_NAME, etc.
+	// Read back by MergeBootstrapConfigFromKind via ApplySnapshotKV so that
+	// a second xapiri run restores everything (not just the prefix-keyed subset).
+	if yaml := cfg.SnapshotYAML(); yaml != "" {
+		data["config.yaml"] = []byte(yaml)
+	}
+
 	return applySecret(bg, cli, BootstrapConfigNamespace, BootstrapConfigSecretName, data, map[string]string{
 		"app.kubernetes.io/managed-by": "yage",
 		"app.kubernetes.io/component":  "bootstrap-config",
@@ -138,6 +148,9 @@ func MergeBootstrapConfigFromKind(cfg *config.Config) error {
 		}
 	}
 
+	// Collect provider-prefixed keys for batch absorption.
+	providerKV := map[string]string{}
+
 	for k, raw := range sec.Data {
 		v := string(raw)
 		switch {
@@ -165,15 +178,95 @@ func MergeBootstrapConfigFromKind(cfg *config.Config) error {
 		case k == "cost.data_center_location":
 			assign(&cfg.Cost.Currency.DataCenterLocation, v)
 		default:
-			// Provider-prefixed keys (proxmox.url, aws.region, …)
-			// are forwarded to the active provider's absorber as
-			// a unified map. Currently only Proxmox absorbs, and
-			// only the uppercase-key shape — lowercase bare keys
-			// are a no-op until per-provider absorbers ship.
-			//
-			// no-op intentional — keep loop going.
-			_ = k
+			// provider-prefixed keys (e.g. "proxmox.admin_token"):
+			// convert "provider.snake_key" → "PROVIDER_SNAKE_KEY" and
+			// batch for Provider.AbsorbConfigYAML absorption.
+			if dot := strings.Index(k, "."); dot > 0 {
+				prefix := strings.ToUpper(k[:dot])
+				suffix := strings.ToUpper(strings.ReplaceAll(k[dot+1:], ".", "_"))
+				providerKV[prefix+"_"+suffix] = v
+			}
 		}
 	}
+	if len(providerKV) > 0 {
+		if prov, err := provider.For(cfg); err == nil {
+			prov.AbsorbConfigYAML(cfg, providerKV)
+		}
+	}
+	// Full snapshot: restores network fields, PROXMOX_*, WORKLOAD_CLUSTER_NAME,
+	// etc. that the prefix-keyed loop above does not cover. ApplySnapshotKV
+	// honours *_EXPLICIT guards so CLI-supplied values always win.
+	if raw, ok := sec.Data["config.yaml"]; ok {
+		kv := parseFlatYAMLOrJSON(string(raw))
+		migrateLegacyKeys(kv)
+		cfg.ApplySnapshotKV(kv)
+	}
 	return nil
+}
+
+// MergeBootstrapConfigFromFirstKindCluster is the zero-argument variant of
+// MergeBootstrapConfigFromKind for when cfg.KindClusterName is empty. It
+// scans every running kind cluster for a yage-system/bootstrap-config Secret:
+//
+//   - 0 found → no-op (cfg.KindClusterName stays empty)
+//   - 1 found → merge silently
+//   - N found → print a numbered menu to stderr and ask which one to use;
+//     if stdin is not a TTY (CI, pipes) the first entry is used with a warning
+func MergeBootstrapConfigFromFirstKindCluster(cfg *config.Config) {
+	out, _, _ := shell.Capture("kind", "get", "clusters")
+	var candidates []string
+	for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", ""), "\n") {
+		name := strings.TrimSpace(ln)
+		if name == "" {
+			continue
+		}
+		cfg.KindClusterName = name
+		if err := MergeBootstrapConfigFromKind(cfg); err == nil && cfg.InfraProvider != "" {
+			candidates = append(candidates, name)
+			// Reset so the next iteration starts clean.
+			cfg.KindClusterName = ""
+			cfg.InfraProvider = ""
+		} else {
+			cfg.KindClusterName = ""
+		}
+	}
+
+	switch len(candidates) {
+	case 0:
+		// No kind cluster has yage data — leave cfg.KindClusterName empty.
+	case 1:
+		cfg.KindClusterName = candidates[0]
+		_ = MergeBootstrapConfigFromKind(cfg)
+	default:
+		chosen := pickKindCluster(candidates)
+		cfg.KindClusterName = chosen
+		_ = MergeBootstrapConfigFromKind(cfg)
+	}
+}
+
+// pickKindCluster prints a numbered menu to stderr and returns the chosen
+// cluster name. Falls back to the first entry when stdin is not a TTY.
+func pickKindCluster(names []string) string {
+	fmt.Fprintln(os.Stderr, "  Multiple kind clusters contain yage data. Which one do you want to use?")
+	for i, n := range names {
+		fmt.Fprintf(os.Stderr, "    %d) %s\n", i+1, n)
+	}
+	// Non-interactive fallback.
+	fi, err := os.Stdin.Stat()
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		fmt.Fprintf(os.Stderr, "  (non-interactive: using %s)\n", names[0])
+		return names[0]
+	}
+	for {
+		fmt.Fprintf(os.Stderr, "  choice [1-%d]: ", len(names))
+		var line string
+		fmt.Fscan(os.Stdin, &line)
+		line = strings.TrimSpace(line)
+		for i, n := range names {
+			if line == fmt.Sprintf("%d", i+1) || line == n {
+				return n
+			}
+		}
+		fmt.Fprintf(os.Stderr, "  invalid choice — enter a number between 1 and %d\n", len(names))
+	}
 }

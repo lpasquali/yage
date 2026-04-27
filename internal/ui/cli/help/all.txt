@@ -210,6 +210,8 @@ OPTIONS
         --ip-prefix N                     IP prefix (default: 24)
         --dns-servers LIST                Comma-separated DNS servers (default: 8.8.8.8,8.8.4.4)
         --allowed-nodes LIST              Allowed Proxmox nodes (default: same as --node)
+        --vm-ssh-keys KEYS                Newline-separated SSH public keys for VM cloud-init.
+                                          Env: VM_SSH_KEYS. Set via --xapiri or export.
 
   CSI add-ons (registry — §20 Phase F)
         --csi-driver NAME                 Install the named CSI driver on the workload cluster.

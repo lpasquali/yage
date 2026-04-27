@@ -36,6 +36,7 @@ import (
 	"strings"
 
 	"github.com/lpasquali/yage/internal/cluster/kind"
+	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/config"
 )
 
@@ -69,6 +70,23 @@ func Run(w io.Writer, cfg *config.Config) int {
 	if err := s.stepKindClusterName(); err != nil {
 		return s.exit(err)
 	}
+	// Load all previously saved state now that we know the kind cluster
+	// name. Two stores exist:
+	//   1. yage-system/proxmox-bootstrap-config — the orchestrator's
+	//      store, written after a real deployment. Contains network
+	//      fields, provider URL/tokens, workload cluster name.
+	//   2. yage-system/bootstrap-config — xapiri's own store, written
+	//      at the end of a successful walkthrough. Contains a full
+	//      snapshot including everything from store 1.
+	// Call 1 first so store 2 (which is fresher when it exists) wins
+	// on overlap. Both are best-effort no-ops when the cluster or Secret
+	// is not yet reachable (first-run case).
+	kindsync.MergeBootstrapSecretsFromKind(cfg)
+	_ = kindsync.MergeBootstrapConfigFromKind(cfg)
+	s.initFromConfig(cfg) // re-seed walkthrough state now that kind merges have run
+	if err := s.stepKubernetesVersion(); err != nil {
+		return s.exit(err)
+	}
 	if !skipKindPrelude() {
 		if err := kind.EnsureClusterUp(cfg, w); err != nil {
 			fmt.Fprintf(w, "xapiri: kind management cluster could not be brought up: %v\n", err)
@@ -97,6 +115,17 @@ func useHuhTUI() bool {
 // form covers steps 1..4 of the cloud fork; cost-compare and the
 // shared tail run unchanged afterwards.
 func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
+	// Speculative merge using the default cluster name so the huh form
+	// sees saved values as its initial field values.
+	if cfg.KindClusterName == "" {
+		cfg.KindClusterName = "yage-mgmt"
+	}
+	kindsync.MergeBootstrapSecretsFromKind(cfg)
+	_ = kindsync.MergeBootstrapConfigFromKind(cfg)
+	s.initFromConfig(cfg) // re-seed walkthrough state now that kind merges have run
+	if err := s.stepKubernetesVersion(); err != nil {
+		return s.exit(err)
+	}
 	if !skipKindPrelude() {
 		if err := kind.EnsureClusterUp(cfg, w); err != nil {
 			fmt.Fprintf(w, "xapiri: kind management cluster could not be brought up: %v\n", err)

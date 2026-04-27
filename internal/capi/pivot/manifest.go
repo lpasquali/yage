@@ -587,6 +587,9 @@ var (
 )
 
 func injectMemoryAdjustment(text, mem string) string {
+	if mem == "" {
+		return text
+	}
 	parts := strings.Split(text, "\n---\n")
 	for i, doc := range parts {
 		if !reKindProxmoxCluster.MatchString(doc) {
@@ -597,6 +600,12 @@ func injectMemoryAdjustment(text, mem string) string {
 		}
 		if reSchedulerHints.MatchString(doc) {
 			break
+		}
+		// \n---\n splitting strips the trailing \n from the last line of each
+		// doc, so reSpecBlock's (?:  .*\n)+ misses it and leaves it dangling
+		// after schedulerHints at the wrong indentation. Add it back.
+		if !strings.HasSuffix(doc, "\n") {
+			doc += "\n"
 		}
 		loc := reSpecBlock.FindStringIndex(doc)
 		if loc == nil {

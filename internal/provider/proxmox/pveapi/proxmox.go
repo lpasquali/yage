@@ -123,9 +123,9 @@ func RefreshDerivedIdentityUserIDs(cfg *config.Config) {
 // with a real secret (from kind) produces a 401.
 func RefreshDerivedIdentityTokenIDs(cfg *config.Config) {
 	RefreshDerivedIdentityUserIDs(cfg)
-	if cfg.Providers.Proxmox.Token == "" && cfg.Providers.Proxmox.Secret == "" &&
+	if cfg.Providers.Proxmox.CAPIToken == "" && cfg.Providers.Proxmox.CAPISecret == "" &&
 		cfg.Providers.Proxmox.CAPIUserID != "" && cfg.Providers.Proxmox.CAPITokenPrefix != "" {
-		cfg.Providers.Proxmox.Token = TokenID(cfg.Providers.Proxmox.CAPIUserID, cfg.Providers.Proxmox.CAPITokenPrefix, cfg.Providers.Proxmox.IdentitySuffix)
+		cfg.Providers.Proxmox.CAPIToken = TokenID(cfg.Providers.Proxmox.CAPIUserID, cfg.Providers.Proxmox.CAPITokenPrefix, cfg.Providers.Proxmox.IdentitySuffix)
 	}
 	if cfg.Providers.Proxmox.CSITokenID == "" && cfg.Providers.Proxmox.CSITokenSecret == "" &&
 		cfg.Providers.Proxmox.CSIUserID != "" && cfg.Providers.Proxmox.CSITokenPrefix != "" {
@@ -238,14 +238,14 @@ func InferIdentityFromTokenIDs(cfg *config.Config) bool {
 	if !strings.Contains(cfg.Providers.Proxmox.CSITokenID, "!") {
 		return false
 	}
-	if !strings.Contains(cfg.Providers.Proxmox.Token, "!") {
+	if !strings.Contains(cfg.Providers.Proxmox.CAPIToken, "!") {
 		return false
 	}
 	csiUser, csiAfter, ok := strings.Cut(cfg.Providers.Proxmox.CSITokenID, "!")
 	if !ok {
 		return false
 	}
-	capiUser, capiAfter, ok := strings.Cut(cfg.Providers.Proxmox.Token, "!")
+	capiUser, capiAfter, ok := strings.Cut(cfg.Providers.Proxmox.CAPIToken, "!")
 	if !ok {
 		return false
 	}

@@ -83,7 +83,17 @@ func main() {
 	//
 	// Fill-empty-only semantics: env values that were explicitly
 	// set survive the merge.
-	_ = kindsync.MergeBootstrapConfigFromKind(cfg)
+	//
+	// When no cluster name was provided (no env var, no flag), scan
+	// every running kind cluster for a yage-system/bootstrap-config
+	// Secret and use the first match. This lets `yage` start from
+	// saved config regardless of the cluster name chosen at xapiri
+	// time, without requiring the user to pass --kind-cluster-name.
+	if cfg.KindClusterName == "" {
+		kindsync.MergeBootstrapConfigFromFirstKindCluster(cfg)
+	} else {
+		_ = kindsync.MergeBootstrapConfigFromKind(cfg)
+	}
 
 	// Hand cost-estimation credentials + currency preferences to
 	// the pricing package once at startup. Values come from
@@ -132,7 +142,10 @@ func main() {
 	//   --xapiri   walks the user through on-prem/cloud and sets it
 	//   --print-pricing-setup is informational, not a deploy
 	if cfg.Xapiri {
-		os.Exit(xapiri.Run(os.Stdout, cfg))
+		if rc := xapiri.Run(os.Stdout, cfg); rc != 0 || !cfg.XapiriDeployNow {
+			os.Exit(rc)
+		}
+		// User answered "deploy now? y" — fall through to orchestrator.Run.
 	}
 	if cfg.PrintPricingSetup != "" {
 		switch cfg.PrintPricingSetup {

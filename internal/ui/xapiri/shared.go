@@ -16,20 +16,50 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/pricing"
+	"github.com/lpasquali/yage/internal/provider"
 	"github.com/lpasquali/yage/internal/ui/cli"
 	"github.com/lpasquali/yage/internal/ui/plan"
 )
+
+// semverRE validates Kubernetes version strings (e.g. "v1.35.0").
+var semverRE = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
 // greet prints the opening lines. The shell-prompt style and
 // cultural framing are deliberately quiet.
 func (s *state) greet() {
 	s.r.info("xapiri — let's shape this deployment together.")
 	s.r.info("press enter to keep the value in [brackets].")
+}
+
+// stepKubernetesVersion asks for the workload Kubernetes version.
+// Called first so every downstream step (manifest generation, cost
+// compare, feasibility) sees the right version. Defaults to the
+// value already on cfg (set by env / flag), falling back to the
+// compiled-in default (v1.35.0). Re-prompts on malformed input.
+func (s *state) stepKubernetesVersion() error {
+	s.r.section("kubernetes version")
+	cur := s.cfg.WorkloadKubernetesVersion
+	if cur == "" {
+		cur = "v1.35.0"
+	}
+	for {
+		v := s.r.promptString("workload Kubernetes version (e.g. v1.35.0)", cur)
+		if v == "" {
+			v = cur
+		}
+		if !semverRE.MatchString(v) {
+			fmt.Fprintf(s.w, "    not a valid version (expected vMAJOR.MINOR.PATCH, e.g. v1.35.0); try again.\n")
+			continue
+		}
+		s.cfg.WorkloadKubernetesVersion = v
+		return nil
+	}
 }
 
 // stepKindClusterName asks the operator for a name for the kind
@@ -93,19 +123,27 @@ func (s *state) step0_modePick() error {
 // detectFork is the auto-detection rule from §22.1. Pure function
 // (no I/O) so the dispatch in step0_modePick stays trivially
 // testable.
+//
+// Priority: (1) cfg.InfraProvider — the authoritative saved value.
+// (2) airgapped flag. (3) env-var heuristics for fresh sessions.
 func detectFork(cfg *config.Config) forkType {
+	if cfg.InfraProvider != "" {
+		if provider.AirgapCompatible(cfg.InfraProvider) {
+			return forkOnPrem
+		}
+		return forkCloud
+	}
 	if cfg.Airgapped {
 		return forkOnPrem
 	}
-	proxmox := os.Getenv("PROXMOX_URL") != "" || cfg.Providers.Proxmox.URL != ""
 	cloud := os.Getenv("AWS_ACCESS_KEY_ID") != "" ||
 		os.Getenv("AZURE_SUBSCRIPTION_ID") != "" ||
 		os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != ""
-	switch {
-	case proxmox && !cloud:
-		return forkOnPrem
-	case cloud && !proxmox:
+	if cloud {
 		return forkCloud
+	}
+	if os.Getenv("PROXMOX_URL") != "" {
+		return forkOnPrem
 	}
 	return forkUnknown
 }
@@ -265,6 +303,9 @@ func syncWorkloadShapeToCfg(cfg *config.Config, w workloadShape, resil resilienc
 		EgressGBMonth: egress,
 		Resilience:    res,
 		Environment:   envStr,
+		HasQueue:      w.HasQueue,
+		HasObjStore:   w.HasObjStore,
+		HasCache:      w.HasCache,
 	}
 }
 
@@ -445,6 +486,19 @@ func (s *state) step7_review() error {
 	}
 	pw.Bullet("airgapped:      %v", s.cfg.Airgapped)
 
+	// Network / cluster identity.
+	pw.Section("Network")
+	pw.Bullet("workload VIP:   %s", s.cfg.ControlPlaneEndpointIP)
+	pw.Bullet("node IP range:  %s", s.cfg.NodeIPRanges)
+	pw.Bullet("gateway:        %s  prefix: /%s", s.cfg.Gateway, s.cfg.IPPrefix)
+	pw.Bullet("DNS:            %s", s.cfg.DNSServers)
+	pw.Bullet("workload name:  %s", s.cfg.WorkloadClusterName)
+	if s.cfg.Pivot.Enabled {
+		pw.Bullet("mgmt VIP:       %s", s.cfg.Mgmt.ControlPlaneEndpointIP)
+		pw.Bullet("mgmt IP range:  %s", s.cfg.Mgmt.NodeIPRanges)
+		pw.Bullet("mgmt name:      %s", s.cfg.Mgmt.ClusterName)
+	}
+
 	// Fork-specific cost line.
 	if s.fork == forkOnPrem {
 		s.renderTCOLine(pw)
@@ -581,7 +635,9 @@ func (s *state) step8_persistAndDecide() error {
 	fmt.Fprintln(s.w)
 
 	s.deployNow = s.r.promptYesNo("deploy now?", false)
-	if !s.deployNow {
+	if s.deployNow {
+		s.cfg.XapiriDeployNow = true
+	} else {
 		s.r.info("nothing deployed; the next non-xapiri yage run will pick the saved config up.")
 	}
 	return nil

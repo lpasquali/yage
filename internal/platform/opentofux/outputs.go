@@ -30,8 +30,8 @@ func GenerateConfigsFromOutputs(cfg *config.Config) {
 	pveapi.ValidateTokenSecret("OpenTofu capi_token_secret", capiTokenSec)
 	pveapi.ValidateTokenSecret("OpenTofu csi_token_secret", csiTokenSec)
 
-	cfg.Providers.Proxmox.Token = capiTokenID
-	cfg.Providers.Proxmox.Secret = capiTokenSec
+	cfg.Providers.Proxmox.CAPIToken = capiTokenID
+	cfg.Providers.Proxmox.CAPISecret = capiTokenSec
 	cfg.Providers.Proxmox.CSITokenID = csiTokenID
 	cfg.Providers.Proxmox.CSITokenSecret = csiTokenSec
 	if cfg.Providers.Proxmox.CSIURL == "" {
@@ -57,7 +57,7 @@ func WriteClusterctlConfigIfMissing(cfg *config.Config) {
 	if cfg.ClusterctlCfgFilePresent() {
 		return
 	}
-	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Secret == "" {
+	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.CAPIToken == "" || cfg.Providers.Proxmox.CAPISecret == "" {
 		return
 	}
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)

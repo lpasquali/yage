@@ -120,7 +120,7 @@ func MergeBootstrapSecretsFromKind(cfg *config.Config) {
 	}
 
 	// --- 4. capmox-system/capmox-manager-credentials fallback ---
-	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Secret == "" {
+	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.CAPIToken == "" || cfg.Providers.Proxmox.CAPISecret == "" {
 		j := getSecretJSON(ctx, "capmox-system", "capmox-manager-credentials")
 		if j != "" && fillFromCapmoxManagerJSON(cfg, j) {
 			logx.Log("Filled unset CAPI Proxmox API values from capmox-system/capmox-manager-credentials on %s.", ctx)
@@ -202,10 +202,13 @@ func fillFromCredsJSON(cfg *config.Config, secJSON string, _ bool) bool {
 	}
 	aliases := map[string]string{
 		"url":               "PROXMOX_URL",
-		"token":             "PROXMOX_TOKEN",
-		"secret":            "PROXMOX_SECRET",
-		"capi_token_id":     "PROXMOX_TOKEN",
-		"capi_token_secret": "PROXMOX_SECRET",
+		"capi_token":        "PROXMOX_CAPI_TOKEN",
+		"capi_secret":       "PROXMOX_CAPI_SECRET",
+		// backward compat: Secrets written before the rename
+		"token":             "PROXMOX_CAPI_TOKEN",
+		"secret":            "PROXMOX_CAPI_SECRET",
+		"capi_token_id":     "PROXMOX_CAPI_TOKEN",
+		"capi_token_secret": "PROXMOX_CAPI_SECRET",
 		"csi_token_id":      "PROXMOX_CSI_TOKEN_ID",
 		"csi_token_secret":  "PROXMOX_CSI_TOKEN_SECRET",
 		"admin_username":    "PROXMOX_ADMIN_USERNAME",
@@ -292,9 +295,9 @@ func fillFromCapmoxManagerJSON(cfg *config.Config, secJSON string) bool {
 	data := decodeAllSecretData(secJSON)
 	out := map[string]string{}
 	for k, v := range map[string]string{
-		"PROXMOX_URL":    data["url"],
-		"PROXMOX_TOKEN":  data["token"],
-		"PROXMOX_SECRET": data["secret"],
+		"PROXMOX_URL":        data["url"],
+		"PROXMOX_CAPI_TOKEN": data["token"],
+		"PROXMOX_CAPI_SECRET": data["secret"],
 	} {
 		if v != "" {
 			out[k] = v
@@ -519,7 +522,14 @@ func parseFlatYAMLOrJSON(text string) map[string]string {
 		val := strings.TrimSpace(m[2])
 		if len(val) >= 2 {
 			first, last := val[0], val[len(val)-1]
-			if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			if first == '"' && last == '"' {
+				var s string
+				if err := json.Unmarshal([]byte(val), &s); err == nil {
+					val = s
+				} else {
+					val = val[1 : len(val)-1]
+				}
+			} else if first == '\'' && last == '\'' {
 				val = val[1 : len(val)-1]
 			}
 		}

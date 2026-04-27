@@ -87,8 +87,8 @@ const (
 // promptCredMode asks the operator which credential flow to use.
 // Defaults to managed when no BYO tokens are already set.
 func (s *state) promptCredMode() credentialMode {
-	hasBYO := s.cfg.Providers.Proxmox.Token != "" &&
-		s.cfg.Providers.Proxmox.Secret != "" &&
+	hasBYO := s.cfg.Providers.Proxmox.CAPIToken != "" &&
+		s.cfg.Providers.Proxmox.CAPISecret != "" &&
 		s.cfg.Providers.Proxmox.CSITokenID != "" &&
 		s.cfg.Providers.Proxmox.CSITokenSecret != ""
 	cur := choiceManaged
@@ -119,8 +119,8 @@ func (s *state) step6_proxmox_managed() error {
 	s.cfg.Providers.Proxmox.AdminToken = token
 	// Clear BYO fields so the orchestrator doesn't accidentally see
 	// a partial set and skip OpenTofu.
-	s.cfg.Providers.Proxmox.Token = ""
-	s.cfg.Providers.Proxmox.Secret = ""
+	s.cfg.Providers.Proxmox.CAPIToken = ""
+	s.cfg.Providers.Proxmox.CAPISecret = ""
 	s.cfg.Providers.Proxmox.CSITokenID = ""
 	s.cfg.Providers.Proxmox.CSITokenSecret = ""
 	return nil
@@ -134,15 +134,15 @@ func (s *state) step6_proxmox_byo() error {
 	s.r.info("bring-your-own mode — OpenTofu identity bootstrap will be skipped.")
 	s.r.info("Provide the existing Proxmox API tokens for CAPMOX and CSI.")
 
-	s.cfg.Providers.Proxmox.Token = s.r.promptString(
+	s.cfg.Providers.Proxmox.CAPIToken = s.r.promptString(
 		"CAPMOX token ID (e.g. capmox@pve!capmox-token)",
-		s.cfg.Providers.Proxmox.Token)
+		s.cfg.Providers.Proxmox.CAPIToken)
 
-	secret, err := s.r.promptSecretHidden("CAPMOX token secret", s.cfg.Providers.Proxmox.Secret)
+	secret, err := s.r.promptSecretHidden("CAPMOX token secret", s.cfg.Providers.Proxmox.CAPISecret)
 	if err != nil {
 		return fmt.Errorf("reading CAPMOX token secret: %w", err)
 	}
-	s.cfg.Providers.Proxmox.Secret = secret
+	s.cfg.Providers.Proxmox.CAPISecret = secret
 
 	s.cfg.Providers.Proxmox.CSITokenID = s.r.promptString(
 		"CSI token ID (e.g. csi@pve!csi-token)",
@@ -158,12 +158,11 @@ func (s *state) step6_proxmox_byo() error {
 	return nil
 }
 
-// step6_5_proxmox_network collects the network settings that every
-// Proxmox cluster needs: control-plane VIP, node IP range, gateway,
-// prefix length, DNS servers, bridge-level SSH keys, and the workload
-// and management cluster names.
+// step6_5_proxmox_network collects the network settings for all Proxmox
+// clusters: workload VIP/range/gateway/DNS, SSH keys, cluster names, and —
+// when pivot is enabled — the management cluster's VIP and node IP range.
 func (s *state) step6_5_proxmox_network() error {
-	s.r.section("network settings")
+	s.r.section("workload cluster — network")
 
 	s.cfg.ControlPlaneEndpointIP = s.r.promptString(
 		"control-plane VIP (must be outside the node IP range)",
@@ -187,10 +186,35 @@ func (s *state) step6_5_proxmox_network() error {
 
 	s.cfg.VMSSHKeys = s.r.promptSSHKeys(s.cfg.VMSSHKeys)
 
-	// Workload cluster identity
 	s.cfg.WorkloadClusterName = s.r.promptString(
 		"workload cluster name",
 		orStr(s.cfg.WorkloadClusterName, "capi-quickstart"))
+
+	// Management cluster network — only needed when pivot is enabled.
+	// These are the two inputs renderManagementManifest requires that
+	// have no sensible default (the VIP and node range must be distinct
+	// from the workload cluster's ranges).
+	if s.cfg.Pivot.Enabled {
+		s.r.section("management cluster — network")
+		s.r.info("The management cluster needs its own VIP and node IP range,")
+		s.r.info("separate from the workload cluster's ranges above.")
+
+		s.cfg.Mgmt.ControlPlaneEndpointIP = s.r.promptString(
+			"management cluster VIP",
+			orStr(s.cfg.Mgmt.ControlPlaneEndpointIP, "192.168.0.30"))
+
+		s.cfg.Mgmt.NodeIPRanges = s.r.promptString(
+			"management node IP range (e.g. 192.168.0.31-192.168.0.32)",
+			orStr(s.cfg.Mgmt.NodeIPRanges, "192.168.0.31-192.168.0.32"))
+
+		s.cfg.Mgmt.ClusterName = s.r.promptString(
+			"management cluster name",
+			orStr(s.cfg.Mgmt.ClusterName, "capi-management"))
+
+		s.cfg.Providers.Proxmox.Mgmt.Pool = s.r.promptString(
+			"management cluster pool (empty = no pool)",
+			orStr(s.cfg.Providers.Proxmox.Mgmt.Pool, s.cfg.Mgmt.ClusterName))
+	}
 
 	return nil
 }

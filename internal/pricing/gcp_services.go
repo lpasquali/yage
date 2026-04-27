@@ -33,6 +33,7 @@ const (
 	gcpStackdriverService   = "5490-F7B7-8DF6" // Cloud Logging / Stackdriver
 	gcpCloudDNSService      = "9DC7-D6A1-D9D1" // Cloud DNS
 	gcpNetworkingService    = "E505-1604-58F8" // Networking (egress)
+	gcpCloudSQLService      = "9662-B51E-5089" // Cloud SQL (PostgreSQL / MySQL / SQLServer)
 )
 
 // gcpServiceSKUCache memoizes the full SKU list per service ID for

@@ -84,16 +84,54 @@ func ManagedPostgresUSDPerMonth(vendor, region string, tier PostgresTier, dbGB i
 // When a vendor's helper lands, replace the stub body with the
 // real implementation. Compile-time signature stays the same.
 
+// awsManagedPostgres routes to Aurora when tier.IsProd() (multi-AZ
+// flavored, higher throughput) or RDS otherwise (cheaper Single-AZ).
+// The pricing layer reads the AmazonRDS bulk JSON and falls back to
+// hard-coded list prices when the SKU shape can't be resolved.
 func awsManagedPostgres(region string, tier PostgresTier, dbGB int) (ManagedPostgres, error) {
-	return ManagedPostgres{}, errNotImplemented("aws")
+	if tier.IsProd() {
+		label, monthly, err := pricing.AWSAuroraPostgresUSDPerMonth(region, dbGB)
+		if err != nil {
+			return ManagedPostgres{}, fmt.Errorf("%w: aws: %v",
+				provider.ErrNotApplicable, err)
+		}
+		return ManagedPostgres{SKU: label, MonthlyUSD: monthly}, nil
+	}
+	label, monthly, err := pricing.AWSRDSPostgresUSDPerMonth(region, dbGB)
+	if err != nil {
+		return ManagedPostgres{}, fmt.Errorf("%w: aws: %v",
+			provider.ErrNotApplicable, err)
+	}
+	return ManagedPostgres{SKU: label, MonthlyUSD: monthly}, nil
 }
 
+// azureManagedPostgres prices Azure Database for PostgreSQL Flexible
+// Server. tier.IsProd() trips zone-redundant HA (compute + storage
+// doubled to bill the standby). The pricing layer falls back to the
+// public list when the Retail Prices API isn't reachable.
 func azureManagedPostgres(region string, tier PostgresTier, dbGB int) (ManagedPostgres, error) {
-	return ManagedPostgres{}, errNotImplemented("azure")
+	zoneRedundant := tier.IsProd()
+	label, monthly, err := pricing.AzureFlexiblePostgresUSDPerMonth(region, dbGB, zoneRedundant)
+	if err != nil {
+		return ManagedPostgres{}, fmt.Errorf("%w: azure: %v",
+			provider.ErrNotApplicable, err)
+	}
+	return ManagedPostgres{SKU: label, MonthlyUSD: monthly}, nil
 }
 
+// gcpManagedPostgres prices Cloud SQL for PostgreSQL Enterprise.
+// tier.IsProd() trips the regional (HA) layout — compute and storage
+// doubled to bill the cross-zone replica. The pricing layer falls
+// back to the public list when the Cloud Billing Catalog isn't
+// reachable.
 func gcpManagedPostgres(region string, tier PostgresTier, dbGB int) (ManagedPostgres, error) {
-	return ManagedPostgres{}, errNotImplemented("gcp")
+	regional := tier.IsProd()
+	label, monthly, err := pricing.GCPCloudSQLPostgresUSDPerMonth(region, dbGB, regional)
+	if err != nil {
+		return ManagedPostgres{}, fmt.Errorf("%w: gcp: %v",
+			provider.ErrNotApplicable, err)
+	}
+	return ManagedPostgres{SKU: label, MonthlyUSD: monthly}, nil
 }
 
 // doManagedPostgres picks the smallest single-node DO Managed Postgres
@@ -153,8 +191,18 @@ func linodePostgresSize(tier PostgresTier, dbGB int) string {
 	return "g6-nanode-1"
 }
 
+// ociManagedPostgres prices OCI Database with PostgreSQL. tier.IsProd()
+// trips the 3-node Multiple-AD HA layout; non-prod stays single-AD.
+// The pricing helper transparently falls back to the public list when
+// the cetools catalog can't be reached.
 func ociManagedPostgres(region string, tier PostgresTier, dbGB int) (ManagedPostgres, error) {
-	return ManagedPostgres{}, errNotImplemented("oci")
+	multiAD := tier.IsProd()
+	label, monthly, err := pricing.OCIPostgresUSDPerMonth(region, dbGB, multiAD)
+	if err != nil {
+		return ManagedPostgres{}, fmt.Errorf("%w: oci: %v",
+			provider.ErrNotApplicable, err)
+	}
+	return ManagedPostgres{SKU: label, MonthlyUSD: monthly}, nil
 }
 
 func ibmcloudManagedPostgres(region string, tier PostgresTier, dbGB int) (ManagedPostgres, error) {

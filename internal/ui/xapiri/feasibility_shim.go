@@ -15,6 +15,8 @@ package xapiri
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/lpasquali/yage/internal/cluster/capacity"
 	"github.com/lpasquali/yage/internal/config"
@@ -139,7 +141,18 @@ func runFeasibilityCheckOnPrem(cfg *config.Config) (FeasibilityVerdict, error) {
 			return FeasibilityTight, nil
 		}
 	}
-	return FeasibilityInfeasible, nil
+	// Infeasible — gather the reason from the active provider's verdict
+	// and any hard blocking reasons (resilience, missing TCO config).
+	// Without this the caller displays "✗ infeasible" with no context.
+	var parts []string
+	parts = append(parts, v.BlockingReasons...)
+	if pv, ok := v.PerProvider[cfg.InfraProvider]; ok && pv.Reason != "" {
+		parts = append(parts, pv.Reason)
+	}
+	if len(parts) > 0 {
+		return FeasibilityInfeasible, fmt.Errorf("%s", strings.Join(parts, "; "))
+	}
+	return FeasibilityInfeasible, fmt.Errorf("cluster shape does not fit the available host inventory")
 }
 
 // _ keeps config imported even if all references move to other

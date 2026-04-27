@@ -465,13 +465,16 @@ func (s *state) step7_review() error {
 		pw.Skip("feasibility gate not wired — proceed at own risk.")
 	} else if ferr != nil {
 		pw.Bullet("%s %s — %v", verdict.symbol(), verdict, ferr)
-		s.r.info("feasibility refuses this shape — go back to step 3 (workload) and shrink, or step 4 (budget/provider) and grow.")
-		return fmt.Errorf("xapiri: feasibility blocked at review: %w", ferr)
 	} else {
 		pw.Bullet("%s %s", verdict.symbol(), verdict)
 	}
 
-	if !s.r.promptYesNo("write to kind?", true) {
+	writeDefault := verdict != FeasibilityInfeasible
+	if verdict == FeasibilityInfeasible {
+		s.r.info("⚠ cluster shape may not fit the host inventory — see reason above.")
+		s.r.info("  You can proceed anyway if you know your hardware can handle it.")
+	}
+	if !s.r.promptYesNo("write to kind?", writeDefault) {
 		return ErrUserExit
 	}
 	return nil

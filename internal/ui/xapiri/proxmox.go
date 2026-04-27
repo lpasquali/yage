@@ -185,9 +185,7 @@ func (s *state) step6_5_proxmox_network() error {
 		"DNS servers (comma-separated)",
 		orStr(s.cfg.DNSServers, "8.8.8.8,8.8.4.4"))
 
-	s.cfg.VMSSHKeys = s.r.promptString(
-		"SSH public key(s) for VM cloud-init (empty to skip)",
-		s.cfg.VMSSHKeys)
+	s.cfg.VMSSHKeys = s.r.promptSSHKeys(s.cfg.VMSSHKeys)
 
 	// Workload cluster identity
 	s.cfg.WorkloadClusterName = s.r.promptString(

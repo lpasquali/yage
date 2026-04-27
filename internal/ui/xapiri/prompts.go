@@ -228,6 +228,35 @@ func (r *reader) info(format string, args ...any) {
 	fmt.Fprintf(r.out, "  %s\n", fmt.Sprintf(format, args...))
 }
 
+// promptSSHKeys collects one or more SSH public keys, one per line,
+// until the user enters an empty line.  Returns the keys joined with
+// newlines (the format cloud-init and authorized_keys both expect).
+// Pressing enter immediately keeps the existing value (cur) unchanged.
+func (r *reader) promptSSHKeys(cur string) string {
+	fmt.Fprintf(r.out, "\n  SSH public key(s) for VM cloud-init\n")
+	fmt.Fprintf(r.out, "  enter one key per line; empty line to finish")
+	if cur != "" {
+		// Show the count of already-configured keys as a hint.
+		n := len(strings.Split(strings.TrimSpace(cur), "\n"))
+		fmt.Fprintf(r.out, " [%d key(s) already set — empty line keeps them]", n)
+	}
+	fmt.Fprintln(r.out)
+
+	var keys []string
+	for {
+		fmt.Fprintf(r.out, "  key %d: ", len(keys)+1)
+		line := strings.TrimRight(r.readLine(), "\r\n ")
+		if line == "" {
+			break
+		}
+		keys = append(keys, line)
+	}
+	if len(keys) == 0 {
+		return cur // keep existing
+	}
+	return strings.Join(keys, "\n")
+}
+
 // maskValue returns a fixed-width placeholder for sensitive values
 // when echoing the resolved config back to the user. Empty stays empty
 // so the review knows the field was never set.

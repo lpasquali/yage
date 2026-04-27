@@ -1,0 +1,53 @@
+examples — common command-line recipes
+
+    # See what a real run would do (no state changes)
+    yage --dry-run
+
+    # Compare monthly cost across every registered provider, same logical cluster shape
+    yage --dry-run --cost-compare
+
+    # Standard bootstrap (kind = forever-management, Proxmox)
+    yage \
+        --infra-provider proxmox \
+        --proxmox-url https://pve.example:8006 \
+        --admin-username root@pam!capi-bootstrap \
+        --admin-token 11111111-2222-3333-4444-555555555555 \
+        --region datacenter --node pve
+
+    # Pivot an existing setup to a Proxmox-hosted management cluster
+    # (workload keeps running; only the CAPI controller managing it moves).
+    yage --pivot --pivot-keep-kind \
+         --mgmt-control-plane-endpoint-ip 192.168.0.30 \
+         --mgmt-node-ip-ranges 192.168.0.31-192.168.0.32
+
+    # Validate the pivot before committing — provisions mgmt, runs
+    # `clusterctl move --dry-run` and exits without moving state.
+    yage --pivot --pivot-dry-run \
+         --mgmt-control-plane-endpoint-ip 192.168.0.30 \
+         --mgmt-node-ip-ranges 192.168.0.31-192.168.0.32
+
+    # Per-machine-type templates (e.g. a hardened CP image, vanilla worker image)
+    yage \
+        --workload-control-plane-template-id 200 \
+        --workload-worker-template-id 201
+
+    # Snapshot kind state before a risky run
+    yage --kind-backup ./kind-pre-pivot.tar.gz
+
+    # Print Argo CD access info for the workload (no full bootstrap)
+    yage --argocd-print-access
+
+    # Airgapped Proxmox install with a private Helm + image registry
+    yage --airgapped \
+         --image-registry-mirror registry.internal/k8s \
+         --helm-repo-mirror https://harbor.internal/chartrepo/yage \
+         --internal-ca-bundle /etc/pki/internal-ca.pem \
+         --infra-provider proxmox
+
+    # Print the IAM/token setup CLI snippet for AWS pricing
+    yage --print-pricing-setup aws
+
+See also:
+    --help general   common flags
+    --help cost      cost compare, budget, currency
+    --help pivot     CAPI bootstrap-and-pivot pattern

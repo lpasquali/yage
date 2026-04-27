@@ -1,22 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package capimanifest ports the YAML-patch functions that mutate the
+// Package capimanifest holds YAML-patch functions that mutate the
 // workload CAPI manifest on disk. Every function reads a file,
-// transforms the text, writes it back. The source file is always the
-// value of cfg.CAPIManifest.
+// transforms the text, writes it back. The source file is always
+// the value of cfg.CAPIManifest.
 //
-// Bash source map (the original bash port):
-//   - apply_role_resource_overrides                           ~L4678-4762
-//   - patch_capi_manifest_proxmox_csi_topology_labels         ~L4768-4825
-//   - patch_capi_manifest_kubeadm_skip_kube_proxy_for_cilium  ~L4832-4895
-//   - patch_capi_manifest_proxmox_machine_template_spec_revisions
-//                                                             ~L4899-5023
+// Patch surface:
+//   - ApplyRoleResourceOverrides
+//   - PatchProxmoxCSITopologyLabels
+//   - PatchKubeadmSkipKubeProxyForCilium
+//   - PatchProxmoxMachineTemplateSpecRevisions
 //
-// The bash versions use inline Python with `re`. These ports use Go's
-// regexp package (RE2) — Go regex doesn't support backreferences or
-// lookarounds, so a few substitutions are re-shaped without changing the
-// output.
+// Implementations use Go's regexp package (RE2). Go regex does not
+// support backreferences or lookarounds, so some substitutions are
+// shaped to avoid them.
 package capimanifest
 
 import (

@@ -4,14 +4,11 @@
 package proxmox
 
 // Proxmox inventory queries: host hardware totals + currently
-// running VM usage. These were `capacity.FetchHostCapacity` /
-// `capacity.FetchExistingUsage` before Phase A.2 — moved here
-// because they're Proxmox-specific (they hit
-// /api2/json/cluster/resources directly), and the plugin
-// abstraction is supposed to keep cloud-specific queries inside
-// the cloud's package. The orchestrator now calls
-// Provider.Inventory which composes both into a single
-// provider.Inventory result.
+// running VM usage. These are Proxmox-specific (they hit
+// /api2/json/cluster/resources directly), and the plugin abstraction
+// keeps cloud-specific queries inside the cloud's package. The
+// orchestrator calls Provider.Inventory which composes both into a
+// single provider.Inventory result.
 
 import (
 	"crypto/tls"
@@ -29,15 +26,13 @@ import (
 // Inventory returns the cloud-correct picture of "what's there +
 // what's free" for this Proxmox cluster: host hardware totals,
 // running-VM usage, and the headroom (Total − Used, valid for the
-// flat-pool Proxmox model). Replaces today's split between
-// capacity.FetchHostCapacity and capacity.FetchExistingUsage —
-// callers see one method instead of two, with the cloud-specific
-// arithmetic encapsulated inside the provider.
+// flat-pool Proxmox model). Callers see one method with the
+// cloud-specific arithmetic encapsulated inside the provider.
 //
-// Per the Phase A spec (§13.4 #1): Proxmox is a flat-pool cloud, so
-// Available = Total − Used is correct. Other providers (AWS,
-// Azure, Hetzner, …) return ErrNotApplicable from Inventory because
-// their quota model can't be expressed as flat ResourceTotals.
+// Per §13.4 #1: Proxmox is a flat-pool cloud, so Available =
+// Total − Used is correct. Other providers (AWS, Azure, Hetzner, …)
+// return ErrNotApplicable from Inventory because their quota model
+// can't be expressed as flat ResourceTotals.
 func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
 	hc, err := fetchHostCapacity(cfg)
 	if err != nil {

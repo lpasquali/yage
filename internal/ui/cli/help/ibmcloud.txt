@@ -1,0 +1,28 @@
+ibmcloud — IBM Cloud VPC Gen2 / CAPIBM flags
+
+    --ibmcloud-control-plane-profile PROFILE  IBM Cloud VPC instance profile for the control
+                                              plane (e.g. bx2-2x8, bx2-4x16).
+    --ibmcloud-node-profile PROFILE   Instance profile for worker nodes.
+    --ibmcloud-region REGION          IBM Cloud region (us-south, us-east, eu-de, eu-gb, jp-tok,
+                                      au-syd, ...).
+    --ibmcloud-zone ZONE              Availability zone within the region (e.g. us-south-1).
+    --ibmcloud-resource-group ID      Resource group ID CAPIBM provisions into.
+    --ibmcloud-overhead-tier TIER     dev | prod (default) | enterprise — Load Balancer + egress
+                                      bundle.
+
+Credentials
+    IBMCLOUD_API_KEY                  IBM Cloud IAM API key (required). Generate it via:
+                                          ibmcloud iam api-key-create yage-cli
+
+Pricing
+    IBM Cloud's catalog API accepts a currency parameter; yage uses the native taller price
+    where supported, FX-converts otherwise. Common profiles:
+        bx2-2x8    — balanced 2 vCPU / 8 GiB
+        bx2-4x16   — balanced 4 vCPU / 16 GiB
+        cx2-4x8    — compute-optimized 4 vCPU / 8 GiB
+        mx2-4x32   — memory-optimized 4 vCPU / 32 GiB
+    Common regions: us-south, us-east, eu-de, eu-gb, jp-tok, au-syd.
+
+See also:
+    --help cost      cost compare, currency
+    --help airgap    --airgapped disables IBM Cloud entirely

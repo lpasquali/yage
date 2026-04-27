@@ -11,10 +11,9 @@ import (
 	"github.com/lpasquali/yage/internal/platform/shell"
 )
 
-// WorkloadKubeconfigFromClusterctl ports
-// _workload_kubeconfig_file_from_clusterctl (L6028-L6041). Fallback when
-// the CAPI *-kubeconfig Secret is missing: run `clusterctl get
-// kubeconfig` against the management cluster.
+// WorkloadKubeconfigFromClusterctl is the fallback when the CAPI
+// *-kubeconfig Secret is missing: runs `clusterctl get kubeconfig`
+// against the management cluster.
 //
 // Returns the tmp kubeconfig path or "" on failure.
 func WorkloadKubeconfigFromClusterctl(cfg *config.Config) string {

@@ -1,0 +1,39 @@
+aws — AWS / CAPA flags
+
+    --aws-mode MODE               CAPA flavor:
+                                    unmanaged   — self-managed K8s on EC2 (default).
+                                    eks         — EKS-managed control plane (flat hourly fee +
+                                                  EC2 Managed Node Group for workers; live-priced
+                                                  via the AWS Bulk Pricing JSON).
+                                    eks-fargate — EKS CP + Fargate workers (no EC2 fleet); sized
+                                                  via --aws-fargate-pod-count /
+                                                  --aws-fargate-pod-cpu /
+                                                  --aws-fargate-pod-memory-gib.
+                                  EKS modes require --bootstrap-mode kubeadm.
+
+    --aws-fargate-pod-count N     Pod count for the Fargate sizing model.
+    --aws-fargate-pod-cpu N       Per-pod vCPU request (Fargate billing unit).
+    --aws-fargate-pod-memory-gib N  Per-pod memory request in GiB.
+
+    --aws-overhead-tier TIER      AWS service-overhead bundle for the cost estimator:
+                                    dev        — 0 NAT GWs, 1 ALB, 20 GB egress, 2 GB CloudWatch
+                                    prod       — 1 NAT GW, 1 ALB, 100 GB egress, 10 GB CloudWatch
+                                                 (default)
+                                    enterprise — 3 NAT GWs (multi-AZ HA), 2 ALBs, 1 NLB, 500 GB
+                                                 egress, 50 GB CloudWatch
+
+    --aws-nat-gateway-count N     Override NAT GW count (priced live: hourly + per-GB processed).
+    --aws-alb-count N             Override ALB count (priced live: hourly + LCU-hour).
+    --aws-nlb-count N             Override NLB count (priced live: hourly + NLCU-hour).
+    --aws-data-transfer-gb N      Internet egress estimate (live $/GB from AWS pricing).
+    --aws-cloudwatch-logs-gb N    CloudWatch Logs ingested per month (live $/GB from AWS pricing).
+
+Credentials
+    AWS_PROFILE             Named profile in ~/.aws/credentials.
+    AWS_ACCESS_KEY_ID       Static access key (with AWS_SECRET_ACCESS_KEY).
+    AWS_SECRET_ACCESS_KEY   Paired with AWS_ACCESS_KEY_ID.
+    AWS_REGION              Default region for the SDK and CAPA.
+
+See also:
+    --help cost      pricing setup, on-prem TCO
+    --help airgap    --airgapped disables AWS entirely

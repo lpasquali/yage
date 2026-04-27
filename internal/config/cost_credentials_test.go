@@ -61,10 +61,10 @@ func TestCostCredentialsLoad(t *testing.T) {
 			want:      "EUR",
 		},
 		{
-			name:      "EUR_USD override travels through Cost.Currency",
-			envs:      map[string]string{"YAGE_EUR_USD": "1.07"},
-			wantField: func(c *Config) string { return c.Cost.Currency.EURUSDOverride },
-			want:      "1.07",
+			name:      "data-center-location travels through Cost.Currency",
+			envs:      map[string]string{"YAGE_DATA_CENTER_LOCATION": "it"},
+			wantField: func(c *Config) string { return c.Cost.Currency.DataCenterLocation },
+			want:      "IT",
 		},
 	}
 
@@ -76,7 +76,7 @@ func TestCostCredentialsLoad(t *testing.T) {
 				"YAGE_HCLOUD_TOKEN", "HCLOUD_TOKEN",
 				"YAGE_DO_TOKEN", "DIGITALOCEAN_TOKEN",
 				"YAGE_IBMCLOUD_API_KEY", "IBMCLOUD_API_KEY",
-				"YAGE_TALLER_CURRENCY", "YAGE_CURRENCY", "YAGE_EUR_USD",
+				"YAGE_TALLER_CURRENCY", "YAGE_CURRENCY", "YAGE_DATA_CENTER_LOCATION",
 			} {
 				t.Setenv(k, "")
 			}

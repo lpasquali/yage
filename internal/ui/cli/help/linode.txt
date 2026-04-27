@@ -1,0 +1,20 @@
+linode — Linode / Akamai / CAPL flags
+
+    --linode-control-plane-machine-type TYPE  Linode instance type for the control plane
+                                              (e.g. g6-standard-2, g6-dedicated-4).
+    --linode-node-machine-type TYPE           Instance type for worker nodes.
+    --linode-region REGION         Linode region (us-east, eu-west, ap-south, ...).
+    --linode-overhead-tier TIER    dev | prod (default) | enterprise — NodeBalancer + egress
+                                   bundle.
+
+Credentials
+    LINODE_TOKEN                   Linode Personal Access Token (required). Generate it under
+                                   Profile → API Tokens.
+
+Pricing
+    Linode publishes USD-only via its public price endpoint. yage FX-converts at display time
+    when the active taller is not USD.
+
+See also:
+    --help cost      cost compare, currency
+    --help airgap    --airgapped disables Linode entirely

@@ -3,7 +3,7 @@
 
 package hetzner
 
-// Phase D state-handoff hooks for Hetzner Cloud.
+// State-handoff hooks for Hetzner Cloud.
 //
 // See docs/abstraction-plan.md §11 + §14.D + §13's Hetzner validation.
 
@@ -34,8 +34,8 @@ func (p *Provider) KindSyncFields(cfg *config.Config) map[string]string {
 func (p *Provider) TemplateVars(cfg *config.Config) map[string]string {
 	return map[string]string{
 		"HCLOUD_REGION":                     orDefault(cfg.Providers.Hetzner.Location, "fsn1"),
-		"HCLOUD_CONTROL_PLANE_MACHINE_TYPE": orDefault(cfg.Providers.Hetzner.ControlPlaneMachineType, "cx22"),
-		"HCLOUD_WORKER_MACHINE_TYPE":        orDefault(cfg.Providers.Hetzner.NodeMachineType, "cx22"),
+		"HCLOUD_CONTROL_PLANE_MACHINE_TYPE": orDefault(cfg.Providers.Hetzner.ControlPlaneMachineType, "cx23"),
+		"HCLOUD_WORKER_MACHINE_TYPE":        orDefault(cfg.Providers.Hetzner.NodeMachineType, "cx23"),
 	}
 }
 

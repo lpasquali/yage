@@ -1,0 +1,25 @@
+oci — Oracle Cloud Infrastructure / CAPOCI flags
+
+    --oci-control-plane-shape SHAPE   OCI shape for the control plane
+                                      (e.g. VM.Standard.E4.Flex, VM.Standard.A1.Flex).
+    --oci-node-shape SHAPE            Shape for worker nodes.
+    --oci-region REGION               OCI region (e.g. us-ashburn-1, eu-frankfurt-1, ap-tokyo-1).
+    --oci-compartment-ocid OCID       Compartment OCID CAPOCI provisions into.
+    --oci-overhead-tier TIER          dev | prod (default) | enterprise — Load Balancer + egress
+                                      bundle.
+
+Credentials
+    OCI_CONFIG_FILE                   Path to ~/.oci/config (default: $HOME/.oci/config).
+                                      Standard SDK config: tenancy / user / fingerprint / key_file
+                                      / region.
+
+Pricing
+    OCI's cetools API accepts a --currencyCode parameter; yage passes the active taller through
+    natively when supported, FX-converts otherwise. Common shapes:
+        VM.Standard.E4.Flex   — flexible AMD shape (per-OCPU + per-GiB billing)
+        VM.Standard.A1.Flex   — flexible Ampere ARM shape
+        VM.Standard3.Flex     — flexible Intel shape
+
+See also:
+    --help cost      cost compare, currency
+    --help airgap    --airgapped disables OCI entirely

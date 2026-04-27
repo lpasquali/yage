@@ -21,8 +21,8 @@ import (
 	"github.com/lpasquali/yage/internal/ui/promptx"
 )
 
-// MaybeInteractiveSelectKindCluster ports
-// maybe_interactive_select_kind_cluster (L4547-L4646). Offers:
+// MaybeInteractiveSelectKindCluster offers an interactive kind-cluster
+// picker:
 //
 //  1. Use the kubectl current-context when it's a kind-* name matching
 //     an existing kind cluster.
@@ -30,8 +30,8 @@ import (
 //     context that responds, offer to use that.
 //  3. Otherwise print a numbered menu.
 //
-// cfg.Force skips the picker entirely. Non-interactive sessions get
-// narrowed logic (the bash function has the same branches).
+// cfg.Force skips the picker entirely. Non-interactive sessions take
+// narrowed branches.
 func MaybeInteractiveSelectKindCluster(cfg *config.Config) {
 	if cfg.Force {
 		return
@@ -125,11 +125,10 @@ func MaybeInteractiveSelectKindCluster(cfg *config.Config) {
 	logx.Log("Keeping KIND_CLUSTER_NAME='%s' (no existing cluster selected).", cfg.KindClusterName)
 }
 
-// MaybeInteractiveSelectWorkloadCluster ports
-// maybe_interactive_select_workload_cluster_from_management (L4478-L4544).
-// Lists CAPI Cluster resources on the management cluster; on multiple
-// matches offers a numbered picker; on exactly one, either auto-picks
-// (interactive) or auto-uses (non-interactive) that Cluster.
+// MaybeInteractiveSelectWorkloadCluster lists CAPI Cluster resources
+// on the management cluster; on multiple matches offers a numbered
+// picker; on exactly one, either auto-picks (interactive) or
+// auto-uses (non-interactive) that Cluster.
 func MaybeInteractiveSelectWorkloadCluster(cfg *config.Config) {
 	if cfg.Force {
 		return

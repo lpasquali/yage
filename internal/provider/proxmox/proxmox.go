@@ -4,15 +4,11 @@
 // Package proxmox is the yage Provider implementation for
 // the Cluster API Proxmox VE infrastructure provider (CAPMOX).
 //
-// This package is a THIN WRAPPER over the existing Proxmox-specific
-// helpers (internal/proxmox, internal/opentofux, internal/capacity,
+// This package is a thin wrapper over the Proxmox-specific helpers
+// (internal/proxmox, internal/opentofux, internal/capacity,
 // internal/csix, internal/capimanifest). The plugin foundation in
-// internal/provider lets future code dispatch through the Provider
-// interface; until every call site in internal/bootstrap is moved,
-// the existing direct-call paths in orchestrator.Run() continue to work
-// unchanged. The two coexist by design: this package adds the
-// indirection point, the extraction of orchestrator.Run() onto it is a
-// follow-up.
+// internal/provider lets code dispatch through the Provider
+// interface.
 package proxmox
 
 import (
@@ -43,9 +39,7 @@ func (p *Provider) EnsureIdentity(cfg *config.Config) error {
 
 // Inventory lives in inventory.go alongside the per-Proxmox HTTP
 // helpers — it composes fetchHostCapacity + fetchExistingUsage
-// into a single provider.Inventory result. The legacy
-// Capacity(cfg) (*HostCapacity, error) method that used to live
-// here was dropped in Phase A.4 along with the interface change.
+// into a single provider.Inventory result.
 
 // EnsureGroup creates / verifies a Proxmox VE pool. CAPMOX places
 // VMs in the named pool (organizational + ACL only — pools don't

@@ -1,16 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package argocdx ports the Argo CD helpers: initial-admin password
-// retrieval, workload kubeconfig discovery for standalone modes, access
-// info printing, port-forward, and the argocd-redis seed Secret.
-//
-// Bash source map:
-//   - argocd_read_initial_admin_password                          ~L5854-5862
-//   - argocd_standalone_discover_workload_kubeconfig_ref          ~L5867-5919
-//   - argocd_print_access_info                                    ~L5922-5964
-//   - argocd_run_port_forwards                                    ~L5967-6007
-//   - apply_workload_argocd_redis_secret_to_workload_cluster      ~L6047-6092
+// Package argocd hosts the Argo CD helpers: initial-admin password
+// retrieval, workload kubeconfig discovery for standalone modes,
+// access info printing, port-forward, and the argocd-redis seed
+// Secret.
 package argocd
 
 import (
@@ -38,14 +32,13 @@ import (
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
 )
 
-// ReadInitialAdminPassword ports argocd_read_initial_admin_password.
-// Tries the Helm-chart Secret argocd-initial-admin-secret, the Operator's
-// argocd-cluster Secret, and the legacy argocd-secret (skipping the bcrypt
-// hash bash skips), returning the password or "" if none found.
+// ReadInitialAdminPassword tries the Helm-chart Secret
+// argocd-initial-admin-secret, the Operator's argocd-cluster
+// Secret, and argocd-secret (skipping the bcrypt hash variant),
+// returning the password or "" if none found.
 //
-// Note: the first parameter ctx is the kubectl-context name (a string),
-// not a context.Context. Preserving the original signature so callers in
-// other packages keep compiling.
+// Note: the first parameter ctx is the kubectl-context name (a
+// string), not a context.Context.
 func ReadInitialAdminPassword(ctx, namespace string) string {
 	if namespace == "" {
 		namespace = "argocd"

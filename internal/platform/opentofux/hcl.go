@@ -3,9 +3,8 @@
 
 package opentofux
 
-// IdentityHCL is the HCL body written to ${state_dir}/proxmox-identity.tf
-// by WriteEmbeddedFiles. Verbatim copy of the bash heredoc
-// (the original bash port L2885-L3037).
+// IdentityHCL is the HCL body written to
+// ${state_dir}/proxmox-identity.tf by WriteEmbeddedFiles.
 const IdentityHCL = `# Plugin: bpg/proxmox
 
 terraform {
@@ -160,9 +159,8 @@ output "csi_token_secret" {
 `
 
 // BPGProviderHCL is the single-line main.tf written to a scratch
-// directory by install_bpg_proxmox_provider so that `tofu init` warms the
-// plugin cache. Matches the bash heredoc in install_bpg_proxmox_provider
-// (L2866-L2874).
+// directory by InstallBPGProvider so that `tofu init` warms the
+// plugin cache.
 const BPGProviderHCL = `terraform {
   required_providers {
     proxmox = {

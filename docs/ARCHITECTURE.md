@@ -1,32 +1,27 @@
 # yage — Go Architecture
 
-This document describes the Go implementation of `yage`. The Go code
-is the canonical implementation; the original bash port that
-predated it is no longer tracked here, though phase comments
-throughout `internal/orchestrator/bootstrap.go` still cite the
-originating bash line ranges (e.g. `L8133-L8211`) as historical
-provenance. The Go binary lives in `cmd/yage` and dispatches to
+The Go binary lives in `cmd/yage` and dispatches to
 `internal/orchestrator.Run`.
 
 ## High-level overview
 
 `yage` provisions a Cluster API management plane (in a local kind
-cluster) and brings up a Proxmox-VE workload cluster on top of it, then layers
-in CNI (Cilium), CSI (Proxmox CSI), and a GitOps app-of-apps surface (Argo CD
-on the workload, fed by CAAPH HelmChartProxy from the management cluster).
-The Go code is organised as one orchestrator package and a dozen-plus
-focused leaf packages:
+cluster) and brings up a workload cluster on top of it across any of
+twelve registered providers (Proxmox is the most-mature path; others
+are in flight). It layers in a CNI (Cilium), a CSI (per-provider),
+and a GitOps app-of-apps surface (Argo CD on the workload, fed by
+CAAPH HelmChartProxy from the management cluster). The Go code is
+organised as one orchestrator package and a dozen-plus focused leaf
+packages:
 
-- `internal/orchestrator` — the orchestrator. `Run()` is a straight port of the
-  bash script's phase 1 / phase 2 flow and the standalone modes
-  (`--workload-rollout`, `--argocd-print-access`, `--argocd-port-forward`,
-  kind backup/restore).
+- `internal/orchestrator` — drives the bootstrap phases and the
+  standalone modes (`--workload-rollout`, `--argocd-print-access`,
+  `--argocd-port-forward`, kind backup/restore).
 - `internal/platform/k8sclient` — the foundation. Wraps `client-go` and dynamic clients
   keyed by kubecontext / kubeconfig file. Every package that talks to a
   cluster goes through it.
-- `internal/config` — typed `Config` struct (one field per legacy bash var),
-  `Load()` from env+CLI, plus `Snapshot`/state for round-tripping into a kind
-  Secret.
+- `internal/config` — typed `Config` struct, `Load()` from env+CLI,
+  plus `Snapshot`/state for round-tripping into a kind Secret.
 - `internal/cluster/kindsync` — owns the `proxmox-bootstrap-config/config.yaml` Secret
   inside the kind cluster: write-out, read-back, and merge-in (skipping CLI-
   locked `*_EXPLICIT` fields).
@@ -108,21 +103,21 @@ focused leaf packages:
 flowchart TD
     A[main entry: cmd/yage] --> B[bootstrap.Run]
     B --> SM{standalone mode?}
-    SM -- backup/restore --> KSO[kind.Backup or kind.Restore<br/>L7746-L7760]
-    SM -- workload-rollout --> WR[workload-rollout flow<br/>L7860-L7941]
-    SM -- argocd-print/port-forward --> AC[argocdx.PrintAccessInfo<br/>or RunPortForwards<br/>L7943-L7968]
-    SM -- normal --> P0[Pre: EnsureCAPIManifestPath +<br/>Purge + ClusterSetID<br/>L7970-L8007]
-    P0 --> P1[Phase 1: install deps<br/>L8009-L8123]
-    P1 --> P20[Phase 2.0: OpenTofu identity bootstrap<br/>L8133-L8211]
-    P20 --> P21[Phase 2.1: clusterctl creds<br/>L8213-L8277]
-    P21 --> P24[Phase 2.4: detect/reuse kind cluster<br/>L8295-L8315]
-    P24 --> P25[Phase 2.5: resolve CAPMOX image tag<br/>L8317-L8335]
-    P25 --> P26[Phase 2.6: kind create cluster<br/>L8337-L8365]
-    P26 --> P27[Phase 2.7: management CNI = kindnet<br/>L8369-L8372]
-    P27 --> P28[Phase 2.8: clusterctl init core+CAAPH+CAPMOX<br/>L8374-L8423]
-    P28 --> P29[Phase 2.9: workload manifest apply<br/>+ Cilium HelmChartProxy<br/>L8425-L8494]
-    P29 --> P295[Phase 2.95: Pivot PIVOT_ENABLED=true<br/>clusterctl move kind to mgmt<br/>see Diagram 6]
-    P295 --> P210[Phase 2.10: Argo CD Operator<br/>+ CAAPH argocd-apps<br/>L8496-L8508<br/>note: targets mgmt kubeconfig<br/>when pivot enabled, kind context otherwise]
+    SM -- backup/restore --> KSO[kind.Backup or kind.Restore]
+    SM -- workload-rollout --> WR[workload-rollout flow]
+    SM -- argocd-print/port-forward --> AC[argocdx.PrintAccessInfo<br/>or RunPortForwards]
+    SM -- normal --> P0[Pre: EnsureCAPIManifestPath +<br/>Purge + ClusterSetID]
+    P0 --> P1[Dependency install]
+    P1 --> P20[OpenTofu identity bootstrap]
+    P20 --> P21[clusterctl credentials]
+    P21 --> P24[Detect/reuse kind cluster]
+    P24 --> P25[Resolve CAPMOX image tag]
+    P25 --> P26[kind create cluster]
+    P26 --> P27[Management CNI = kindnet]
+    P27 --> P28[clusterctl init core+CAAPH+CAPMOX]
+    P28 --> P29[Workload manifest apply<br/>+ Cilium HelmChartProxy]
+    P29 --> P295[Pivot phase PIVOT_ENABLED=true<br/>clusterctl move kind to mgmt<br/>see Diagram 6]
+    P295 --> P210[Argo CD Operator<br/>+ CAAPH argocd-apps<br/>note: targets mgmt kubeconfig<br/>when pivot enabled, kind context otherwise]
     P210 --> Z[Done]
 ```
 
@@ -355,15 +350,16 @@ the user-facing flag/env reference.
 
 ## Bootstrap-and-pivot pattern
 
-The kind cluster that hosts CAPI during phases 2.4 through 2.9 is intentionally
-ephemeral: it is single-host, runs on Docker on the operator's workstation, and
-is not the production management plane. Treating it as the long-lived CAPI
-host is fragile — the workstation reboots, Docker upgrades, kind versions, and
-local kubeconfigs all become operational surface area for a control plane that
-should be cluster-grade. The bootstrap-and-pivot pattern resolves this by
-using kind only as a "boot loader": kind brings up enough CAPI to provision a
-single-node "management cluster" on Proxmox, and that mgmt cluster then takes
-over CAPI duties for the rest of the lifecycle.
+The kind cluster that hosts CAPI during the kind-detection through workload
+manifest apply phases is intentionally ephemeral: it is single-host, runs on
+Docker on the operator's workstation, and is not the production management
+plane. Treating it as the long-lived CAPI host is fragile — the workstation
+reboots, Docker upgrades, kind versions, and local kubeconfigs all become
+operational surface area for a control plane that should be cluster-grade.
+The bootstrap-and-pivot pattern resolves this by using kind only as a "boot
+loader": kind brings up enough CAPI to provision a single-node "management
+cluster" on Proxmox, and that mgmt cluster then takes over CAPI duties for
+the rest of the lifecycle.
 
 When `PIVOT_ENABLED=true`, kind becomes transient. After the management
 cluster comes up on Proxmox and reports the CAPI Cluster as Available, the
@@ -372,10 +368,10 @@ canonical `clusterctl move` machinery copies all CAPI custom resources
 identity Secrets, …) from the kind management plane to the new Proxmox-hosted
 management cluster, and the kind cluster is torn down. Subsequent workload
 clusters are then provisioned by applying their Cluster CRs against the
-mgmt kubeconfig instead of the kind context, and Argo CD targeting in
-phase 2.10 follows the same flip. When `PIVOT_ENABLED=false` (the default),
-the legacy flow is preserved verbatim: kind remains the management plane and
-workload Cluster CRs are applied to it directly.
+mgmt kubeconfig instead of the kind context, and Argo CD targeting in the
+final phase follows the same flip. When `PIVOT_ENABLED=false` (the default),
+kind remains the management plane and workload Cluster CRs are applied to
+it directly.
 
 The eight pivot steps, with their Go entry points in the new
 `internal/capi/pivot/` package:
@@ -409,15 +405,15 @@ The eight pivot steps, with their Go entry points in the new
 
 ```mermaid
 flowchart TD
-    START[yage start] --> KIND[kind cluster transient<br/>phases 2.4 to 2.6]
-    KIND --> PROV[clusterctl init on kind<br/>phase 2.8]
+    START[yage start] --> KIND[kind cluster transient<br/>kind detect + create phases]
+    KIND --> PROV[clusterctl init on kind]
     PROV --> BRANCH{PIVOT_ENABLED?}
 
-    BRANCH -- false default --> WLKIND[apply workload Cluster on kind<br/>phase 2.9 + 2.10]
+    BRANCH -- false default --> WLKIND[apply workload Cluster on kind<br/>workload + Argo phases]
     WLKIND --> CILIUMK[Cilium HelmChartProxy via CAAPH on kind]
     CILIUMK --> ARGOK[Argo CD Operator + argocd-apps<br/>targeting workload from kind]
 
-    BRANCH -- true --> MGMTAPPLY[apply mgmt-Cluster CR on kind<br/>phase 2.95 step 1]
+    BRANCH -- true --> MGMTAPPLY[apply mgmt-Cluster CR on kind<br/>pivot step 1]
     MGMTAPPLY --> MGMT[mgmt cluster on Proxmox<br/>single node]
     MGMT --> WAIT[wait Cluster Available on kind<br/>step 2]
     WAIT --> KCFG[fetch mgmt kubeconfig<br/>from kind Secret<br/>step 3]
@@ -427,7 +423,7 @@ flowchart TD
     HANDOFF --> VERIFY[VerifyParity<br/>step 7]
     VERIFY --> TEARDOWN[delete kind<br/>step 8]
     TEARDOWN --> ONGOING[ongoing operations target mgmt]
-    ONGOING --> WLMGMT[apply workload Cluster on mgmt<br/>phase 2.10]
+    ONGOING --> WLMGMT[apply workload Cluster on mgmt<br/>Argo CD phase]
     WLMGMT --> CILIUMW[Cilium HelmChartProxy via CAAPH on mgmt]
     CILIUMW --> ARGOW[Argo CD Operator + argocd-apps<br/>targeting workload from mgmt]
 
@@ -498,21 +494,21 @@ flowchart TD
 
 The numbered steps reference `internal/orchestrator/bootstrap.go`.
 
-1. **Defaults** (L34-L46) — fall back `KindClusterName` to `ClusterName` or
+1. **Defaults** — fall back `KindClusterName` to `ClusterName` or
    `capi-provisioner`; default `AllowedNodes` to `ProxmoxNode`.
-2. **Standalone kind backup/restore** (L48-L68) — invoke
+2. **Standalone kind backup/restore** — invoke
    `installer.Kubectl` then `kind.Backup` / `kind.Restore` and exit.
-3. **Standalone `--workload-rollout`** (L70-L163) — merge kind Secrets,
+3. **Standalone `--workload-rollout`** — merge kind Secrets,
    resolve management context, optionally regenerate the CAPI manifest and
    re-apply with retries (3 attempts, 10s sleep). Argo branch logs guidance
    (no automatic sync).
-4. **Standalone Argo print/port-forward** (L165-L197) — discover workload
+4. **Standalone Argo print/port-forward** — discover workload
    kubeconfig and call `argocdx.PrintAccessInfo` /
    `argocdx.RunPortForwards`.
-5. **Pre-phase** (L199-L236) — `EnsureCAPIManifestPath`, optional
+5. **Pre-phase** — `EnsureCAPIManifestPath`, optional
    `PurgeGeneratedArtifacts`, derive `ClusterSetID` and Proxmox identity
    suffix.
-6. **Phase 1: dependencies** (L238-L344) — `installer.SystemDependencies`,
+6. **Dependency install** — `installer.SystemDependencies`,
    `installer.Docker`, two-pass `installer.Kubectl` (the second pass picks
    up a pinned `ClusterctlVersion` that the first kind-Secret merge may
    have introduced), `installer.Kind`, `installer.Clusterctl`,
@@ -520,40 +516,40 @@ The numbered steps reference `internal/orchestrator/bootstrap.go`.
    conditional Docker upgrade + BPG provider install (skipped on
    `--no-delete-kind` or when reusing a kind cluster without `--force`),
    `installer.OpenTofu`, `EnsureKindConfig`.
-7. **Phase 2.0: OpenTofu identity** (L351-L440) — if neither env nor an
+7. **OpenTofu identity bootstrap** — if neither env nor an
    explicit local clusterctl file satisfies CAPI/CSI creds, call
    `opentofux.WriteClusterctlConfigIfMissing` /
    `WriteCSIConfigIfMissing`, and as a last resort run
    `opentofux.ApplyIdentity` (or `RecreateIdentities` under
    `--recreate-proxmox-identities`). Outputs are written back to the
    clusterctl + CSI config files.
-8. **Phase 2.1: clusterctl creds** (L442-L520) — interactive prompt fallback,
+8. **clusterctl credentials** — interactive prompt fallback,
    pull `PROXMOX_URL`/`TOKEN`/`SECRET` from local clusterctl file,
    normalise + validate the token secret, refresh derived token IDs,
    verify connectivity via
    `proxmox.ResolveRegionAndNodeFromClusterctlAPI`. Then write the
    ephemeral clusterctl config via `SyncClusterctlConfigFile`.
-9. **Phase 2.4: kind detection** (L526-L558) — list kind clusters; under
+9. **kind detection** — list kind clusters; under
    `--force` (and not `--no-delete-kind`) delete-then-recreate, else reuse
    and set `kindClusterReused`.
-10. **Phase 2.5: CAPMOX image tag** (L560-L584) — use pinned
+10. **CAPMOX image tag** — use pinned
     `cfg.CAPMOXVersion` or git-clone the CAPMOX repo and pick the latest
     `vX.Y.Z` tag.
-11. **Phase 2.6: kind create + image load** (L586-L630) — `kind create
+11. **kind create + image load** — `kind create
     cluster --config <kind.yaml>` (skipped on reuse), merge kubeconfig,
     `installer.BuildIfNoArm64` for CAPMOX + CAPI core/bootstrap/control-
     plane + IPAM (skipped on reuse), then sync config + literal creds back
     into the kind Secret.
-12. **Phase 2.7: management CNI** (L632-L633) — kindnet only; no Cilium on
+12. **management CNI** — kindnet only; no Cilium on
     the management plane.
-13. **Phase 2.8: clusterctl init** (L635-L695) —
+13. **clusterctl init** —
     `InstallMetricsServerOnKindManagement`, then `clusterctl init` with
     `infrastructure=proxmox` + `ipam=in-cluster` + `addon=helm`. Wait for
     CAAPH (`caaph-system`), `capi-controller-manager`, kubeadm bootstrap +
     control-plane controllers, their webhook endpoints, and
     `capmox-controller-manager` + its webhook. End with
     `opentofux.RecreateResyncCapmox`.
-14. **Phase 2.9: workload manifest apply** (L697-L776) —
+14. **workload manifest apply** —
     `MaybeInteractiveSelectWorkloadCluster`,
     `capimanifest.TryFillWorkloadInputsFromManagement`, re-merge kind
     Secrets, `TryLoadCAPIManifestFromSecret`,
@@ -571,11 +567,11 @@ The numbered steps reference `internal/orchestrator/bootstrap.go`.
     pool), conditional `InstallMetricsServerOnWorkload`,
     `csix.ApplyConfigSecretToWorkload`, and
     `argocdx.ApplyRedisSecretToWorkload`.
-15. **Phase 2.10: Argo CD on workload** (L778-L796) — when
+15. **Argo CD on workload** — when
     `WorkloadArgoCDEnabled`, `caaph.ApplyWorkloadArgoHelmProxies` (passing
     `caaph.ApplyWorkloadArgoCDOperatorAndCR` as the post-prepare hook),
     `caaph.WaitWorkloadArgoCDServer`, `caaph.LogWorkloadArgoAppsStatus`.
-16. **Done** (L798-L799) — log a hint about `kubectl get clusters -A` /
+16. **Done** — log a hint about `kubectl get clusters -A` /
     `clusterctl describe cluster`.
 
 ## Library swap audit — remaining `kubectl` shell-outs
@@ -617,7 +613,7 @@ point for these operations and re-implementing them in-process would
 fork upstream behaviour):
 
 - `clusterctl init` — provider install on both the kind management plane
-  (phase 2.8) and the Proxmox-hosted management cluster (pivot step 4).
+  (clusterctl init phase) and the Proxmox-hosted management cluster (pivot step 4).
 - `clusterctl alpha rollout restart` — used by `--workload-rollout` to
   roll KubeadmControlPlane / MachineDeployment.
 - `clusterctl move` — pivot step 5; transfers all CAPI CRs and identity

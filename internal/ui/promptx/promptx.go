@@ -1,16 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package promptx ports the interactive-prompt helpers from
-// the original bash port. The bootstrap uses these for yes/no confirmations
-// and numeric menu selection when a kind cluster already exists, when
-// destructive operations are about to run, etc.
-//
-// Bash source map:
-//   - confirm                                ~L690-696
-//   - bootstrap_can_interactive_prompt       ~L699-703
-//   - bootstrap_read_line                    ~L706-714
-//   - bootstrap_normalize_numeric_menu_choice ~L717-736
+// Package promptx hosts the interactive-prompt helpers. The
+// bootstrap uses these for yes/no confirmations and numeric menu
+// selection when a kind cluster already exists, when destructive
+// operations are about to run, etc.
 package promptx
 
 import (
@@ -22,9 +16,8 @@ import (
 	"strings"
 )
 
-// CanPrompt reports whether an interactive prompt is possible. True if
-// stdin is a TTY, or /dev/tty is readable+writable — matches the bash
-// `[[ -t 0 ]] || [[ -r /dev/tty && -w /dev/tty ]]`.
+// CanPrompt reports whether an interactive prompt is possible.
+// True if stdin is a TTY, or /dev/tty is readable+writable.
 func CanPrompt() bool {
 	if isTerminal(os.Stdin) {
 		return true

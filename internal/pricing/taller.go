@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -45,9 +46,11 @@ const (
 )
 
 // countryToCurrency maps the ISO-3166 alpha-2 country code returned
-// by the geo-IP API to the ISO-4217 currency code. Only the codes
-// most likely to host a yage user are listed; anything
-// missing falls back to USD with a notice in the dry-run header.
+// by the geo-IP API (or by --data-center-location) to the ISO-4217
+// currency code. Coverage targets the global top-50 currencies plus
+// every Eurozone member; anything missing falls back to USD with a
+// notice in the dry-run header. Update SupportedCurrencies() when
+// adding entries here.
 var countryToCurrency = map[string]string{
 	"US": "USD", "CA": "CAD", "MX": "MXN", "BR": "BRL", "AR": "ARS",
 	"GB": "GBP", "IE": "EUR", "FR": "EUR", "DE": "EUR", "IT": "EUR",
@@ -57,7 +60,7 @@ var countryToCurrency = map[string]string{
 	"HR": "EUR",
 	"CH": "CHF", "SE": "SEK", "NO": "NOK", "DK": "DKK", "IS": "ISK",
 	"PL": "PLN", "CZ": "CZK", "HU": "HUF", "RO": "RON", "BG": "BGN",
-	"RU": "RUB", "TR": "TRY", "UA": "UAH",
+	"RU": "RUB", "TR": "TRY", "UA": "UAH", "KZ": "KZT",
 	"JP": "JPY", "CN": "CNY", "HK": "HKD", "TW": "TWD", "KR": "KRW",
 	"IN": "INR", "PK": "PKR", "BD": "BDT", "LK": "LKR", "NP": "NPR",
 	"SG": "SGD", "MY": "MYR", "TH": "THB", "VN": "VND", "ID": "IDR",
@@ -71,19 +74,28 @@ var countryToCurrency = map[string]string{
 }
 
 // currencySymbol maps an ISO-4217 currency code to a display
-// symbol. Falls back to the code itself for currencies not in the
-// table — better to show "ZAR 42.13" than nothing.
+// symbol. The set of keys here IS yage's supported-currency list:
+// IsSupportedCurrency() returns true iff the code is in this map.
+// When adding a code, also confirm it's quoted by open.er-api.com
+// (it covers all major ISO codes) and ensure countryToCurrency
+// reaches it from at least one country. Currencies outside this
+// set surface UnsupportedCurrencyMessage() and the cost path falls
+// back to USD.
 var currencySymbol = map[string]string{
 	"USD": "$", "CAD": "CA$", "AUD": "A$", "NZD": "NZ$", "MXN": "MX$",
 	"HKD": "HK$", "SGD": "S$", "BRL": "R$", "ARS": "AR$", "CLP": "CLP$",
-	"COP": "COP$", "VES": "Bs.",
+	"COP": "COP$", "VES": "Bs.", "PEN": "S/", "UYU": "$U",
 	"EUR": "€", "GBP": "£", "JPY": "¥", "CNY": "¥", "TWD": "NT$",
 	"KRW": "₩", "INR": "₹", "RUB": "₽", "TRY": "₺", "UAH": "₴",
 	"PLN": "zł", "CZK": "Kč", "HUF": "Ft", "RON": "lei", "BGN": "лв",
+	"KZT": "₸",
 	"CHF": "CHF", "SEK": "kr", "NOK": "kr", "DKK": "kr", "ISK": "kr",
 	"AED": "د.إ", "SAR": "﷼", "ILS": "₪", "EGP": "E£",
+	"QAR": "QR", "KWD": "KD", "OMR": "OR", "BHD": "BD", "JOD": "JD",
 	"ZAR": "R", "NGN": "₦", "KES": "KSh", "GHS": "₵",
+	"MAD": "DH", "TND": "DT", "DZD": "DA",
 	"PHP": "₱", "THB": "฿", "VND": "₫", "IDR": "Rp", "MYR": "RM",
+	"PKR": "Rs", "BDT": "৳", "LKR": "Rs", "NPR": "रु",
 }
 
 var (
@@ -94,31 +106,74 @@ var (
 
 // resolveTallerCurrency runs once per process; returns the active
 // taller code and a note string explaining how it was picked.
+//
+// Resolution order:
+//  1. cfg.Cost.Currency.DisplayCurrency (explicit code via flag/env)
+//  2. YAGE_TALLER_CURRENCY / YAGE_CURRENCY env (when SetCurrency
+//     hasn't been called yet — tests, embedded use)
+//  3. cfg.Cost.Currency.DataCenterLocation (--data-center-location):
+//     country code → ISO currency
+//  4. Geo-IP detection
+//  5. USD fallback
+//
+// Anywhere along the chain, if the chosen code isn't in
+// currencySymbol the resolver falls back to USD and surfaces
+// UnsupportedCurrencyMessage in the note so the user can file an
+// issue.
 func resolveTallerCurrency() (string, string) {
 	tallerOnce.Do(func() {
-		// Step 1: explicit override.
-		// Order: cfg.Cost.Currency.DisplayCurrency (set by main from
-		// config.Load via pricing.SetCurrency) → env-var fallback
-		// for cases where SetCurrency hasn't run yet. See §16.
-		if v := strings.ToUpper(strings.TrimSpace(prefs.DisplayCurrency)); v != "" {
-			tallerCurrency = v
-			tallerNote = "taller currency: " + v + " (cfg override)"
+		pickOrFallback := func(code, source string) (string, string, bool) {
+			c := strings.ToUpper(strings.TrimSpace(code))
+			if c == "" {
+				return "", "", false
+			}
+			if !IsSupportedCurrency(c) {
+				return "USD", "taller currency: USD (" + source + " " + c + " unsupported — " +
+					UnsupportedCurrencyMessage(c) + ")", true
+			}
+			return c, "taller currency: " + c + " (" + source + ")", true
+		}
+		if v, n, ok := pickOrFallback(prefs.DisplayCurrency, "cfg override"); ok {
+			tallerCurrency, tallerNote = v, n
 			return
 		}
-		if v := strings.ToUpper(strings.TrimSpace(os.Getenv("YAGE_TALLER_CURRENCY"))); v != "" {
-			tallerCurrency = v
-			tallerNote = "taller currency: " + v + " (env override)"
+		if v, n, ok := pickOrFallback(os.Getenv("YAGE_TALLER_CURRENCY"), "env override"); ok {
+			tallerCurrency, tallerNote = v, n
 			return
 		}
-		if v := strings.ToUpper(strings.TrimSpace(os.Getenv("YAGE_CURRENCY"))); v != "" {
-			tallerCurrency = v
-			tallerNote = "taller currency: " + v + " (legacy env override)"
+		if v, n, ok := pickOrFallback(os.Getenv("YAGE_CURRENCY"), "legacy env override"); ok {
+			tallerCurrency, tallerNote = v, n
 			return
 		}
-		// Step 2: geolocation.
+		// Step 3: --data-center-location → country → currency.
+		if dc := strings.ToUpper(strings.TrimSpace(prefs.DataCenterLocation)); dc != "" {
+			cur := CountryCurrency(dc)
+			if cur == "" {
+				tallerCurrency = "USD"
+				tallerNote = "taller currency: USD (--data-center-location " + dc +
+					" is not in our country→currency map; falling back)"
+				return
+			}
+			if !IsSupportedCurrency(cur) {
+				tallerCurrency = "USD"
+				tallerNote = "taller currency: USD (--data-center-location " + dc +
+					" → " + cur + " unsupported — " + UnsupportedCurrencyMessage(cur) + ")"
+				return
+			}
+			tallerCurrency = cur
+			tallerNote = "taller currency: " + cur + " (--data-center-location " + dc + ")"
+			return
+		}
+		// Step 4: geolocation.
 		cc, err := detectCountryCode()
 		if err == nil {
 			if cur, ok := countryToCurrency[cc]; ok {
+				if !IsSupportedCurrency(cur) {
+					tallerCurrency = "USD"
+					tallerNote = "taller currency: USD (geo: " + cc +
+						" → " + cur + " unsupported — " + UnsupportedCurrencyMessage(cur) + ")"
+					return
+				}
 				tallerCurrency = cur
 				tallerNote = "taller currency: " + cur + " (geo: " + cc + ")"
 				return
@@ -127,7 +182,7 @@ func resolveTallerCurrency() (string, string) {
 			tallerNote = "taller currency: USD (geo: " + cc + " not in currency map)"
 			return
 		}
-		// Step 3: fallback.
+		// Step 5: fallback.
 		tallerCurrency = "USD"
 		tallerNote = "taller currency: USD (geo lookup failed: " + err.Error() + ")"
 	})
@@ -293,24 +348,15 @@ func ToTaller(amount float64, nativeCurrency string) (float64, string, error) {
 	if taller == nc {
 		return amount, taller, nil
 	}
-	if err := ensureFXLoaded(); err != nil {
-		return 0, taller, fmt.Errorf("fx unavailable: %w", err)
+	usd, err := toUSD(amount, nc)
+	if err != nil {
+		return 0, taller, err
+	}
+	if taller == "USD" {
+		return usd, taller, nil
 	}
 	if fxRatesUSD == nil {
 		return 0, taller, fmt.Errorf("fx unavailable: no rates loaded")
-	}
-	// Convert source -> USD.
-	usd := amount
-	if nc != "USD" {
-		rate, ok := fxRatesUSD[nc]
-		if !ok || rate <= 0 {
-			return 0, taller, fmt.Errorf("fx: unknown source currency %q", nc)
-		}
-		usd = amount / rate
-	}
-	// Convert USD -> taller.
-	if taller == "USD" {
-		return usd, taller, nil
 	}
 	rate, ok := fxRatesUSD[taller]
 	if !ok || rate <= 0 {
@@ -319,19 +365,63 @@ func ToTaller(amount float64, nativeCurrency string) (float64, string, error) {
 	return usd * rate, taller, nil
 }
 
-// FormatTaller returns "<symbol><value>" using the active taller.
-// On FX failure, falls back to "<native amount> <native code>" so
-// the dry-run still surfaces a number rather than blank — the
-// vendor's native price is the source of truth.
-func FormatTaller(amount float64, nativeCurrency string) string {
-	v, _, err := ToTaller(amount, nativeCurrency)
-	if err != nil {
-		// Fallback to native currency, with a tag so the user
-		// notices the FX path failed.
-		return fmt.Sprintf("%s%.2f (FX unavailable, %s)",
-			nativeSymbol(nativeCurrency), amount, strings.ToUpper(nativeCurrency))
+// FromTaller converts an amount in the active taller currency to
+// USD. The inverse of ToTaller — used when the UI accepts user
+// input in local currency (e.g. budget) but downstream comparisons
+// happen in USD. FX-failure callers should treat the input as
+// already USD (the FormatTaller USD-fallback story).
+func FromTaller(amount float64) (float64, error) {
+	taller := TallerCurrency()
+	if taller == "USD" {
+		return amount, nil
 	}
-	return fmt.Sprintf("%s%.2f", TallerSymbol(), v)
+	return toUSD(amount, taller)
+}
+
+// toUSD converts amount in nativeCurrency to USD using the loaded
+// FX rates. Pure helper used by ToTaller and the FormatTaller USD
+// fallback path. Returns the original amount when nativeCurrency is
+// already USD.
+func toUSD(amount float64, nativeCurrency string) (float64, error) {
+	nc := strings.ToUpper(strings.TrimSpace(nativeCurrency))
+	if nc == "" || nc == "USD" {
+		return amount, nil
+	}
+	if err := ensureFXLoaded(); err != nil {
+		return 0, fmt.Errorf("fx unavailable: %w", err)
+	}
+	if fxRatesUSD == nil {
+		return 0, fmt.Errorf("fx unavailable: no rates loaded")
+	}
+	rate, ok := fxRatesUSD[nc]
+	if !ok || rate <= 0 {
+		return 0, fmt.Errorf("fx: unknown source currency %q", nc)
+	}
+	return amount / rate, nil
+}
+
+// FormatTaller returns "<symbol><value>" using the active taller.
+// Failure modes are layered so the UI never goes blank:
+//   1. FX fully working          → display in active taller
+//   2. taller FX missing         → display in USD with a "(FX unavailable, USD)" tag
+//   3. source FX also missing    → display in source native currency with the same tag
+// Step (2) is the user's "if for some reason a currency can't be
+// converted, fall back to dollars" rule.
+func FormatTaller(amount float64, nativeCurrency string) string {
+	if v, _, err := ToTaller(amount, nativeCurrency); err == nil {
+		return fmt.Sprintf("%s%.2f", TallerSymbol(), v)
+	}
+	// Step 2: try USD intermediate.
+	if usd, err := toUSD(amount, nativeCurrency); err == nil {
+		taller := TallerCurrency()
+		if taller != "USD" {
+			return fmt.Sprintf("$%.2f (FX %s unavailable, USD)", usd, taller)
+		}
+		return fmt.Sprintf("$%.2f", usd)
+	}
+	// Step 3: last-resort native display.
+	return fmt.Sprintf("%s%.2f (FX unavailable, %s)",
+		nativeSymbol(nativeCurrency), amount, strings.ToUpper(nativeCurrency))
 }
 
 // nativeSymbol returns the symbol for a vendor's native currency.
@@ -345,3 +435,47 @@ func nativeSymbol(code string) string {
 	}
 	return c + " "
 }
+
+// IsSupportedCurrency reports whether yage knows how to display
+// (and FX-convert) a given ISO-4217 currency code. The supported
+// set is the keys of currencySymbol; callers selecting a currency
+// outside this set should print UnsupportedCurrencyMessage and fall
+// back to USD.
+func IsSupportedCurrency(code string) bool {
+	c := strings.ToUpper(strings.TrimSpace(code))
+	if c == "" {
+		return false
+	}
+	_, ok := currencySymbol[c]
+	return ok
+}
+
+// SupportedCurrencies returns the sorted list of ISO-4217 codes yage
+// can display today. Useful for --help output and the unsupported-
+// currency message.
+func SupportedCurrencies() []string {
+	out := make([]string, 0, len(currencySymbol))
+	for k := range currencySymbol {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// UnsupportedCurrencyMessage returns the user-facing notice we
+// display when an operator selects a currency yage doesn't support
+// yet — both the explanation and the issue-tracker link asking them
+// to file a request. Currencies outside SupportedCurrencies() trigger
+// this and fall back to USD.
+func UnsupportedCurrencyMessage(code string) string {
+	c := strings.ToUpper(strings.TrimSpace(code))
+	if c == "" {
+		c = "(empty)"
+	}
+	return fmt.Sprintf(
+		"currency %s not yet supported (yage covers ~%d top global currencies); "+
+			"falling back to USD. Please open an issue at "+
+			"https://github.com/lpasquali/yage/issues to request it.",
+		c, len(currencySymbol))
+}
+

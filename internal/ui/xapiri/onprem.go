@@ -3,13 +3,15 @@
 
 package xapiri
 
-// onprem.go — fork-specific step methods for the on-prem branch
-// (§22.2). Picks from the airgap-compatible provider set at step 4;
-// runs the §23 capacity-bound feasibility check at step 5; falls
-// into the shared tail.
+// onprem.go — fork-specific step methods for the on-prem branch.
+// Picks from the airgap-compatible provider set at step 4; runs
+// the on-prem capacity-bound feasibility check at step 5; offers
+// the optional TCO estimator at step 5.5; then falls into the
+// shared tail.
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/lpasquali/yage/internal/provider"
 )
@@ -42,6 +44,9 @@ func (s *state) runOnPremFork() int {
 		if err := s.step3_workloadShape(); err != nil {
 			return s.exit(err)
 		}
+	}
+	if err := s.step5_5_onprem_tco(); err != nil {
+		return s.exit(err)
 	}
 	if err := s.runSharedTail(); err != nil {
 		return s.exit(err)
@@ -81,16 +86,17 @@ func (s *state) step4_onprem_providerPick() error {
 }
 
 // step5_onprem_capacity calls the §23 on-prem feasibility hook.
-// When the gate isn't wired (Track α pending) we soft-pass with a
-// note. When it returns "infeasible" we surface the reason and
-// loop back to step 3.
+// When the gate is not wired we soft-pass with a note. When it
+// returns "infeasible" we surface the reason and loop back to
+// step 3.
 func (s *state) step5_onprem_capacity() error {
 	s.r.section("capacity")
+	s.stampGeoRegions("filled blank Region/Location where geo tables exist (e.g. OpenStack on-prem)")
 	verdict, err := runFeasibilityCheckOnPrem(s.cfg)
 	switch verdict {
 	case FeasibilityUnchecked:
-		s.r.info("on-prem feasibility gate not wired (Track α pending).")
-		s.r.info("proceeding without the host-pool capacity check — re-run when --dry-run lands the gate.")
+		s.r.info("on-prem feasibility gate not wired.")
+		s.r.info("proceeding without the host-pool capacity check.")
 		return nil
 	case FeasibilityComfortable:
 		s.r.info("✓ comfortable on the configured host pool.")
@@ -106,4 +112,76 @@ func (s *state) step5_onprem_capacity() error {
 		return fmt.Errorf("xapiri: on-prem capacity infeasible: %w", err)
 	}
 	return nil
+}
+
+// step5_5_onprem_tco prompts the operator for the inputs the TCO
+// estimator needs (capex, useful life, electricity, support). Every
+// prompt is skippable by hitting enter on an empty default — and
+// the whole step is skippable via the leading yes/no — because the
+// on-prem cost path is genuinely optional: operators who already
+// know their hardware costs by heart, or who don't want to surface
+// them at all, can move straight to review and persist.
+//
+// When the operator opts in we stamp cfg.HardwareCostUSD /
+// HardwareUsefulLifeYears / HardwareWatts / HardwareKWHRateUSD /
+// HardwareSupportUSDMonth so the existing renderTCOLine in shared.go
+// (and the orchestrator dry-run) pick up the values without any
+// further plumbing.
+func (s *state) step5_5_onprem_tco() error {
+	s.r.section("on-prem cost estimator (optional)")
+	curHas := s.cfg.HardwareCostUSD > 0 || s.cfg.HardwareWatts > 0 ||
+		s.cfg.HardwareSupportUSDMonth > 0
+	defWant := !curHas
+	if !s.r.promptYesNo("estimate monthly TCO?", defWant) {
+		s.r.info("skipped — review and persist will show 'TCO not configured'.")
+		return nil
+	}
+	s.cfg.HardwareCostUSD = s.promptFloat(
+		"hardware capex (one-time, in your local currency)",
+		s.cfg.HardwareCostUSD)
+	s.cfg.HardwareUsefulLifeYears = s.promptFloat(
+		"useful life (years; capex amortizes straight-line)",
+		orFloat(s.cfg.HardwareUsefulLifeYears, 5))
+	s.cfg.HardwareWatts = s.promptFloat(
+		"sustained power draw (W)",
+		s.cfg.HardwareWatts)
+	s.cfg.HardwareKWHRateUSD = s.promptFloat(
+		"electricity rate (per kWh, in your local currency)",
+		s.cfg.HardwareKWHRateUSD)
+	s.cfg.HardwareSupportUSDMonth = s.promptFloat(
+		"flat monthly support / licensing (0 to skip)",
+		s.cfg.HardwareSupportUSDMonth)
+	return nil
+}
+
+// promptFloat is a small wrapper around promptString that parses a
+// non-negative float. Empty input keeps cur. Reject-and-retry on
+// negative or unparsable input (zero is allowed — operators
+// legitimately have $0 support contracts).
+func (s *state) promptFloat(label string, cur float64) float64 {
+	curStr := ""
+	if cur > 0 {
+		curStr = strconv.FormatFloat(cur, 'f', -1, 64)
+	}
+	for {
+		v := s.r.promptString(label, curStr)
+		if v == "" {
+			return cur
+		}
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 {
+			s.r.info("    not a non-negative number; try again.")
+			continue
+		}
+		return f
+	}
+}
+
+// orFloat returns cur when non-zero, else def. Compact helper for
+// step prompts that have a static fallback (e.g. 5-year useful life).
+func orFloat(cur, def float64) float64 {
+	if cur > 0 {
+		return cur
+	}
+	return def
 }

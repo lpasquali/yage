@@ -7,12 +7,10 @@
 // --dry-run to compare planned cluster sizing against host
 // headroom.
 //
-// Phase A.5 split: cloud-specific inventory acquisition lives
-// behind the Provider interface (provider.For(cfg).Inventory) —
-// the Proxmox-specific HTTP queries that used to live here as
-// FetchHostCapacity / FetchExistingUsage moved to
-// internal/provider/proxmox/inventory.go in Phase A.2. This
-// package now consumes pre-built HostCapacity / ExistingUsage
+// Cloud-specific inventory acquisition lives behind the Provider
+// interface (provider.For(cfg).Inventory). The Proxmox-specific
+// HTTP queries live in internal/provider/proxmox/inventory.go.
+// This package consumes pre-built HostCapacity / ExistingUsage
 // values supplied by the orchestrator (see
 // orchestrator.hostCapacityFromInventory).
 //

@@ -3,9 +3,9 @@
 
 package aws
 
-// Phase D state-handoff hooks for AWS: KindSyncFields + TemplateVars.
-// Purge stays as MinStub default (nil) — yage doesn't currently
-// create AWS-side state outside the workload cluster.
+// State-handoff hooks for AWS: KindSyncFields + TemplateVars.
+// Purge stays as MinStub default (nil) — yage does not create
+// AWS-side state outside the workload cluster.
 //
 // See docs/abstraction-plan.md §11 + §14.D + §13's AWS validation.
 

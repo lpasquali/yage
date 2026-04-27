@@ -3,7 +3,7 @@
 
 package gcp
 
-// Phase D state-handoff hooks for GCP.
+// State-handoff hooks for GCP.
 //
 // See docs/abstraction-plan.md §11 + §14.D + §13's GCP validation.
 

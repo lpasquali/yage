@@ -10,8 +10,8 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 )
 
-// VictoriaMetricsValues ports workload_argocd_victoria_helm_values
-// (L6826-L6849). Static body — no config knobs.
+// VictoriaMetricsValues returns the VictoriaMetrics Helm values
+// block. Static body — no config knobs.
 func VictoriaMetricsValues() string {
 	return `server:
   fullnameOverride: vmsingle
@@ -34,8 +34,8 @@ func VictoriaMetricsValues() string {
 `
 }
 
-// OpenTelemetryValues ports workload_argocd_opentelemetry_helm_values
-// (L6852-L6858).
+// OpenTelemetryValues returns the OpenTelemetry collector Helm
+// values block.
 func OpenTelemetryValues(cfg *config.Config) string {
 	mode := cfg.OTELCollectorMode
 	if mode == "" {
@@ -48,9 +48,9 @@ func OpenTelemetryValues(cfg *config.Config) string {
 	return fmt.Sprintf("mode: %s\nimage:\n  repository: %s\n", mode, img)
 }
 
-// GrafanaValues ports workload_argocd_grafana_helm_values
-// (L6860-L6909). Two branches: VictoriaMetrics disabled → service only;
-// enabled → add a VictoriaMetrics datasource + three default dashboards.
+// GrafanaValues returns the Grafana Helm values block. Two branches:
+// VictoriaMetrics disabled → service only; enabled → add a
+// VictoriaMetrics datasource + three default dashboards.
 func GrafanaValues(cfg *config.Config) string {
 	if !cfg.VictoriaMetricsEnabled {
 		return "service:\n  type: ClusterIP\n"
@@ -101,10 +101,10 @@ dashboards:
 	)
 }
 
-// SPIRESubchartTolerations ports _wl_argocd_spire_subchart_tolerations
-// (L6914-L6950). Returns the tolerations block for spire-server,
-// spire-controller-manager, spire-agent, spiffe-csi-driver — or "" when
-// SPIRE_TOLERATE_CONTROL_PLANE is false.
+// SPIRESubchartTolerations returns the tolerations block for
+// spire-server, spire-controller-manager, spire-agent, and
+// spiffe-csi-driver — or "" when SPIRE_TOLERATE_CONTROL_PLANE is
+// false.
 func SPIRESubchartTolerations(cfg *config.Config) string {
 	if !isTrue(cfg.SPIRETolerateControlPlane) {
 		return ""
@@ -124,7 +124,7 @@ func SPIRESubchartTolerations(cfg *config.Config) string {
 		block("spire-agent") + block("spiffe-csi-driver")
 }
 
-// SPIREValues ports workload_argocd_spire_helm_values (L6952-L6992).
+// SPIREValues returns the SPIRE Helm values block.
 func SPIREValues(cfg *config.Config) string {
 	var sb strings.Builder
 	sb.WriteString("global:\n")
@@ -164,8 +164,8 @@ func SPIREValues(cfg *config.Config) string {
 	return sb.String()
 }
 
-// KeycloakValues ports workload_argocd_keycloak_helm_values
-// (L6994-L7036). Returns "" when KEYCLOAK_ENABLED is false.
+// KeycloakValues returns the Keycloak Helm values block. Returns
+// "" when KEYCLOAK_ENABLED is false.
 func KeycloakValues(cfg *config.Config) string {
 	if !cfg.KeycloakEnabled {
 		return ""

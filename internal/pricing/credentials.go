@@ -23,8 +23,13 @@ type Credentials struct {
 // hand-off path: `cmd/yage/main.go` populates them from
 // cfg.Cost.Currency at startup.
 type Currency struct {
-	DisplayCurrency string // ISO currency code (e.g. "EUR"); empty = auto-detect
-	EURUSDOverride  string // manual EUR/USD pin when open.er-api.com is unreachable
+	// DisplayCurrency forces output in a specific ISO-4217 code;
+	// empty = auto-detect via DataCenterLocation, then geo-IP, then
+	// USD fallback.
+	DisplayCurrency string
+	// DataCenterLocation is an ISO-3166 alpha-2 country code from
+	// --data-center-location; drives currency + region defaults.
+	DataCenterLocation string
 }
 
 // creds and prefs are the process-globals the orchestrator sets

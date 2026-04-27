@@ -26,27 +26,31 @@ rather than a stale fabricated figure.
               internal/pricing/<vendor>.go (Fetcher impl)
                               │
                               ▼
-                ┌──────────────────────────────┐
-                │  vendor catalog / billing    │
-                │  AWS Bulk JSON • Azure Retail│
-                │  GCP Catalog (key) • Hetzner │
-                │  DO • Linode • OCI • IBM     │
-                └──────────────────────────────┘
+                ┌──────────────────────────────────┐
+                │  vendor catalog / billing        │
+                │  AWS Bulk JSON • Azure Retail    │
+                │  GCP Catalog (key) • Hetzner     │
+                │  DO • Linode • OCI • IBM         │
+                │  fetcher asks in active taller   │
+                │  when the vendor supports it     │
+                └──────────────────────────────────┘
                               │
                               ▼
-              Item{USDPerHour, USDPerMonth, FetchedAt}
+       Item{USDPerHour, USDPerMonth,
+            NativeCurrency, NativeAmount, FetchedAt}
                               │
-                  pricing.ToTaller(amount, "USD")
+                  pricing.FormatTaller(amount, native)
                               │
               ┌────────────────────────────────┐
               │ FX from open.er-api.com (24h   │
               │ disk cache); active taller     │
-              │ from YAGE_TALLER_     │
-              │ CURRENCY env, geo-IP fallback  │
+              │ from --data-center-location,   │
+              │ YAGE_TALLER_CURRENCY, or geo   │
               └────────────────────────────────┘
                               │
                               ▼
                      formatted display
+                  (USD fallback on FX failure)
 ```
 
 ## Pricing sources
@@ -98,37 +102,56 @@ Hint content per vendor (excerpts):
 - **Hetzner** — Console walkthrough for read-scoped project token
 - **Azure / Linode / OCI** — none needed (anonymous catalogs)
 
-## Taller — internal currency abstraction
+## Taller — display currency abstraction
 
-"Taller" is yage's display currency. Vendors return prices
-in USD (AWS / Azure / GCP / DO / Linode / OCI / IBM) or EUR (Hetzner
-— converted to USD inside the fetcher); display happens in whatever
-currency the operator wants.
+"Taller" is yage's display currency. Every vendor has a **datacenter
+currency** — the currency in which their pricing team publishes the
+canonical number (USD for AWS/Azure/GCP/DO/Linode/IBM/OCI, EUR for
+Hetzner). yage fetches prices in the taller directly when the vendor's
+API supports it (Azure `?currencyCode=`, OCI `?currencyCode=`, IBM
+amounts[]); otherwise it converts datacenter-currency → taller via
+the FX layer. Either way, the user's display currency is the taller.
 
-Resolution order:
+### Resolution order for the active taller
 
-1. `YAGE_TALLER_CURRENCY` (or legacy `YAGE_CURRENCY`)
-2. Geo-IP via `ip-api.com/json` → ISO country → ISO currency
-3. USD fallback (and a notice if geolocation failed)
+1. `YAGE_TALLER_CURRENCY` env or `cfg.Cost.Currency.DisplayCurrency`
+   (explicit ISO-4217 override)
+2. `--data-center-location <CC>` / `YAGE_DATA_CENTER_LOCATION`:
+   ISO-3166 alpha-2 country code → ISO currency
+3. Geo-IP via `ip-api.com/json` → ISO country → ISO currency
+4. USD fallback (with a notice in the dry-run header)
 
-FX fetched once per 24h from `open.er-api.com/v6/latest/USD` (free,
+If any step picks a currency outside `pricing.SupportedCurrencies()`
+(yage covers ~50 top global currencies), the resolver falls back to
+USD and prints `pricing.UnsupportedCurrencyMessage()` asking the user
+to file an issue requesting that currency.
+
+### FX
+
+FX is fetched once per 24h from `open.er-api.com/v6/latest/USD` (free,
 auth-free), cached on disk at `~/.cache/yage/pricing/fx-USD.json`.
+When the FX rate for the active taller is missing, every monetary
+value falls back to USD with a `(FX <CCY> unavailable, USD)` tag —
+the UI never goes blank. There is no per-currency override knob;
+open.er-api.com supplies every supported code.
 
-Display sample (geo-detected EUR taller):
+### Display sample (taller selected via `--data-center-location IT`)
 
 ```
 🌍 MULTI-CLOUD COST COMPARISON — same cluster shape, every registered provider
-    (every monetary value is live from the vendor's billing API,
-     converted into the active taller currency at live FX)
-    taller currency: EUR (geo: IT)
+    (every monetary value is live from the vendor's billing API;
+     fetched directly in the taller when the vendor supports it,
+     FX-converted otherwise)
+    taller currency: EUR (--data-center-location IT)
 ─────────────────────────────────────────────────────────────────────────────
   provider         monthly €    €/GB-mo (live)  max retention if budget ÷ storage
+  hetzner             €39.61         €0.044     900 GB / month if all storage
   linode              €61.48         (unavail)  (unpriced)
   aws                      —                 —  (estimator: …)
   …
 ```
 
-Override:
+### Override
 
 ```bash
 YAGE_TALLER_CURRENCY=JPY yage --dry-run --cost-compare

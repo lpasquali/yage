@@ -148,11 +148,11 @@ func MoveCAPIState(cfg *config.Config, mgmtKubeconfig string) error {
 	}
 
 	// Discover namespaces that hold CAPI resources to move. Per
-	// Phase E.4 / §12, the active provider's PivotTarget owns the
-	// namespace list; nil means "use default" — workload + mgmt +
-	// the provider-managed bootstrap Secret namespace. By default
+	// §12, the active provider's PivotTarget owns the namespace
+	// list; nil means "use default" — workload + mgmt + the
+	// provider-managed bootstrap Secret namespace. By default
 	// `clusterctl move` operates on a single namespace at a time;
-	// we run it for each so both cluster objects + their dependants
+	// run it for each so both cluster objects + their dependants
 	// land on mgmt.
 	var prov provider.Pivoter
 	if p, err := provider.For(cfg); err == nil {
@@ -237,9 +237,9 @@ func scaleDeploymentsToZero(kindCtx string) error {
 }
 
 // selectPivotNamespaces resolves the namespace list `clusterctl move`
-// runs against. Per Phase E.4 / §12, the active provider's
-// PivotTarget owns the namespace list; nil means "use default" —
-// workload + mgmt + the provider-managed bootstrap Secret namespace.
+// runs against. Per §12, the active provider's PivotTarget owns
+// the namespace list; nil means "use default" — workload + mgmt +
+// the provider-managed bootstrap Secret namespace.
 //
 // Extracted from MoveCAPIState so the namespace-selection logic is
 // unit-testable without spinning up clusterctl. The Pivoter argument

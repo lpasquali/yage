@@ -1,0 +1,52 @@
+pivot — provision the management cluster on the target provider
+
+The default flow:
+
+    1. kind launches a transient bootstrap cluster
+    2. clusterctl init wires CAPI core + the chosen infrastructure provider on kind
+    3. yage provisions a single-node management cluster on the target provider
+    4. clusterctl move pivots state kind → mgmt; kind is torn down
+    5. the workload cluster is provisioned BY the mgmt cluster (not kind)
+
+kind is a launcher, not a long-lived control plane. The mgmt cluster lives on the same
+infrastructure as the workload — Proxmox VMs, AWS EC2, etc. — so day-2 operations don't
+depend on the operator's laptop.
+
+    --pivot                       Pivot before the workload step (default: true)
+    --no-pivot                    Keep kind as the management plane forever (legacy mode)
+    --pivot-keep-kind             Skip `kind delete cluster` after a successful pivot
+    --pivot-dry-run               Provision mgmt + clusterctl init, then `clusterctl move
+                                  --dry-run` and exit. Useful to validate mgmt reachability
+                                  before committing to the move.
+    --stop-before-workload        Stop after the pivot, before the workload manifest is
+                                  applied. Integration tests use this to inspect the mgmt
+                                  cluster on the provider with no workload churn.
+    --pivot-verify-timeout DUR    Wait at most DUR (e.g. 10m) for mgmt to mirror kind state
+                                  before failing the pivot (default: 10m)
+
+    --mgmt-cluster-name NAME      Management Cluster name (default: capi-management)
+    --mgmt-cluster-namespace NS   Management Cluster namespace (default: default)
+    --mgmt-k8s-version V          Kubernetes version (default: same as workload)
+    --mgmt-cilium-cluster-id N    Cilium cluster.id (default: derived)
+    --mgmt-control-plane-machine-count N   Default 1 (single-node mgmt)
+    --mgmt-worker-machine-count N          Default 0 (CP-only)
+    --mgmt-control-plane-endpoint-ip IP    Management VIP — user-provided
+    --mgmt-control-plane-endpoint-port P   Apiserver port (default: same as workload)
+    --mgmt-node-ip-ranges RANGES           2-IP range supporting rollout — user-provided
+    --mgmt-control-plane-num-sockets N     (default: 1)
+    --mgmt-control-plane-num-cores N       (default: 2)
+    --mgmt-control-plane-memory-mib N      (default: 2048 — CAPI controllers + state only)
+    --mgmt-control-plane-boot-volume-device DEV
+    --mgmt-control-plane-boot-volume-size GB
+    --mgmt-capi-manifest PATH     Path for the rendered management manifest (default: temp)
+
+EXAMPLES
+    yage --infra-provider proxmox \
+         --mgmt-control-plane-endpoint-ip 192.168.0.30 \
+         --mgmt-node-ip-ranges 192.168.0.31-192.168.0.32
+
+    yage --infra-provider proxmox --stop-before-workload \
+         --mgmt-control-plane-endpoint-ip 192.168.0.30 \
+         --mgmt-node-ip-ranges 192.168.0.31-192.168.0.32
+    # Mgmt cluster lives on Proxmox; kind is gone; no workload yet —
+    # ideal for integration tests against a clean managed CAPI plane.

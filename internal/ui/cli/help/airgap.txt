@@ -1,0 +1,32 @@
+airgap — disable every internet-requiring path
+
+    --airgapped                   Disable: pricing fetchers, geo + FX detection, every cloud-
+                                  provider surface (AWS, Azure, GCP, Hetzner, DO, Linode, OCI,
+                                  IBM Cloud). Only on-prem providers (Proxmox, OpenStack,
+                                  vSphere, Docker/CAPD) remain selectable.
+                                  Env: YAGE_AIRGAPPED.
+
+    --image-registry-mirror URL   Prefix passed to `clusterctl init` so CAPI provider images
+                                  come from an internal mirror instead of registry.k8s.io /
+                                  ghcr.io. Required in airgapped deployments.
+                                  Env: YAGE_IMAGE_REGISTRY_MIRROR.
+
+    --internal-ca-bundle PATH     PEM bundle of CAs trusted by every outbound HTTPS call yage
+                                  makes (Helm pulls, OCI image pulls in clusterctl, kubectl-
+                                  against-workload, pricing/inventory APIs). Loaded once at
+                                  startup, installed on the Go HTTP transport, and exported
+                                  as SSL_CERT_FILE so child processes (helm, clusterctl, kind,
+                                  kubectl) trust it too. Env: YAGE_INTERNAL_CA_BUNDLE.
+
+    --helm-repo-mirror URL        Single base URL of an internal Helm chart repo (Harbor,
+                                  ChartMuseum, …) that yage rewrites every chart-repo
+                                  reference onto. Format: "https://harbor.internal/chartrepo/yage"
+                                  (no trailing slash). oci:// repos rewrite the same way.
+                                  Env: YAGE_HELM_REPO_MIRROR.
+
+    --node-image IMAGE            Override the kind worker base image when the public image
+                                  is mirrored under a different name internally.
+                                  Env: YAGE_NODE_IMAGE.
+
+yage warns when --airgapped is set without --image-registry-mirror or --helm-repo-mirror —
+those calls will hit the public registries and likely fail.

@@ -35,8 +35,8 @@ var capiClusterGVR = schema.GroupVersionResource{
 	Resource: "clusters",
 }
 
-// WaitForWorkloadClusterReady ports wait_for_workload_cluster_ready
-// (L7362-L7391).
+// WaitForWorkloadClusterReady waits for the workload Cluster to
+// report Available, then waits for Cilium and node readiness.
 func WaitForWorkloadClusterReady(cfg *config.Config) {
 	capimanifest.DiscoverWorkloadClusterIdentity(cfg, cfg.CAPIManifest)
 
@@ -216,8 +216,10 @@ func PurgeStaleHostNetworking() {
 	logx.Log("Host networking state purged.")
 }
 
-// DeleteWorkloadClusterBeforeKindDeletion ports
-// delete_workload_cluster_before_kind_deletion (L7554-L7582).
+// DeleteWorkloadClusterBeforeKindDeletion deletes the workload
+// Cluster CR on the kind management cluster and waits for it to
+// disappear, so that downstream provider state is reaped before
+// kind itself is destroyed.
 func DeleteWorkloadClusterBeforeKindDeletion(cfg *config.Config) {
 	ctxName := "kind-" + cfg.KindClusterName
 	name := cfg.WorkloadClusterName
@@ -271,11 +273,10 @@ func waitClusterDeleted(cli *k8sclient.Client, bg context.Context, ns, name stri
 	})
 }
 
-// PurgeGeneratedArtifacts ports purge_generated_artifacts (L7584-L7618).
-// Per §14.D, provider-specific cleanup (Proxmox tofu destroy,
-// pool delete, generated files) lives in Provider.Purge; this
-// function still owns the cross-cutting cleanup (kind cluster,
-// CAPI manifest path, CAPMOX build cache, vendored CAPI clones).
+// PurgeGeneratedArtifacts owns the cross-cutting cleanup (kind
+// cluster, CAPI manifest path, CAPMOX build cache, vendored CAPI
+// clones). Provider-specific cleanup (Proxmox tofu destroy, pool
+// delete, generated files) lives in Provider.Purge per §14.D.
 func PurgeGeneratedArtifacts(cfg *config.Config) {
 	logx.Log("Purging generated files and Terraform state...")
 
@@ -302,12 +303,12 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 		}
 	}
 
-	// Provider-specific cleanup (Phase D / §11). For Proxmox this
-	// runs `tofu destroy` on the BPG identity tree and removes the
+	// Provider-specific cleanup (§11). For Proxmox this runs
+	// `tofu destroy` on the BPG identity tree and removes the
 	// Proxmox-flavored generated files (CSIConfig, AdminConfig,
-	// IdentityTF). For other providers it's a no-op (MinStub
-	// default returns nil) — they don't currently create state
-	// outside the workload cluster.
+	// IdentityTF). For other providers it is a no-op (MinStub
+	// default returns nil) — they do not create state outside the
+	// workload cluster.
 	if prov, perr := provider.For(cfg); perr == nil {
 		if err := prov.Purge(cfg); err != nil {
 			logx.Warn("provider %s Purge: %v (continuing)", prov.Name(), err)
@@ -316,8 +317,7 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 
 	// Cross-cutting cleanup that stays in the orchestrator: the
 	// CAPI manifest path, the operator-supplied clusterctl config,
-	// the CAPMOX build cache, and clones of upstream CAPI repos
-	// that pre-Phase-A code may have left around.
+	// the CAPMOX build cache, and clones of upstream CAPI repos.
 	if cfg.CAPIManifest != "" {
 		_ = os.Remove(cfg.CAPIManifest)
 	}
@@ -333,11 +333,11 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 	logx.Log("Purge complete.")
 }
 
-// WorkloadRolloutCAPITouchRollout ports workload_rollout_capi_touch_rollout
-// (L7763-L7858). Triggers CAPI to roll control-plane + worker Machines.
-// `clusterctl alpha rollout restart` is intentionally retained as a shell-out
-// (the only way to drive that subcommand without pulling cluster-api/client
-// in-process is far heavier).
+// WorkloadRolloutCAPITouchRollout triggers CAPI to roll
+// control-plane + worker Machines. `clusterctl alpha rollout
+// restart` is intentionally retained as a shell-out (driving that
+// subcommand without pulling cluster-api/client in-process is far
+// heavier).
 func WorkloadRolloutCAPITouchRollout(cfg *config.Config) {
 	ctxName := "kind-" + cfg.KindClusterName
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")

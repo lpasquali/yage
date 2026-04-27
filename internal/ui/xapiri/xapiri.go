@@ -31,8 +31,11 @@ package xapiri
 import (
 	"fmt"
 	"io"
+	"os"
 	"reflect"
+	"strings"
 
+	"github.com/lpasquali/yage/internal/cluster/kind"
 	"github.com/lpasquali/yage/internal/config"
 )
 
@@ -42,15 +45,37 @@ import (
 // review step); non-zero only on hard I/O failures we can't
 // recover from.
 //
-// Caller contract is unchanged from the prior stub: cmd/yage's
-// `--xapiri` branch passes os.Stdout + the resolved cfg.
+// First question is the kind management cluster name — every later
+// step (cost-compare, persist) needs it, and it doubles as the
+// kubectl context. Then the prelude brings that cluster up so step
+// 8 can persist into the kind Secret without silently falling back
+// to local disk. The kind cluster is created without any CAPI
+// infrastructure provider — those land later, in the orchestrator's
+// normal phases, once the user has picked one.
+// Skipped when YAGE_XAPIRI_SKIP_KIND=1 (offline review mode).
+//
+// Caller contract: cmd/yage's `--xapiri` branch passes os.Stdout +
+// the resolved cfg.
 func Run(w io.Writer, cfg *config.Config) int {
 	if cfg == nil {
 		fmt.Fprintln(w, "xapiri: nil config (internal error)")
 		return 2
 	}
 	s := newState(w, cfg)
+	if useHuhTUI() {
+		return runHuhBranch(w, cfg, s)
+	}
 	s.greet()
+	if err := s.stepKindClusterName(); err != nil {
+		return s.exit(err)
+	}
+	if !skipKindPrelude() {
+		if err := kind.EnsureClusterUp(cfg, w); err != nil {
+			fmt.Fprintf(w, "xapiri: kind management cluster could not be brought up: %v\n", err)
+			fmt.Fprintln(w, "  set YAGE_XAPIRI_SKIP_KIND=1 to run the wizard offline (config will not be persisted into kind).")
+			return 1
+		}
+	}
 	if err := s.step0_modePick(); err != nil {
 		return s.exit(err)
 	}
@@ -58,6 +83,58 @@ func Run(w io.Writer, cfg *config.Config) int {
 		return s.runOnPremFork()
 	}
 	return s.runCloudFork()
+}
+
+// useHuhTUI reports whether YAGE_XAPIRI_TUI=huh asks for the spike
+// flow. Any other value (or unset) keeps the legacy bufio-driven
+// walkthrough.
+func useHuhTUI() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("YAGE_XAPIRI_TUI")), "huh")
+}
+
+// runHuhBranch is the YAGE_XAPIRI_TUI=huh entry. The kind prelude
+// still runs (every later step needs the cluster), then the huh
+// form covers steps 1..4 of the cloud fork; cost-compare and the
+// shared tail run unchanged afterwards.
+func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
+	if !skipKindPrelude() {
+		if err := kind.EnsureClusterUp(cfg, w); err != nil {
+			fmt.Fprintf(w, "xapiri: kind management cluster could not be brought up: %v\n", err)
+			fmt.Fprintln(w, "  set YAGE_XAPIRI_SKIP_KIND=1 to run the wizard offline (config will not be persisted into kind).")
+			return 1
+		}
+	}
+	if rc := runHuhForm(w, cfg, s); rc != 0 {
+		return rc
+	}
+	if s.fork == forkOnPrem {
+		// runHuhForm already delegated to runOnPremFork; the rc==0
+		// branch here is unreachable for that path. Belt-and-braces.
+		return 0
+	}
+	for {
+		err := s.step5_cloud_costCompare()
+		if err == nil {
+			break
+		}
+		if err == ErrUserExit {
+			return 0
+		}
+		fmt.Fprintf(w, "xapiri: cost-compare blocked: %v\n", err)
+		return 1
+	}
+	if err := s.runSharedTail(); err != nil {
+		return s.exit(err)
+	}
+	return 0
+}
+
+// skipKindPrelude reports whether YAGE_XAPIRI_SKIP_KIND opts out of
+// the kind-up prelude. Useful for offline review of the wizard
+// (tests, demos) where bringing up Docker isn't possible.
+func skipKindPrelude() bool {
+	v := strings.TrimSpace(os.Getenv("YAGE_XAPIRI_SKIP_KIND"))
+	return v == "1" || strings.EqualFold(v, "true")
 }
 
 // providerSubStruct resolves cfg.Providers.<ProperCase(name)> via
@@ -136,6 +213,26 @@ func isSensitiveFieldName(name string) bool {
 func isInternalBookkeeping(name string) bool {
 	for _, pre := range []string{"Bootstrap", "KindCAPMOX", "Identity"} {
 		if hasPrefix(name, pre) {
+			return true
+		}
+	}
+	return false
+}
+
+// isOverheadField spots provider-config fields whose values were
+// already priced into the cost-compare row using defaults derived
+// from resilience tier + workload shape. Re-prompting for them in
+// step6 would let the operator type a number that silently disagrees
+// with the headline figure they just picked from. They remain
+// settable via the corresponding --<provider>-<flag>; the wizard
+// just doesn't ask. Match by suffix on overhead-shaped names.
+func isOverheadField(name string) bool {
+	for _, suf := range []string{
+		"GatewayCount", "ALBCount", "NLBCount",
+		"DataTransferGB", "CloudWatchLogsGB", "Route53HostedZones",
+		"LogAnalyticsGB", "PublicIPCount", "DNSZones",
+	} {
+		if hasSuffix(name, suf) {
 			return true
 		}
 	}

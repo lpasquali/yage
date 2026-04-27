@@ -27,7 +27,6 @@ func Warn(format string, a ...any) {
 }
 
 // Err prints an error message to stderr without exiting.
-// Matches the ad-hoc `err` usage scattered in the bash script.
 func Err(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "❌ 💩 %s\n", fmt.Sprintf(format, a...))
 }

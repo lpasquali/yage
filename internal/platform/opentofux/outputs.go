@@ -13,11 +13,11 @@ import (
 	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
 )
 
-// GenerateConfigsFromOutputs ports generate_configs_from_terraform_outputs
-// (L3523-L3555). Reads the four token outputs from OpenTofu state,
-// normalises + validates them, overwrites cfg.Proxmox{Token,Secret,
-// CSITokenID,CSITokenSecret,CSIURL}, refreshes derived identity token
-// IDs, and syncs the state to kind + local files.
+// GenerateConfigsFromOutputs reads the four token outputs from
+// OpenTofu state, normalises + validates them, overwrites
+// cfg.Proxmox{Token,Secret,CSITokenID,CSITokenSecret,CSIURL},
+// refreshes derived identity token IDs, and syncs the state to
+// kind + local files.
 func GenerateConfigsFromOutputs(cfg *config.Config) {
 	csiAPIURL := pveapi.APIJSONURL(cfg)
 	capiTokenID := GetOutput("capi_token_id")
@@ -49,11 +49,9 @@ func GenerateConfigsFromOutputs(cfg *config.Config) {
 	WriteCSIConfigIfMissing(cfg)
 }
 
-// WriteClusterctlConfigIfMissing ports write_clusterctl_config_if_missing
-// (L3557-L3577). This function does NOT write a local clusterctl YAML —
-// that path was removed. It only refreshes derived identity token IDs
-// and syncs bootstrap state to kind, plus logs a summary of which
-// Secrets hold what.
+// WriteClusterctlConfigIfMissing does NOT write a local clusterctl
+// YAML. It refreshes derived identity token IDs and syncs bootstrap
+// state to kind, plus logs a summary of which Secrets hold what.
 func WriteClusterctlConfigIfMissing(cfg *config.Config) {
 	pveapi.RefreshDerivedIdentityTokenIDs(cfg)
 	if cfg.ClusterctlCfgFilePresent() {
@@ -69,7 +67,7 @@ func WriteClusterctlConfigIfMissing(cfg *config.Config) {
 		logx.Log("Bootstrap state synced to kind: %s (config.yaml), %s (CAPI+CSI), %s (proxmox-admin.yaml) when the management cluster is reachable; clusterctl uses a temp file for the CLI only.",
 			cfg.Providers.Proxmox.BootstrapConfigSecretName, cfg.Providers.Proxmox.BootstrapSecretName, cfg.Providers.Proxmox.BootstrapAdminSecretName)
 	case cfg.Providers.Proxmox.BootstrapSecretName != "":
-		logx.Log("Bootstrap state synced to kind: %s (config.yaml) and %s (legacy combined) when the management cluster is reachable; clusterctl uses a temp file for the CLI only.",
+		logx.Log("Bootstrap state synced to kind: %s (config.yaml) and %s (combined) when the management cluster is reachable; clusterctl uses a temp file for the CLI only.",
 			cfg.Providers.Proxmox.BootstrapConfigSecretName, cfg.Providers.Proxmox.BootstrapSecretName)
 	default:
 		logx.Log("Bootstrap state synced to kind: %s (config.yaml), %s + %s + %s when the management cluster is reachable; clusterctl uses a temp file for the CLI only.",
@@ -80,10 +78,10 @@ func WriteClusterctlConfigIfMissing(cfg *config.Config) {
 	}
 }
 
-// WriteCSIConfigIfMissing ports write_csi_config_if_missing
-// (L3579-L3614). No-op unless cfg.Providers.Proxmox.CSIConfig is set AND does not
-// yet exist AND PersistLocalSecrets is true. Writes the proxmox-csi
-// Helm values YAML with the current cfg.ProxmoxCSI* fields.
+// WriteCSIConfigIfMissing writes the proxmox-csi Helm values YAML
+// with the current cfg.ProxmoxCSI* fields. No-op unless
+// cfg.Providers.Proxmox.CSIConfig is set AND does not yet exist
+// AND PersistLocalSecrets is true.
 func WriteCSIConfigIfMissing(cfg *config.Config) {
 	pveapi.RefreshDerivedIdentityTokenIDs(cfg)
 	if cfg.Providers.Proxmox.CSIConfig == "" {

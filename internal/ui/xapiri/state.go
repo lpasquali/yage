@@ -18,10 +18,9 @@ package xapiri
 //   - cfg / w / r: the inputs threaded in from Run(). cfg is the
 //     resolved config we mutate; w is the writer the prompts speak
 //     on; r is the bufio-backed reader from prompts.go.
-//   - fork / workload: walkthrough-local answers that aren't on
-//     cfg yet (Track α may add cfg.Workload later — until then we
-//     keep them here and stamp them into cfg fields the rest of
-//     yage already reads, like ControlPlaneMachineCount).
+//   - fork / workload: walkthrough-local answers that are not on
+//     cfg. Stamp them into cfg fields the rest of yage already
+//     reads, like ControlPlaneMachineCount.
 //   - feasibilityVerdict: the result of the feasibility gate at
 //     step 5, stashed so step 7 can re-display it without
 //     re-running the check.
@@ -88,9 +87,9 @@ type appBucket struct {
 }
 
 // workloadShape collects step 3's answers. Held local to xapiri
-// rather than on cfg because Track α (§23 feasibility gate) hasn't
-// landed cfg.Workload yet; once it does, this struct's fields move
-// over to cfg.Workload and the feasibility shim wires up.
+// rather than on cfg until cfg.Workload exists; once it does,
+// these fields can move over to cfg.Workload and the feasibility
+// shim wires up directly.
 type workloadShape struct {
 	Apps        []appBucket
 	DBGB        int
@@ -132,6 +131,16 @@ type state struct {
 	// caller has cfg in hand and the orchestrator picks up from
 	// there on next run regardless).
 	deployNow bool
+
+	// geo* caches outbound-IP geolocation (GeoJS) once per run so
+	// step 5 can align blank provider regions for cost compare and
+	// step 6 can offer bracket defaults. Disabled when airgapped or
+	// YAGE_XAPIRI_NO_GEO=1.
+	geoDidLookup bool
+	geoOK        bool
+	geoLat       float64
+	geoLon       float64
+	geoLabel     string
 }
 
 // newState constructs a state with the bufio-backed reader the

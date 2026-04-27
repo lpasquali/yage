@@ -1,0 +1,57 @@
+proxmox — Proxmox VE / CAPMOX flags (most-mature path)
+
+  Proxmox API
+    -u, --admin-username USERNAME     Proxmox admin token username
+                                      (default: root@pam!capi-bootstrap)
+    -t, --admin-token TOKEN           Proxmox admin token secret (UUID)
+        --proxmox-url URL             Proxmox API URL (e.g. https://pve.example:8006)
+        --proxmox-token TOKEN_ID      Proxmox API token ID for clusterctl
+        --proxmox-secret SECRET       Proxmox API token secret for clusterctl
+
+  Proxmox infrastructure
+    -r, --region REGION               Proxmox region/datacenter for workload clusters
+    -n, --node NODE                   Proxmox node to deploy workload VMs
+        --bridge BRIDGE               Bridge interface name (default: vmbr0)
+        --proxmox-pool NAME           Proxmox pool tag for workload-cluster VMs (default:
+                                      capi-<workload-cluster-name>). Pools are organizational +
+                                      ACL groupings, NOT resource quotas — they group VMs in the
+                                      Proxmox UI and let you delegate start/stop/console
+                                      permissions per pool. yage auto-creates the pool via the
+                                      admin API before manifest apply.
+        --mgmt-proxmox-pool NAME      Same, for management-cluster VMs
+                                      (default: capi-<mgmt-cluster-name>).
+        --template-id ID              Catch-all Proxmox template VM ID (default: 104)
+        --template-vmid ID            Alias for --template-id
+        --workload-control-plane-template-id ID  Per-machine-type override
+        --workload-worker-template-id ID         Per-machine-type override
+        --mgmt-control-plane-template-id ID      Per-machine-type override
+        --mgmt-worker-template-id ID             Per-machine-type override
+
+  Proxmox CSI
+        --csi-url URL                 CSI API URL (default: <proxmox-url>/api2/json)
+        --csi-token-id TOKEN_ID       CSI token ID (auto-derived if omitted)
+        --csi-token-secret SECRET     CSI token secret
+        --csi-user-id USER_ID         CSI user ID for OpenTofu identity bootstrap
+                                      (default: kubernetes-csi-<CLUSTER_SET_ID>@pve)
+        --csi-token-prefix PREFIX     CSI token name prefix (default: csi)
+        --csi-insecure true|false     Insecure TLS (default: same as admin)
+        --csi-storage-class NAME      CSI StorageClass name (default: proxmox-data-xfs)
+        --csi-storage NAME            Proxmox storage backend (default: local-lvm)
+        --cloudinit-storage NAME      Proxmox storage for CloudInit (default: local)
+        --csi-reclaim-policy POLICY   CSI reclaim policy (default: Delete)
+        --csi-fstype TYPE             CSI filesystem type (default: xfs)
+        --csi-default-class true|false  Set CSI StorageClass as default (default: true)
+        --capi-user-id USER_ID        CAPI user ID for OpenTofu identity bootstrap
+                                      (default: capmox-<CLUSTER_SET_ID>@pve)
+        --capi-token-prefix PREFIX    CAPI token name prefix (default: capi)
+
+  Identity bootstrap (OpenTofu)
+    yage runs an embedded OpenTofu graph to create the Proxmox API tokens / users that
+    CAPMOX and Proxmox CSI consume. State is persisted in the management cluster (kind
+    pre-pivot, mgmt cluster post-pivot). Re-runs are idempotent. See
+    --recreate-proxmox-identities to force a clean re-bootstrap.
+
+See also:
+    --help kind      kind cluster name, config, backup/restore
+    --help pivot     move CAPI to a Proxmox-hosted mgmt cluster
+    --help cost      on-prem TCO (--hardware-cost-usd, --hardware-watts, ...)

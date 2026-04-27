@@ -1,0 +1,25 @@
+providers — supported infrastructure providers
+
+Pick one with --infra-provider <name>. Every provider has its own --help topic with the
+full flag list (e.g. `yage --help aws`).
+
+  Cloud
+    aws           Self-managed CP on EC2, or EKS / EKS-Fargate (managed CP)
+    azure         Self-managed CP on VM, or AKS (managed CP)
+    gcp           Self-managed CP on GCE, or GKE (managed CP)
+    hetzner       Hetzner Cloud (CAPHV); EUR-native pricing
+    digitalocean  DigitalOcean droplets (CAPDO)
+    linode        Linode / Akamai (CAPL)
+    oci           Oracle Cloud Infrastructure (CAPOCI)
+    ibmcloud      IBM Cloud VPC Gen2 (CAPIBM)
+
+  On-prem
+    proxmox       Proxmox VE (CAPMOX) — most-mature path
+    vsphere       vSphere / vCenter (CAPV)
+    openstack     OpenStack (CAPO)
+    docker        CAPI Docker reference provider (CAPD) — ephemeral test only
+
+For the per-provider flag list, run:
+    yage --help <provider-name>
+
+For an architectural diagram per provider, see docs/architectures.md.

@@ -4,10 +4,8 @@
 package pricing
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -164,71 +162,52 @@ func (g *gcpFetcher) fetchCompute(machineType, region, key string) (Item, error)
 // findCoreRam searches Compute Engine SKUs for a single
 // "Core/Ram running in <region>" entry of the requested family.
 // Returns USD/vCPU-hour (when wantCore) or USD/GB-hour (when !wantCore).
+// Uses the shared per-process SKU cache (gcpListAllSkus) so the
+// catalog is fetched once per service and reused across every
+// pricing call in the same run.
 func (g *gcpFetcher) findCoreRam(family, region, key string, wantCore bool) (float64, error) {
-	pageToken := ""
 	wantGroup := "CPU"
 	if !wantCore {
 		wantGroup = "RAM"
 	}
 	familyUpper := strings.ToUpper(family)
-	for {
-		u := fmt.Sprintf("%s/services/%s/skus", gcpBillingHost, gcpComputeEngineService)
-		q := url.Values{}
-		q.Set("key", key)
-		q.Set("pageSize", "5000")
-		if pageToken != "" {
-			q.Set("pageToken", pageToken)
+	skus, err := gcpListAllSkus(gcpComputeEngineService, key)
+	if err != nil {
+		return 0, err
+	}
+	for _, s := range skus {
+		if !inSlice(s.ServiceRegions, region) {
+			continue
 		}
-		req, _ := http.NewRequest("GET", u+"?"+q.Encode(), nil)
-		req.Header.Set("User-Agent", "yage/pricing")
-		resp, err := g.httpClient.Do(req)
-		if err != nil {
-			return 0, err
+		if s.Category.ResourceFamily != "Compute" {
+			continue
 		}
-		var lr gcpListResp
-		if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
-			resp.Body.Close()
-			return 0, err
+		if !strings.Contains(s.Category.ResourceGroup, wantGroup) {
+			continue
 		}
-		resp.Body.Close()
-		for _, s := range lr.Skus {
-			if !inSlice(s.ServiceRegions, region) {
-				continue
-			}
-			if s.Category.ResourceFamily != "Compute" {
-				continue
-			}
-			if !strings.Contains(s.Category.ResourceGroup, wantGroup) {
-				continue
-			}
-			if s.Category.UsageType != "OnDemand" {
-				continue
-			}
-			desc := strings.ToUpper(s.Description)
-			if !strings.Contains(desc, familyUpper) {
-				continue
-			}
-			if strings.Contains(desc, "PREEMPTIBLE") || strings.Contains(desc, "SPOT") {
-				continue
-			}
-			if strings.Contains(desc, "COMMITMENT") || strings.Contains(desc, "RESERVED") {
-				continue
-			}
-			if strings.Contains(desc, "SOLE TENANT") || strings.Contains(desc, "CUSTOM") {
-				continue
-			}
-			if len(s.PricingInfo) == 0 {
-				continue
-			}
-			price := gcpUsdFromTier(s.PricingInfo[0])
-			if price > 0 {
-				return price, nil
-			}
+		if s.Category.UsageType != "OnDemand" {
+			continue
 		}
-		if lr.NextPageToken == "" {
-			break
+		desc := strings.ToUpper(s.Description)
+		if !strings.Contains(desc, familyUpper) {
+			continue
 		}
-		pageToken = lr.NextPageToken
+		if strings.Contains(desc, "PREEMPTIBLE") || strings.Contains(desc, "SPOT") {
+			continue
+		}
+		if strings.Contains(desc, "COMMITMENT") || strings.Contains(desc, "RESERVED") {
+			continue
+		}
+		if strings.Contains(desc, "SOLE TENANT") || strings.Contains(desc, "CUSTOM") {
+			continue
+		}
+		if len(s.PricingInfo) == 0 {
+			continue
+		}
+		price := gcpUsdFromTier(s.PricingInfo[0])
+		if price > 0 {
+			return price, nil
+		}
 	}
 	return 0, fmt.Errorf("gcp: no %s sku for family %s in %s", wantGroup, family, region)
 }
@@ -245,64 +224,70 @@ func (g *gcpFetcher) fetchPD(kind, region, key string) (Item, error) {
 	default:
 		return Item{}, fmt.Errorf("gcp pd: unknown kind %q", kind)
 	}
-	pageToken := ""
-	for {
-		u := fmt.Sprintf("%s/services/%s/skus", gcpBillingHost, gcpComputeEngineService)
-		q := url.Values{}
-		q.Set("key", key)
-		q.Set("pageSize", "5000")
-		if pageToken != "" {
-			q.Set("pageToken", pageToken)
+	skus, err := gcpListAllSkus(gcpComputeEngineService, key)
+	if err != nil {
+		return Item{}, err
+	}
+	for _, s := range skus {
+		if !inSlice(s.ServiceRegions, region) {
+			continue
 		}
-		req, _ := http.NewRequest("GET", u+"?"+q.Encode(), nil)
-		req.Header.Set("User-Agent", "yage/pricing")
-		resp, err := g.httpClient.Do(req)
-		if err != nil {
-			return Item{}, err
+		if !strings.Contains(s.Description, wantDesc) {
+			continue
 		}
-		var lr gcpListResp
-		if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
-			resp.Body.Close()
-			return Item{}, err
+		if s.Category.UsageType != "OnDemand" {
+			continue
 		}
-		resp.Body.Close()
-		for _, s := range lr.Skus {
-			if !inSlice(s.ServiceRegions, region) {
-				continue
-			}
-			if !strings.Contains(s.Description, wantDesc) {
-				continue
-			}
-			if s.Category.UsageType != "OnDemand" {
-				continue
-			}
-			if len(s.PricingInfo) == 0 {
-				continue
-			}
-			price := gcpUsdFromTier(s.PricingInfo[0])
-			if price > 0 {
-				return Item{
-					USDPerHour:  0,
-					USDPerMonth: price,
-					FetchedAt:   time.Now(),
-				}, nil
-			}
+		if len(s.PricingInfo) == 0 {
+			continue
 		}
-		if lr.NextPageToken == "" {
-			break
+		price := gcpUsdFromTier(s.PricingInfo[0])
+		if price > 0 {
+			return Item{
+				USDPerHour:  0,
+				USDPerMonth: price,
+				FetchedAt:   time.Now(),
+			}, nil
 		}
-		pageToken = lr.NextPageToken
 	}
 	return Item{}, fmt.Errorf("gcp pd: no %q sku in %s", wantDesc, region)
 }
 
+// parseGCPMachineType handles the four GCE machine-type shapes:
+//
+//   - "<family>-standard-<n>"  vCPU=n, RAM=n×4 GiB
+//   - "<family>-highmem-<n>"   vCPU=n, RAM=n×8 GiB
+//   - "<family>-highcpu-<n>"   vCPU=n, RAM=n×1 GiB
+//   - "<family>-<shared-size>" predefined shared-core types
+//                              ("e2-micro" / "e2-small" / "e2-medium" /
+//                               "f1-micro" / "g1-small")
+//
+// Shared-core types charge a flat per-instance hourly rate rather
+// than separable core+RAM lines; we model their RAM using the public
+// allocation so downstream cost math (which scales by RAM for
+// platform-add-on overhead) still works.
 func parseGCPMachineType(mt string) (family string, vcpu int, ramGB float64, err error) {
-	parts := strings.Split(mt, "-")
-	if len(parts) < 3 {
-		// e.g. "e2-medium" — predefined shared-core
+	parts := strings.Split(strings.ToLower(mt), "-")
+	if len(parts) < 2 {
 		return "", 0, 0, fmt.Errorf("gcp: unsupported machine type form %q", mt)
 	}
 	family = parts[0]
+	if len(parts) == 2 {
+		// Shared-core predefined shapes: <family>-<size>.
+		switch family + "-" + parts[1] {
+		case "e2-micro":
+			return family, 1, 1, nil
+		case "e2-small":
+			return family, 1, 2, nil
+		case "e2-medium":
+			return family, 1, 4, nil
+		case "f1-micro":
+			return family, 1, 0.6, nil
+		case "g1-small":
+			return family, 1, 1.7, nil
+		}
+		return "", 0, 0, fmt.Errorf("gcp: unsupported shared-core shape %q", mt)
+	}
 	predef := parts[1]
 	var n int
 	if _, e := fmt.Sscanf(parts[2], "%d", &n); e != nil {

@@ -265,14 +265,13 @@ func applyRestoreTree(ctx, root string) error {
 	return nil
 }
 
-// cleanAndApply strips status / managedFields / cluster-metadata fields
-// that kubectl apply can't round-trip, then runs `kubectl --context ctx
-// apply -f -` with the resulting JSON on stdin. Matches the bash inline
-// Python exactly (L2524-L2539).
+// cleanAndApply strips status / managedFields / cluster-metadata
+// fields that kubectl apply can't round-trip, then runs `kubectl
+// --context ctx apply -f -` with the resulting JSON on stdin.
 func cleanAndApply(ctx string, raw []byte) error {
 	var obj map[string]any
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil // skip malformed, bash prints "skip line:" and continues
+		return nil // skip malformed
 	}
 	delete(obj, "status")
 	if m, ok := obj["metadata"].(map[string]any); ok {

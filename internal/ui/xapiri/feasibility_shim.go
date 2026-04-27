@@ -5,34 +5,32 @@ package xapiri
 
 // feasibility_shim.go — adapter between xapiri's simplified
 // FeasibilityVerdict (✓ / ⚠ / ✗ / unchecked, displayed at step 5)
-// and Track α's richer feasibility.Verdict type. Track α landed
-// in commit e84d62e; this file flipped from the original
-// nil-function-pointer indirection to the real wire-up below.
+// and the richer feasibility.Verdict type.
 //
-// The shim still owns the simplified verdict enum because xapiri
-// doesn't need the per-provider table at the call site — step 5
+// The shim owns the simplified verdict enum because xapiri does
+// not need the per-provider table at the call site — step 5
 // renders the rich Verdict separately for display, then asks
 // runFeasibilityCheck for a single overall verdict that drives
 // the loop-back / proceed decision.
 
 import (
+	"errors"
+
 	"github.com/lpasquali/yage/internal/cluster/capacity"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/feasibility"
 	"github.com/lpasquali/yage/internal/provider"
 )
 
-// FeasibilityVerdict mirrors the §23 vocabulary so callers don't
-// need to import the feasibility package while the shim is live.
-// Once Track α lands, this type can be removed (or kept as an
-// alias) — the shape is the same on both sides.
+// FeasibilityVerdict mirrors the §23 vocabulary so callers do not
+// need to import the feasibility package directly.
 type FeasibilityVerdict int
 
 const (
-	// FeasibilityUnchecked means feasibilityCheck wasn't wired.
+	// FeasibilityUnchecked means feasibilityCheck did not run.
 	// Treated as a soft pass — the walkthrough warns at step 5
-	// and lets the user proceed; the dry-run / preflight will
-	// re-check once Track α is wired.
+	// and lets the user proceed; the dry-run / preflight re-checks
+	// later in the flow.
 	FeasibilityUnchecked FeasibilityVerdict = iota
 	FeasibilityComfortable
 	FeasibilityTight
@@ -63,9 +61,9 @@ func (v FeasibilityVerdict) String() string {
 	return "unchecked"
 }
 
-// runFeasibilityCheck calls Track α's feasibility.Check and
-// reduces the rich per-provider Verdict to a single overall
-// verdict for xapiri's step-5 loop-back decision.
+// runFeasibilityCheck calls feasibility.Check and reduces the rich
+// per-provider Verdict to a single overall verdict for xapiri's
+// step-5 loop-back decision.
 //
 // Reduction: AbsoluteFloor exceeded → Infeasible. Otherwise pick
 // the best PerProvider verdict (Comfortable wins over Tight wins
@@ -74,6 +72,11 @@ func (v FeasibilityVerdict) String() string {
 func runFeasibilityCheck(cfg *config.Config) (FeasibilityVerdict, error) {
 	v, err := feasibility.Check(cfg)
 	if err != nil {
+		if errors.Is(err, feasibility.ErrNotApplicable) {
+			// No product shape on cfg yet — don't paint every provider row
+			// as infeasible; the gate simply has nothing to score.
+			return FeasibilityUnchecked, nil
+		}
 		return FeasibilityInfeasible, err
 	}
 	if v.AbsoluteFloor > 0 && cfg.BudgetUSDMonth > 0 && v.AbsoluteFloor > cfg.BudgetUSDMonth {
@@ -101,7 +104,7 @@ func runFeasibilityCheck(cfg *config.Config) (FeasibilityVerdict, error) {
 // runFeasibilityCheckOnPrem is the on-prem analogue. Capacity-
 // bound rather than budget-bound: needs a host inventory snapshot,
 // fetched via Provider.Inventory then translated into the
-// capacity.HostCapacity Track α's CheckOnPrem expects.
+// capacity.HostCapacity that CheckOnPrem expects.
 func runFeasibilityCheckOnPrem(cfg *config.Config) (FeasibilityVerdict, error) {
 	prov, err := provider.For(cfg)
 	if err != nil {
@@ -110,8 +113,8 @@ func runFeasibilityCheckOnPrem(cfg *config.Config) (FeasibilityVerdict, error) {
 	inv, err := prov.Inventory(cfg)
 	if err != nil {
 		// ErrNotApplicable is the common case for non-Proxmox
-		// on-prem providers today (their Inventory is a stub).
-		// Warn-only; don't block the walkthrough.
+		// on-prem providers (their Inventory is a stub).
+		// Warn-only; do not block the walkthrough.
 		return FeasibilityUnchecked, nil
 	}
 	host := &capacity.HostCapacity{

@@ -132,7 +132,7 @@ var cheapInstances = map[string]cheapInstance{
 	"aws":     {SKU: "t3.medium", Cores: 2, MemMiB: 4096, Region: "us-east-1", PricingVendor: "aws"},
 	"azure":   {SKU: "Standard_D2s_v3", Cores: 2, MemMiB: 8192, Region: "eastus", PricingVendor: "azure"},
 	"gcp":     {SKU: "n2-standard-2", Cores: 2, MemMiB: 8192, Region: "us-central1", PricingVendor: "gcp"},
-	"hetzner": {SKU: "cx22", Cores: 2, MemMiB: 4096, Region: "fsn1", PricingVendor: "hetzner"},
+	"hetzner": {SKU: "cx23", Cores: 2, MemMiB: 4096, Region: "fsn1", PricingVendor: "hetzner"},
 }
 
 // freeTierCliffs is the §23.7 hard-coded annotation table — providers
@@ -364,8 +364,8 @@ func collectBlockingReasons(sh shape, cfg *config.Config) []string {
 	}
 	// §23.5: HA tier needs ≥3 CP nodes (the cpNodesFor table
 	// already returns 3 for "ha"; this defends against a manual
-	// override that drops it). cfg.ControlPlaneMachineCount is the
-	// legacy input from the bash port; respect it when set.
+	// override that drops it). Respect cfg.ControlPlaneMachineCount
+	// when set.
 	if sh.resilience == "ha" || sh.resilience == "ha-mr" {
 		if got := atoiOr(cfg.ControlPlaneMachineCount, 0); got > 0 && got < 3 {
 			out = append(out,

@@ -1,0 +1,21 @@
+general — common flags
+
+    -f, --force                       Replace an existing kind cluster without prompting
+        --no-delete-kind              Never delete the kind cluster (even with --force)
+    -p, --purge                       Delete generated files + Terraform state before continuing
+    -b, --build-all                   Build and kind-load all images even when arm64 images exist online
+        --regenerate-capi-manifest    Always re-run clusterctl to refresh the workload manifest
+        --dry-run                     Print a structured plan and exit. No state is changed.
+        --xapiri                      Launch the interactive configuration TUI and exit.
+        --infra-provider NAME         Active infrastructure provider (proxmox, aws, azure, gcp,
+                                      hetzner, digitalocean, linode, oci, ibmcloud, openstack,
+                                      vsphere). No silent default — set this or use --xapiri.
+        --bootstrap-mode MODE         kubeadm (default) | k3s
+        --persist-local-secrets       Also write local CSI/proxmox-csi config files
+    -h, --help [TOPIC]                Print help for a topic (or this index)
+        --completion {bash|zsh|fish}  Emit shell completion script
+
+See also:
+    --help cost      cost compare, budget, currency, on-prem TCO
+    --help kind      kind cluster name, config, backup/restore
+    --help airgap    --airgapped + mirror flags

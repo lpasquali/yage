@@ -3,17 +3,11 @@
 
 package proxmox
 
-// Proxmox provider plan-output hooks (Phase B per §8/§14.B).
+// Proxmox provider plan-output hooks.
 //
-// Extracted from internal/orchestrator/plan.go's Phase 2.0 / 2.9 /
-// 2.95 sections — those Proxmox-specific bullets used to live in
-// the orchestrator and were the reason --dry-run on AWS printed
-// Proxmox phases. Now each provider owns its own plan text;
-// orchestrator only owns the cross-cutting sections (Capacity,
-// Cost, Allocations, Retention).
-//
-// Per §8 hierarchy: bash-derived phase numbers (2.0 / 2.9 / 2.95)
-// are dropped — section titles use named phases.
+// Each provider owns its own plan text; the orchestrator owns the
+// cross-cutting sections (Capacity, Cost, Allocations, Retention).
+// Section titles use named phases rather than numeric labels.
 
 import (
 	"github.com/lpasquali/yage/internal/config"

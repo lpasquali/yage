@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
+	"sync"
 
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/pricing"
@@ -89,7 +91,8 @@ func LiveBlockStorageLabel(provName string, cfg *config.Config) string {
 	}
 	conv, _, ferr := pricing.ToTaller(price, "USD")
 	if ferr != nil {
-		return fmt.Sprintf("%s @ $%.3f/GB-mo (live; FX unavailable)", tier, price)
+		return fmt.Sprintf("%s @ %s/GB-mo (live; FX unavailable)",
+			tier, pricing.FormatTaller(price, "USD"))
 	}
 	return fmt.Sprintf("%s @ %s%.3f/GB-mo (live)", tier, pricing.TallerSymbol(), conv)
 }
@@ -117,31 +120,128 @@ type CloudCost struct {
 	StorageErr           error   // err describing why storage price is missing
 }
 
-// CompareClouds runs the comparison across all registered providers.
-// Skips ones that explicitly disable themselves via ErrNotApplicable
-// in the cost path; surfaces real errors so the user can see
-// missing config or unreachable APIs.
-func CompareClouds(cfg *config.Config) []CloudCost {
-	out := []CloudCost{}
-	// In airgapped mode (§17), drop cloud providers from the
-	// comparison entirely — they require live vendor APIs that won't
-	// be reachable. On-prem providers (Proxmox, OpenStack, vSphere,
-	// CAPD) stay; their estimates are TCO-based, not API-driven.
+// CompareClouds runs the comparison across all registered providers
+// in parallel — every vendor hits its own catalog/billing endpoint,
+// there is no shared rate limit between vendors, and the per-vendor
+// call count is identical to the sequential path. Progress lines
+// surface as each vendor finishes (out-of-order; the final result
+// list is re-sorted deterministically).
+//
+// Skips providers that explicitly disable themselves via
+// ErrNotApplicable in the cost path; surfaces real errors so the
+// user can see missing config or unreachable APIs.
+func CompareClouds(cfg *config.Config, progress io.Writer) []CloudCost {
+	return CompareWithFilter(cfg, ScopeAll, progress)
+}
+
+// Scope narrows the provider set CompareWithFilter iterates over.
+// "Cloud-only" drops on-prem providers (Proxmox/vSphere/OpenStack/
+// CAPD) so the cloud-fork doesn't compare against TCO rows, which
+// require operator-supplied hardware inputs. "On-prem-only" is the
+// mirror image, used by the on-prem fork's optional TCO step.
+type Scope int
+
+const (
+	ScopeAll       Scope = iota // every registered provider (subject to airgap filter)
+	ScopeCloudOnly              // hyperscale + managed-cloud providers only
+	ScopeOnPremOnly             // proxmox / vsphere / openstack / docker (CAPD)
+)
+
+// CompareWithFilter is CompareClouds with an explicit scope filter.
+// Cloud-fork callers pass ScopeCloudOnly so on-prem rows don't
+// pollute the cost compare (they'd all be (estimator error) without
+// --hardware-cost-usd anyway). CAPD (CAPI's Docker reference
+// provider) is dropped at every scope: it's an ephemeral test path,
+// not a deployment target — pricing it would just confuse the
+// table.
+func CompareWithFilter(cfg *config.Config, scope Scope, progress io.Writer) []CloudCost {
 	names := provider.AirgapFilter(provider.Registered(), cfg.Airgapped)
-	for _, name := range names {
-		p, err := provider.Get(name)
-		if err != nil {
-			continue
+	names = filterEphemeralTestProviders(names)
+	switch scope {
+	case ScopeCloudOnly:
+		names = filterCloudOnly(names)
+	case ScopeOnPremOnly:
+		names = filterOnPremOnly(names)
+	}
+	allowed := parseProviderList(cfg.AllowedProviders)
+	if len(allowed) > 0 {
+		names = filterByInclusion(names, allowed)
+	}
+	skipped := parseProviderList(cfg.SkipProviders)
+	if len(skipped) > 0 {
+		names = filterByExclusion(names, skipped)
+	}
+	if progress != nil {
+		switch {
+		case len(allowed) > 0 && len(skipped) > 0:
+			fmt.Fprintf(progress, "  live cost compare: %d provider(s) (allowed: %s; skipping: %s)\n",
+				len(names), strings.Join(sortedKeys(allowed), ", "),
+				strings.Join(sortedKeys(skipped), ", "))
+		case len(allowed) > 0:
+			fmt.Fprintf(progress, "  live cost compare: %d provider(s) (allowed: %s)\n",
+				len(names), strings.Join(sortedKeys(allowed), ", "))
+		case len(skipped) > 0:
+			fmt.Fprintf(progress, "  live cost compare: %d provider(s) (skipping: %s)\n",
+				len(names), strings.Join(sortedKeys(skipped), ", "))
+		default:
+			fmt.Fprintf(progress, "  live cost compare: %d provider(s)\n", len(names))
 		}
-		est, estErr := p.EstimateMonthlyCostUSD(cfg)
-		storagePrice, storageErr := liveBlockStorageUSDPerGBMonth(name, cfg)
-		out = append(out, CloudCost{
-			ProviderName:         name,
-			Estimate:             est,
-			Err:                  estErr,
-			StorageUSDPerGBMonth: storagePrice,
-			StorageErr:           storageErr,
-		})
+	}
+
+	type result struct {
+		idx int
+		row CloudCost
+	}
+	results := make([]CloudCost, len(names))
+	have := make([]bool, len(names))
+	resCh := make(chan result, len(names))
+
+	var wg sync.WaitGroup
+	for i, name := range names {
+		i, name := i, name
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p, err := provider.Get(name)
+			if err != nil {
+				resCh <- result{idx: i}
+				return
+			}
+			est, estErr := p.EstimateMonthlyCostUSD(cfg)
+			storagePrice, storageErr := liveBlockStorageUSDPerGBMonth(name, cfg)
+			resCh <- result{idx: i, row: CloudCost{
+				ProviderName:         name,
+				Estimate:             est,
+				Err:                  estErr,
+				StorageUSDPerGBMonth: storagePrice,
+				StorageErr:           storageErr,
+			}}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(resCh)
+	}()
+
+	// Drain as vendors finish so progress reflects real wall-clock
+	// completion order; row 0 in `results` keeps the deterministic
+	// registration index for sort tiebreaks.
+	for r := range resCh {
+		if r.row.ProviderName != "" {
+			results[r.idx] = r.row
+			have[r.idx] = true
+			if progress != nil {
+				fmt.Fprintf(progress, "    ✓ %s\n", r.row.ProviderName)
+			}
+		}
+	}
+
+	out := make([]CloudCost, 0, len(names))
+	for i, ok := range have {
+		if ok {
+			out = append(out, results[i])
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		ci, cj := out[i], out[j]
@@ -165,7 +265,7 @@ func CompareClouds(cfg *config.Config) []CloudCost {
 // Each row: provider | monthly | live $/GB-mo | retention budget.
 // Footer notes which providers were unpriced or had API failures.
 func PrintComparison(w io.Writer, cfg *config.Config) {
-	rows := CompareClouds(cfg)
+	rows := CompareClouds(cfg, nil)
 	hr := func() {
 		fmt.Fprintln(w, "─────────────────────────────────────────────────────────────────────────────")
 	}
@@ -216,6 +316,106 @@ func PrintComparison(w io.Writer, cfg *config.Config) {
 	}
 }
 
+// ephemeralTestProviders are registry entries that exist for
+// orchestration testing rather than as real deployment targets.
+// They have no meaningful cost story and showing them in the
+// compare table only confuses operators ("why is Docker on this
+// cloud-cost list?"). The CAPD provider registers itself under the
+// name "docker" — that's the key used here.
+var ephemeralTestProviders = map[string]struct{}{
+	"docker": {},
+}
+
+// filterEphemeralTestProviders drops capd-style entries that have
+// no real cost surface. Applied at every scope.
+func filterEphemeralTestProviders(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if _, skip := ephemeralTestProviders[n]; skip {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// parseProviderList splits a comma-separated list of registry
+// names into a lowercased set. Empty values and whitespace are
+// dropped so "aws, ,gcp" yields {"aws", "gcp"}. Used by both
+// --allowed-providers and --skip-providers.
+func parseProviderList(raw string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p != "" {
+			out[p] = struct{}{}
+		}
+	}
+	return out
+}
+
+// filterByExclusion drops names that are in the skip set. Order is
+// preserved.
+func filterByExclusion(names []string, skip map[string]struct{}) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if _, drop := skip[n]; drop {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// filterByInclusion keeps only names that are in the allow set.
+// Order is preserved.
+func filterByInclusion(names []string, allow map[string]struct{}) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if _, ok := allow[n]; ok {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// sortedKeys returns the keys of a string-set sorted alphabetically.
+// Used to render a stable "skipping: a, b, c" line.
+func sortedKeys(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// filterCloudOnly drops on-prem providers from names. The
+// classification reuses provider.AirgapCompatible — every airgap-
+// compatible provider in the registry is on-prem (their cost path
+// is TCO-driven, not vendor-API-driven), and every other registered
+// provider is a hyperscale / managed cloud.
+func filterCloudOnly(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if !provider.AirgapCompatible(n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// filterOnPremOnly is the mirror of filterCloudOnly.
+func filterOnPremOnly(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if provider.AirgapCompatible(n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func retentionDescription(budgetUSD, pricePerGBMonth float64) string {
 	if pricePerGBMonth <= 0 || budgetUSD <= 0 {
 		return "(unpriced)"
@@ -245,7 +445,9 @@ func RetentionAtBudget(provName string, cfg *config.Config, budgetUSD, computeUS
 	}
 	leftover := budgetUSD - computeUSD
 	if leftover <= 0 {
-		return 0, fmt.Sprintf("compute alone $%.2f exceeds budget $%.2f", computeUSD, budgetUSD)
+		return 0, fmt.Sprintf("compute alone %s exceeds budget %s",
+			pricing.FormatTaller(computeUSD, "USD"),
+			pricing.FormatTaller(budgetUSD, "USD"))
 	}
 	return leftover / price, ""
 }

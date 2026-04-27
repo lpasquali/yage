@@ -3,8 +3,7 @@
 
 package hetzner
 
-// Hetzner provider plan-output hooks (Phase B per §8/§14.B + §13's
-// Hetzner validation report).
+// Hetzner provider plan-output hooks.
 //
 // Hetzner is the simpler hyperscale: project-scoped HCLOUD_TOKEN
 // (operator-supplied), per-project server quota (count-based, not
@@ -31,12 +30,12 @@ func (p *Provider) DescribeWorkload(w provider.PlanWriter, cfg *config.Config) {
 		cfg.WorkloadClusterNamespace, cfg.WorkloadClusterName,
 		cfg.WorkloadKubernetesVersion, location)
 
-	cpType := orDefault(cfg.Providers.Hetzner.ControlPlaneMachineType, "cx22")
+	cpType := orDefault(cfg.Providers.Hetzner.ControlPlaneMachineType, "cx23")
 	w.Bullet("control plane: %s × %s",
 		cfg.ControlPlaneMachineCount, cpType)
 
 	if cfg.WorkerMachineCount != "" && cfg.WorkerMachineCount != "0" {
-		nodeType := orDefault(cfg.Providers.Hetzner.NodeMachineType, "cx22")
+		nodeType := orDefault(cfg.Providers.Hetzner.NodeMachineType, "cx23")
 		w.Bullet("workers: %s × %s",
 			cfg.WorkerMachineCount, nodeType)
 	}

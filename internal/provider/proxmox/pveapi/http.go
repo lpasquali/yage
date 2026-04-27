@@ -74,9 +74,8 @@ func statusCode(u, authValue string, insecure bool) int {
 	return resp.StatusCode
 }
 
-// ResolveRegionAndNodeFromPVEAuth ports
-// _resolve_proxmox_region_and_node_from_pve_auth_value (L3361-L3459).
-// Fills empty cfg.Providers.Proxmox.Node and cfg.Providers.Proxmox.Region by calling
+// ResolveRegionAndNodeFromPVEAuth fills empty
+// cfg.Providers.Proxmox.Node and cfg.Providers.Proxmox.Region by calling
 //
 //	GET /api2/json/nodes           (for local/all nodes)
 //	GET /api2/json/cluster/status  (for cluster name)
@@ -153,8 +152,8 @@ func ResolveRegionAndNodeFromPVEAuth(cfg *config.Config, authValue string) error
 	return nil
 }
 
-// ResolveRegionAndNodeFromAdminAPI ports
-// resolve_proxmox_region_and_node_from_admin_api (L3461-L3464).
+// ResolveRegionAndNodeFromAdminAPI resolves region and node using
+// the admin token.
 func ResolveRegionAndNodeFromAdminAPI(cfg *config.Config) error {
 	if cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 		return nil
@@ -163,10 +162,9 @@ func ResolveRegionAndNodeFromAdminAPI(cfg *config.Config) error {
 	return ResolveRegionAndNodeFromPVEAuth(cfg, auth)
 }
 
-// ResolveRegionAndNodeFromClusterctlAPI ports
-// resolve_proxmox_region_and_node_from_clusterctl_api (L3467-L3472).
-// Uses PROXMOX_TOKEN + PROXMOX_SECRET (the CAPI token), normalising the
-// secret first.
+// ResolveRegionAndNodeFromClusterctlAPI resolves region and node
+// using PROXMOX_TOKEN + PROXMOX_SECRET (the CAPI token), normalising
+// the secret first.
 func ResolveRegionAndNodeFromClusterctlAPI(cfg *config.Config) error {
 	if cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Secret == "" {
 		return nil
@@ -176,13 +174,12 @@ func ResolveRegionAndNodeFromClusterctlAPI(cfg *config.Config) error {
 	return ResolveRegionAndNodeFromPVEAuth(cfg, auth)
 }
 
-// CheckAdminAPIConnectivity ports check_proxmox_admin_api_connectivity
-// (L3474-L3521). Validates:
+// CheckAdminAPIConnectivity validates:
 //  1. GET /api2/json/version returns 200 (credentials valid)
 //  2. GET /api2/json/access/roles returns 200 (admin has required
 //     privileges for OpenTofu role bootstrap)
 //
-// Dies on any non-200 (matches bash `die` on 401/000/other).
+// Dies on any non-200.
 func CheckAdminAPIConnectivity(cfg *config.Config) {
 	if cfg.Providers.Proxmox.URL == "" {
 		logx.Die("PROXMOX_URL is required for OpenTofu identity orchestrator.")
@@ -220,14 +217,13 @@ func CheckAdminAPIConnectivity(cfg *config.Config) {
 	}
 }
 
-// ResolveAvailableClusterSetIDForRoles ports
-// resolve_available_cluster_set_id_for_roles (L1320-L1462).
-// Only applies to numeric CLUSTER_SET_IDs — UUIDs are unique enough and
-// skip this search. Walks PVE /access/roles, /access/users, and per-user
+// ResolveAvailableClusterSetIDForRoles only applies to numeric
+// CLUSTER_SET_IDs — UUIDs are unique enough and skip this search.
+// Walks PVE /access/roles, /access/users, and per-user
 // /access/users/<id>/token to find the first integer starting from
-// cfg.ClusterSetID that has no collision for the derived role/user/token
-// names. On conflict, updates cfg.ClusterSetID + identity suffix + derived
-// user/token IDs.
+// cfg.ClusterSetID that has no collision for the derived
+// role/user/token names. On conflict, updates cfg.ClusterSetID +
+// identity suffix + derived user/token IDs.
 func ResolveAvailableClusterSetIDForRoles(cfg *config.Config) error {
 	if !numericRE.MatchString(cfg.ClusterSetID) {
 		return nil

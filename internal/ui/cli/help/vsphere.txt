@@ -1,0 +1,26 @@
+vsphere — vSphere / vCenter / CAPV flags
+
+    --vsphere-server URL          vCenter URL/host. Env: VSPHERE_SERVER.
+    --vsphere-datacenter NAME     vSphere datacenter. Env: VSPHERE_DATACENTER.
+    --vsphere-folder PATH         VM folder under the datacenter. Env: VSPHERE_FOLDER.
+    --vsphere-resource-pool PATH  Resource pool (soft-quota tree). Env: VSPHERE_RESOURCE_POOL.
+    --vsphere-datastore NAME      Datastore for VM disks. Env: VSPHERE_DATASTORE.
+    --vsphere-network NAME        vSphere network name. Env: VSPHERE_NETWORK.
+    --vsphere-template NAME       VM template (governor) used for VM clones.
+                                  Env: VSPHERE_TEMPLATE.
+    --vsphere-tls-thumbprint HEX  vCenter cert thumbprint when self-signed.
+                                  Env: VSPHERE_TLS_THUMBPRINT.
+    --vsphere-username USER       vCenter username. Env: VSPHERE_USERNAME.
+    --vsphere-password PASS       vCenter password. Env: VSPHERE_PASSWORD.
+
+Cost model
+    vSphere is on-prem, so the cost estimator uses the same TCO knobs as Proxmox:
+        --hardware-cost-usd N           Capex; required to enable on-prem cost
+        --hardware-useful-life-years N  Amortization horizon (default 5)
+        --hardware-watts N              Sustained power draw
+        --hardware-kwh-rate-usd N       Delivered electricity rate
+        --hardware-support-usd-month N  Flat monthly vSphere licensing / support / colo
+
+See also:
+    --help cost      on-prem TCO model details
+    --help airgap    --airgapped is fully supported on vSphere

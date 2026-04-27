@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package config holds every tunable variable the bash script's globals
-// expose, with the same env-var overrides and defaults. One struct is shared
-// by every other package: subsystems read from *Config, they never reach
-// into os.Getenv directly (the one exception is boot-time Load, below).
+// Package config holds every tunable variable yage exposes, with
+// env-var overrides and defaults. One struct is shared by every
+// other package: subsystems read from *Config; they never reach
+// into os.Getenv directly (the one exception is boot-time Load,
+// below).
 //
-// Naming convention: the Go field is the UpperCamelCase spelling of the
-// bash var, with _EXPLICIT suffixed flags kept as <Name>Explicit.
+// Naming convention: each Go field is UpperCamelCase, with
+// _EXPLICIT suffixed flags kept as <Name>Explicit.
 //
-// Defaults are taken verbatim from the original bash port (lines ~337-673). When
-// bash uses ${FOO:-default}, we use getenv(..., "default"); when bash uses
-// ${FOO-default} (empty-string preserved), we use getenvKeep(..., "default").
+// Default-value helpers: getenv(..., "default") for the
+// "missing-or-empty → default" semantics; getenvKeep(..., "default")
+// to preserve empty-string overrides.
 package config
 
 import (
@@ -54,13 +55,13 @@ type WorkloadShape struct {
 	//   - "single"  → 1 control-plane node, no anti-affinity
 	//   - "ha"      → 3 control-plane nodes, anti-affinity within zone
 	//   - "ha-mr"   → 3+ CP nodes spread across regions
-	// Empty string treated as "single" (legacy default).
+	// Empty string treated as "single" (default).
 	Resilience string
 	// Environment is the sibling axis to Resilience:
 	//   - "dev"     → minimal addons, no Argo, no monitoring
 	//   - "staging" → Argo CD + light monitoring
 	//   - "prod"    → Argo CD HA + full monitoring + backups
-	// Empty string treated as "dev" (legacy default).
+	// Empty string treated as "dev" (default).
 	Environment string
 }
 
@@ -291,7 +292,8 @@ type HetznerConfig struct {
 	Token string
 	// ControlPlaneMachineType / NodeMachineType drive the Hetzner Cloud
 	// server types CAPHV provisions when --infrastructure-provider
-	// hetzner. Defaults to cx22 — the cheapest type that comfortably
+	// hetzner. Defaults to cx23 — cost-optimized successor to cx22
+	// (Hetzner Cloud API; cx22 removed from catalog Jan 2026).
 	// runs k3s. Hetzner has no managed-Kubernetes service in CAPHV
 	// today, so there's no Mode equivalent to AWS/Azure.
 	ControlPlaneMachineType string
@@ -501,9 +503,10 @@ type CostConfig struct {
 
 // CostCredentials are the per-vendor pricing API tokens / keys.
 // AWS Bulk JSON, Azure Retail Prices, Linode catalog, OCI catalog
-// are anonymous — no entry here. After Phase D ships these get
-// persisted into Secret/yage-system/bootstrap-config under
-// `cost.<key>` keys; env vars become first-run-only fallback.
+// are anonymous — no entry here. Values persist to
+// Secret/yage-system/bootstrap-config under `cost.<key>` keys;
+// env vars are the first-run fallback before the kind cluster
+// exists.
 type CostCredentials struct {
 	// GCP Cloud Billing Catalog (env: YAGE_GCP_API_KEY / GOOGLE_BILLING_API_KEY).
 	GCPAPIKey string
@@ -522,11 +525,19 @@ type CostCredentials struct {
 type CostCurrency struct {
 	// DisplayCurrency forces output in a specific ISO currency code
 	// (env: YAGE_TALLER_CURRENCY / YAGE_CURRENCY). Empty = auto-detect
-	// from geo (ip-api.com → ISO country → ISO currency).
+	// from DataCenterLocation, then geo-IP, then USD fallback.
 	DisplayCurrency string
-	// EURUSDOverride manually pins the EUR/USD rate when
-	// open.er-api.com is unreachable (env: YAGE_EUR_USD).
-	EURUSDOverride string
+	// DataCenterLocation is an ISO-3166 alpha-2 country code (e.g.
+	// "IT", "DE", "US") set via --data-center-location or env
+	// YAGE_DATA_CENTER_LOCATION. When set, it drives BOTH:
+	//   - empty Region / Location fields on every provider (filled
+	//     with the nearest centroid to the country's capital, same
+	//     mechanism xapiri's geo path uses)
+	//   - the active taller display currency (country → ISO
+	//     currency via pricing.CountryCurrency)
+	// Has higher priority than geo-IP detection and lower priority
+	// than an explicit DisplayCurrency override.
+	DataCenterLocation string
 }
 
 // CSIConfig holds the multi-driver CSI add-on selection (§20). The
@@ -534,9 +545,9 @@ type CostCurrency struct {
 // facing selection knob. Empty means "use the per-provider default
 // from internal/csi.DefaultsFor(cfg.InfraProvider)".
 //
-// Phase F (this commit, scoped) ships AWS-EBS, Azure-Disk, and
-// GCP-PD drivers. The same shape supports the rest of the §20.1
-// matrix once each driver registers itself.
+// AWS-EBS, Azure-Disk, and GCP-PD drivers register on import. The
+// same shape supports the rest of the §20.1 matrix as new drivers
+// register themselves.
 type CSIConfig struct {
 	// Drivers is the ordered list of CSI driver names to install on
 	// the workload cluster. Empty → use the provider's default set
@@ -559,8 +570,7 @@ type CSIConfig struct {
 // Config holds every runtime tunable. Zero value is not meaningful — always
 // call Load().
 type Config struct {
-	// Providers groups per-cloud configuration. Today only Proxmox lives
-	// here; the AWS/Azure/… buckets land in subsequent commits of Phase C.
+	// Providers groups per-cloud configuration.
 	Providers Providers
 	// Cost groups cross-cutting cost-estimation configuration: vendor
 	// pricing credentials + currency/FX preferences. See §16.
@@ -661,6 +671,62 @@ type Config struct {
 	// (--xapiri) and exits. Mutually exclusive with the orchestrator
 	// run; setting it short-circuits main() before orchestrator.Run.
 	Xapiri                      bool
+	// PrintCommand, when non-empty, makes the program render the
+	// equivalent `yage <flags>` invocation that reproduces the
+	// resolved cfg, then exits. Useful for pipelines (capture the
+	// canonical CLI form) and for periodic cost reports (re-run the
+	// same flags against a fresh catalog). Allowed values:
+	//   "env"     — sensitive values emit as $VAR refs (default)
+	//   "raw"     — sensitive values inline (full reproducibility)
+	//   "masked"  — sensitive values emit as ********
+	PrintCommand                string
+	// SkipProviders is a comma-separated list of registry names to
+	// drop from the cost-compare table. Useful when the operator
+	// has no interest in some clouds (e.g. SkipProviders="oci,ibmcloud"
+	// hides those rows). The provider can still be picked as the
+	// active --infra-provider; only the comparison view filters them.
+	// Env: YAGE_SKIP_PROVIDERS.
+	SkipProviders               string
+	// AllowedProviders is the inverse of SkipProviders: a strict
+	// allowlist for the cost-compare table. When non-empty, only
+	// these registry names appear, and any others are silently
+	// dropped. Composes with SkipProviders (allowlist applies first;
+	// SkipProviders subtracts from the result). Useful when the
+	// operator already knows the short list of clouds they're
+	// evaluating ("just compare aws and hetzner for me"). Env:
+	// YAGE_ALLOWED_PROVIDERS.
+	AllowedProviders            string
+	// UseManagedPostgres controls whether the cluster relies on the
+	// vendor's SaaS Postgres (RDS / Aurora / Cloud SQL / Azure DB for
+	// PG / DO Managed DB / Linode Managed DB / OCI DB for PG / IBM
+	// Cloud Databases for PostgreSQL) instead of the in-cluster
+	// CloudNativePG operator. Defaults to true: when the active
+	// vendor's managed-services matrix entry is true and the
+	// workload signals NeedsPostgres, the orchestrator skips the
+	// cnpg helm install and the cost line shows the SaaS price.
+	// --no-managed-postgres opts back into in-cluster cnpg.
+	// Env: YAGE_USE_MANAGED_POSTGRES.
+	UseManagedPostgres          bool
+	// In-cluster substitute footprint overrides — one set per
+	// service slot (Postgres / message queue / object storage /
+	// in-memory cache). Empty / 0 means "use the default from
+	// cost.SubstituteFootprint(svc)". Each pair of envs:
+	//   YAGE_<SVC>_CPU_MILLICORES
+	//   YAGE_<SVC>_MEMORY_MIB
+	//   YAGE_<SVC>_VOLUME_GB
+	// drives the forecast worker capacity + persistent volume cost
+	// when the active vendor lacks the SaaS equivalent.
+	PostgresCPUMillicoresOverride int
+	PostgresMemoryMiBOverride     int
+	PostgresVolumeGBOverride      int
+	MQCPUMillicoresOverride       int
+	MQMemoryMiBOverride           int
+	MQVolumeGBOverride            int
+	ObjStoreCPUMillicoresOverride int
+	ObjStoreMemoryMiBOverride     int
+	ObjStoreVolumeGBOverride      int
+	CacheCPUMillicoresOverride    int
+	CacheMemoryMiBOverride        int
 	// ResourceBudgetFraction caps the share of available Proxmox host
 	// CPU/memory/storage that the configured clusters may consume.
 	// 0.75 by default — the remaining 25 % is reserved for the host
@@ -774,6 +840,44 @@ type Config struct {
 	// CLI flag: --image-registry-mirror. Env: YAGE_IMAGE_REGISTRY_MIRROR.
 	// See docs/abstraction-plan.md §17 follow-up.
 	ImageRegistryMirror string
+
+	// InternalCABundle, when non-empty, is a path to a PEM bundle
+	// of CA certificates that yage trusts for every outbound HTTPS
+	// call (Helm chart pulls, OCI image pulls in clusterctl,
+	// kubectl-against-workload, pricing/inventory APIs in
+	// non-airgapped mode). The bundle is loaded once at startup,
+	// installed on http.DefaultTransport, and exported as
+	// SSL_CERT_FILE so child processes (helm, clusterctl, kind)
+	// trust it too.
+	//
+	// CLI flag: --internal-ca-bundle. Env: YAGE_INTERNAL_CA_BUNDLE.
+	// See docs/abstraction-plan.md §17 / §21.4.
+	InternalCABundle string
+
+	// HelmRepoMirror, when non-empty, is the base URL of an
+	// internal Helm chart repository (Harbor, ChartMuseum, …) that
+	// yage rewrites every outgoing chart-repo URL onto. Format: a
+	// single base URL with no trailing slash, e.g.
+	// "https://harbor.internal/chartrepo/yage" — yage rewrites
+	// "https://charts.jetstack.io/cert-manager" to
+	// "https://harbor.internal/chartrepo/yage/cert-manager".
+	// `oci://…` repo URLs are rewritten the same way.
+	//
+	// CLI flag: --helm-repo-mirror. Env: YAGE_HELM_REPO_MIRROR.
+	// See docs/abstraction-plan.md §17 / §21.4.
+	HelmRepoMirror string
+
+	// NodeImage, when non-empty, overrides the kind worker base
+	// image (kindest/node:vX.Y.Z) that the management kind cluster
+	// boots from. In airgapped envs the operator pulls that image
+	// into their internal registry under a different name; this
+	// flag lets them point yage at the internal copy. Cross-
+	// provider knob (per-provider templates / AMIs / Glance images
+	// stay on their own per-provider config fields).
+	//
+	// CLI flag: --node-image. Env: YAGE_NODE_IMAGE.
+	// See docs/abstraction-plan.md §17 / §21.4.
+	NodeImage string
 
 	// InfraProviderDefaulted is true when the user neither set the
 	// INFRA_PROVIDER env var nor passed --infra-provider. There is
@@ -1007,6 +1111,12 @@ type Config struct {
 	// validating mgmt connectivity / sizing before committing to the
 	// move.
 	PivotDryRun bool
+	// StopBeforeWorkload exits the orchestrator after the pivot
+	// completes (mgmt cluster up, clusterctl moved, kind torn down)
+	// but before the workload manifest is applied. Useful for
+	// integration tests that inspect a clean managed CAPI plane on
+	// the provider with no workload churn. Env: YAGE_STOP_BEFORE_WORKLOAD.
+	StopBeforeWorkload bool
 }
 
 // Load reads environment variables and applies the same defaults the bash
@@ -1085,6 +1195,9 @@ func Load() *Config {
 	c.HardwareSupportUSDMonth = envFloat("HARDWARE_SUPPORT_USD_MONTH", 0)
 	c.Airgapped = envBool("YAGE_AIRGAPPED", false)
 	c.ImageRegistryMirror = strings.TrimRight(getenv("YAGE_IMAGE_REGISTRY_MIRROR", ""), "/")
+	c.InternalCABundle = strings.TrimSpace(getenv("YAGE_INTERNAL_CA_BUNDLE", ""))
+	c.HelmRepoMirror = strings.TrimRight(strings.TrimSpace(getenv("YAGE_HELM_REPO_MIRROR", "")), "/")
+	c.NodeImage = strings.TrimSpace(getenv("YAGE_NODE_IMAGE", ""))
 
 	// CSI add-on selection (§20 / Phase F). YAGE_CSI_DRIVERS is a
 	// comma-separated list of driver names — empty values get
@@ -1123,7 +1236,8 @@ func Load() *Config {
 		os.Getenv("YAGE_TALLER_CURRENCY"),
 		os.Getenv("YAGE_CURRENCY"),
 	)
-	c.Cost.Currency.EURUSDOverride = os.Getenv("YAGE_EUR_USD")
+	c.Cost.Currency.DataCenterLocation = strings.ToUpper(strings.TrimSpace(
+		os.Getenv("YAGE_DATA_CENTER_LOCATION")))
 
 	// Cross-fill the Hetzner token between the cost-credentials view
 	// and the provider's own view: same secret, two consumers.
@@ -1215,8 +1329,8 @@ func Load() *Config {
 	c.Providers.Vsphere.TLSThumbprint = getenv("VSPHERE_TLS_THUMBPRINT", "")
 	c.Providers.Vsphere.Username = getenv("VSPHERE_USERNAME", "")
 	c.Providers.Vsphere.Password = getenv("VSPHERE_PASSWORD", "")
-	c.Providers.Hetzner.ControlPlaneMachineType = getenv("HCLOUD_CONTROL_PLANE_MACHINE_TYPE", "cx22")
-	c.Providers.Hetzner.NodeMachineType = getenv("HCLOUD_NODE_MACHINE_TYPE", "cx22")
+	c.Providers.Hetzner.ControlPlaneMachineType = getenv("HCLOUD_CONTROL_PLANE_MACHINE_TYPE", "cx23")
+	c.Providers.Hetzner.NodeMachineType = getenv("HCLOUD_NODE_MACHINE_TYPE", "cx23")
 	c.Providers.Hetzner.Location = getenv("HCLOUD_REGION", "fsn1")
 	c.Providers.Hetzner.OverheadTier = getenv("HETZNER_OVERHEAD_TIER", "prod")
 	c.Providers.DigitalOcean.Region = getenv("DIGITALOCEAN_REGION", "nyc3")
@@ -1515,10 +1629,30 @@ func Load() *Config {
 	c.WorkerMachineCount = getenv("WORKER_MACHINE_COUNT", "2")
 
 	// --- Pivot orchestration toggles ---
-	c.PivotEnabled = envBool("PIVOT_ENABLED", false)
+	// PivotEnabled defaults to true: kind is a launcher, not a long-
+	// lived control plane. The orchestrator silently skips the pivot
+	// path when the active provider hasn't implemented PivotTarget
+	// yet (logs once, then proceeds with kind as mgmt). Operators
+	// who want kind as the permanent management plane pass --no-pivot.
+	c.PivotEnabled = envBool("PIVOT_ENABLED", true)
 	c.PivotKeepKind = envBool("PIVOT_KEEP_KIND", false)
 	c.PivotDryRun = envBool("PIVOT_DRY_RUN", false)
 	c.PivotVerifyTimeout = getenv("PIVOT_VERIFY_TIMEOUT", "10m")
+	c.StopBeforeWorkload = envBool("YAGE_STOP_BEFORE_WORKLOAD", false)
+	c.SkipProviders = getenv("YAGE_SKIP_PROVIDERS", "")
+	c.AllowedProviders = getenv("YAGE_ALLOWED_PROVIDERS", "")
+	c.UseManagedPostgres = envBool("YAGE_USE_MANAGED_POSTGRES", true)
+	c.PostgresCPUMillicoresOverride = int(envFloat("YAGE_POSTGRES_CPU_MILLICORES", 0))
+	c.PostgresMemoryMiBOverride = int(envFloat("YAGE_POSTGRES_MEMORY_MIB", 0))
+	c.PostgresVolumeGBOverride = int(envFloat("YAGE_POSTGRES_VOLUME_GB", 0))
+	c.MQCPUMillicoresOverride = int(envFloat("YAGE_MQ_CPU_MILLICORES", 0))
+	c.MQMemoryMiBOverride = int(envFloat("YAGE_MQ_MEMORY_MIB", 0))
+	c.MQVolumeGBOverride = int(envFloat("YAGE_MQ_VOLUME_GB", 0))
+	c.ObjStoreCPUMillicoresOverride = int(envFloat("YAGE_OBJSTORE_CPU_MILLICORES", 0))
+	c.ObjStoreMemoryMiBOverride = int(envFloat("YAGE_OBJSTORE_MEMORY_MIB", 0))
+	c.ObjStoreVolumeGBOverride = int(envFloat("YAGE_OBJSTORE_VOLUME_GB", 0))
+	c.CacheCPUMillicoresOverride = int(envFloat("YAGE_CACHE_CPU_MILLICORES", 0))
+	c.CacheMemoryMiBOverride = int(envFloat("YAGE_CACHE_MEMORY_MIB", 0))
 
 	// --- Management cluster shape (universal) ---
 	c.Mgmt.ClusterName = getenv("MGMT_CLUSTER_NAME", "capi-management")

@@ -1,0 +1,33 @@
+openstack — OpenStack / CAPO flags
+
+    --openstack-cloud NAME            Named cloud entry in clouds.yaml (e.g. "devstack").
+                                      Env: OPENSTACK_CLOUD.
+    --openstack-project-name NAME     Keystone project / tenant. Env: OPENSTACK_PROJECT_NAME
+                                      (falls back to OS_PROJECT_NAME).
+    --openstack-region REGION         Region scope (e.g. "RegionOne"). Env: OPENSTACK_REGION
+                                      (falls back to OS_REGION_NAME).
+    --openstack-failure-domain Z      Availability zone CAPO targets for control-plane VMs.
+                                      Env: OPENSTACK_FAILURE_DOMAIN.
+    --openstack-image-name NAME       Glance image used for VM boot.
+                                      Env: OPENSTACK_IMAGE_NAME.
+    --openstack-control-plane-flavor FLAVOR  Nova flavor for control-plane VMs (e.g. m1.large).
+                                             Env: OPENSTACK_CONTROL_PLANE_FLAVOR.
+    --openstack-worker-flavor FLAVOR  Nova flavor for worker VMs.
+                                      Env: OPENSTACK_WORKER_FLAVOR.
+    --openstack-dns-nameservers LIST  Comma-separated DNS servers pushed to subnet resources.
+                                      Env: OPENSTACK_DNS_NAMESERVERS.
+    --openstack-ssh-key-name NAME     Nova keypair name CAPO injects via cloud-init.
+                                      Env: OPENSTACK_SSH_KEY_NAME.
+
+Credentials
+    Standard OpenStack auth picks up clouds.yaml from $OS_CLIENT_CONFIG_FILE,
+    ~/.config/openstack/clouds.yaml, or /etc/openstack/clouds.yaml. OS_* env vars
+    (OS_AUTH_URL, OS_USERNAME, OS_PASSWORD, OS_PROJECT_NAME, OS_REGION_NAME) are honored
+    when no clouds.yaml entry is selected.
+
+Cost model
+    OpenStack is on-prem; cost estimation uses the TCO knobs (--hardware-*).
+
+See also:
+    --help cost      on-prem TCO model
+    --help airgap    --airgapped is fully supported on OpenStack

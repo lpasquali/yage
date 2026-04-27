@@ -1,0 +1,36 @@
+azure — Azure / CAPZ flags
+
+    --azure-mode MODE             unmanaged (default; self-managed CP on VM) | aks (managed CP).
+    --azure-location REGION       Azure region (e.g. eastus, westeurope).
+    --azure-control-plane-machine-type SKU  VM SKU for the control plane (e.g. Standard_D2s_v5).
+    --azure-node-machine-type SKU           VM SKU for worker nodes.
+    --azure-overhead-tier TIER    dev | prod (default) | enterprise — Azure overhead estimator
+                                  bundle (Public IPs, Bastion, Log Analytics, egress).
+
+    --azure-subscription-id ID    Azure subscription GUID CAPZ provisions into.
+                                  Env: AZURE_SUBSCRIPTION_ID.
+    --azure-tenant-id ID          Azure AD tenant GUID. Env: AZURE_TENANT_ID.
+    --azure-resource-group NAME   Resource group CAPZ owns the cluster's Azure resources in.
+                                  Env: AZURE_RESOURCE_GROUP.
+    --azure-vnet-name NAME        VNet name CAPZ joins (or creates). Env: AZURE_VNET_NAME.
+    --azure-subnet-name NAME      Subnet name within the VNet. Env: AZURE_SUBNET_NAME.
+    --azure-client-id ID          Service-Principal / Managed-Identity / Workload-Identity client
+                                  GUID. Env: AZURE_CLIENT_ID.
+    --azure-identity-model MODEL  service-principal (default) | managed-identity |
+                                  workload-identity. Env: AZURE_IDENTITY_MODEL.
+
+Credentials
+    AZURE_SUBSCRIPTION_ID    Subscription GUID (required).
+    AZURE_TENANT_ID          AD tenant GUID (required).
+    AZURE_CLIENT_ID          Identity GUID — service-principal, managed-identity, or
+                             workload-identity client.
+    AZURE_CLIENT_SECRET      Service-principal secret (only when --azure-identity-model=
+                             service-principal).
+    AZURE_RESOURCE_GROUP     Pre-existing or to-be-created resource group.
+    AZURE_VNET_NAME          VNet name CAPZ joins (or creates).
+    AZURE_SUBNET_NAME        Subnet within the VNet.
+    AZURE_IDENTITY_MODEL     service-principal | managed-identity | workload-identity.
+
+See also:
+    --help cost      Azure publishes its taller in the cost estimator natively
+    --help airgap    --airgapped disables Azure entirely

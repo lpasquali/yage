@@ -1,0 +1,27 @@
+gcp — GCP / CAPG flags
+
+    --gcp-mode MODE               unmanaged (default; self-managed CP on GCE) | gke (managed CP).
+    --gcp-region REGION           GCP region (e.g. europe-west1, us-central1).
+    --gcp-project ID              GCP project ID CAPG provisions into.
+    --gcp-control-plane-machine-type TYPE  GCE machine type for the control plane (e.g. n2-standard-2).
+    --gcp-node-machine-type TYPE           GCE machine type for worker nodes.
+    --gcp-overhead-tier TIER      dev | prod (default) | enterprise — GCP overhead estimator
+                                  bundle (Cloud NAT, Cloud Logging, egress).
+
+    --gcp-network-name NAME       VPC network the workload cluster's nodes live in.
+                                  Empty = "default" (CAPG auto-mode VPC). Env: GCP_NETWORK_NAME.
+    --gcp-image-family FAMILY     GCE image family for node OS (debian-12, ubuntu-2204-lts, …).
+                                  Empty = CAPG default. Env: GCP_IMAGE_FAMILY.
+    --gcp-identity-model MODEL    service-account (default) | adc | workload-identity.
+                                  Env: GCP_IDENTITY_MODEL.
+
+Credentials
+    GOOGLE_APPLICATION_CREDENTIALS  Path to a service-account key JSON file (default identity
+                                    flavor).
+    GCP_NETWORK_NAME                VPC network name (empty → "default").
+    GCP_IMAGE_FAMILY                GCE image family (empty → CAPG default).
+    GCP_IDENTITY_MODEL              service-account | adc | workload-identity.
+
+See also:
+    --help cost      live GCP Cloud Billing Catalog API pricing
+    --help airgap    --airgapped disables GCP entirely

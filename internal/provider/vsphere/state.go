@@ -3,12 +3,11 @@
 
 package vsphere
 
-// Phase D state-handoff hooks for vSphere.
+// State-handoff hooks for vSphere.
 //
 // See docs/abstraction-plan.md §11 + §14.D + §13's vSphere
-// validation report. cfg.Providers.Vsphere.* fields landed in
-// commit f6ca113; this file surfaces them for kindsync round-trip
-// and CAPV manifest substitution.
+// validation report. This file surfaces cfg.Providers.Vsphere.*
+// fields for kindsync round-trip and CAPV manifest substitution.
 
 import (
 	"github.com/lpasquali/yage/internal/config"

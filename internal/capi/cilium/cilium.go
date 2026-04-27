@@ -1,16 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package ciliumx ports the pure-logic Cilium helpers from
-// the original bash port. The heavy orchestration helpers (apply_workload_
-// cilium_helmchartproxy, apply_workload_cilium_lbb_to_workload_if_enabled,
-// …) live later in the script and depend on kubectlx / argocdx / kind
-// wiring that is not yet ported; those will land in a later batch.
-//
-// Bash source map:
-//   - cilium_needs_kube_proxy_replacement       ~L1106-1126
-//   - default_cilium_lb_ipam_pool_cidr_from_nodes ~L1140-1158
-//   - append_cilium_lb_ipam_pool_manifest       ~L1160-1213
+// Package cilium hosts pure-logic Cilium helpers (CNI mode
+// detection, LB-IPAM pool CIDR defaulting, manifest append).
 package cilium
 
 import (

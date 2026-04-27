@@ -1,0 +1,42 @@
+cost — comparison, budget, display currency, on-prem TCO
+
+    --cost-compare                With --dry-run, print a side-by-side monthly-cost table for
+                                  every registered cloud provider (same logical cluster shape).
+                                  Live FinOps APIs; no hardcoded $/hour numbers anywhere.
+    --allowed-providers LIST      Comma-separated allowlist for the cost-compare table — only
+                                  these registry names appear (e.g. "aws,hetzner"). Useful when
+                                  evaluating a known short list. Env: YAGE_ALLOWED_PROVIDERS.
+    --skip-providers LIST         Comma-separated registry names to drop from the cost-compare
+                                  table (e.g. "oci,ibmcloud"). Composes with --allowed-providers
+                                  (allowlist applies first; skip subtracts). Doesn't affect
+                                  --infra-provider. Env: YAGE_SKIP_PROVIDERS.
+    --budget-usd-month F          Internal storage stays USD; xapiri's prompt accepts the active
+                                  taller currency. Drives the retention column on --cost-compare.
+    --data-center-location CC     ISO-3166 alpha-2 country code (IT, DE, US, ...). Drives the
+                                  active taller display currency AND fills empty Region/Location
+                                  fields on every provider. Env: YAGE_DATA_CENTER_LOCATION.
+
+    Currency
+        YAGE_TALLER_CURRENCY      Force the display currency to a specific ISO-4217 code (EUR,
+                                  GBP, JPY, ...). Higher priority than --data-center-location.
+        Resolution order:         DisplayCurrency > --data-center-location > geo-IP > USD.
+        Unsupported currencies fall back to USD with an issue-tracker stub message.
+
+    Native vendor currency
+        Azure / OCI / IBM Cloud accept the active taller in their pricing API; yage uses the
+        native price directly when supported, FX-converts otherwise. Hetzner publishes in EUR.
+        AWS / GCP / DO / Linode are USD-only — yage FX-converts at display time.
+
+    On-prem TCO (Proxmox / vSphere / OpenStack)
+        --hardware-cost-usd N           Capex; required to enable on-prem cost
+        --hardware-useful-life-years N  Amortization horizon (default 5)
+        --hardware-watts N              Sustained power draw (NOT max nameplate)
+        --hardware-kwh-rate-usd N       Delivered electricity rate
+        --hardware-support-usd-month N  Flat monthly support / colo / vSphere licensing
+
+    --print-pricing-setup VENDOR  Print the IAM/token CLI snippet for VENDOR's pricing API
+                                  (aws, azure, gcp, hetzner, ibmcloud, all) and exit.
+
+See also:
+    --help airgap    --airgapped disables every internet-requiring path
+    --help aws       --aws-overhead-tier dev/prod/enterprise

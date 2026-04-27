@@ -15,7 +15,47 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
+
+// kindNodeImageOverride / SetKindNodeImage / injectKindImage —
+// surface for the §17 / §21.4 --node-image airgap flag. The
+// orchestrator's `kind create cluster …` call site lives several
+// layers up; rather than thread a config through every call, we
+// stash the override here and append `--image <override>` whenever
+// shell-level Run/RunWithEnv sees a kind-create-cluster argv. Idempotent
+// (won't double-inject if --image is already present).
+var (
+	kindNodeImageMu       sync.RWMutex
+	kindNodeImageOverride string
+)
+
+// SetKindNodeImage records the kind worker image override. Set
+// once at startup from cmd/yage/main.go (or airgap.Apply); cleared
+// by passing "".
+func SetKindNodeImage(s string) {
+	kindNodeImageMu.Lock()
+	defer kindNodeImageMu.Unlock()
+	kindNodeImageOverride = s
+}
+
+func injectKindImage(argv []string) []string {
+	kindNodeImageMu.RLock()
+	img := kindNodeImageOverride
+	kindNodeImageMu.RUnlock()
+	if img == "" || len(argv) < 3 {
+		return argv
+	}
+	if argv[0] != "kind" || argv[1] != "create" || argv[2] != "cluster" {
+		return argv
+	}
+	for _, a := range argv {
+		if a == "--image" {
+			return argv // operator already pinned a specific image; respect it
+		}
+	}
+	return append(argv, "--image", img)
+}
 
 // Privileged prepends "sudo" when the current process is not running as root.
 // Returns the argv to hand to exec.Command.
@@ -32,6 +72,7 @@ func Run(argv ...string) error {
 	if len(argv) == 0 {
 		return nil
 	}
+	argv = injectKindImage(argv)
 	c := exec.Command(argv[0], argv[1:]...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
@@ -51,6 +92,7 @@ func RunWithEnv(extra []string, argv ...string) error {
 	if len(argv) == 0 {
 		return nil
 	}
+	argv = injectKindImage(argv)
 	c := exec.Command(argv[0], argv[1:]...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr

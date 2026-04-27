@@ -1,22 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package kindsync ports the bash helpers that push Proxmox bootstrap
-// state into kind Secrets (so a re-run finds the same state in the
-// management cluster when local env is thin).
-//
-// Bash source map (the original bash port):
-//   - sync_bootstrap_config_to_kind                        ~L840-L850
-//   - sync_proxmox_bootstrap_literal_credentials_to_kind   ~L857-L1043
-//   - _apply_proxmox_bootstrap_admin_yaml_to_kind          ~L1046-L1103
-//   - update_capmox_manager_secret_on_kind                 ~L3154-L3169
-//   - rollout_restart_capmox_controller                    ~L3171-L3177
-//   - rollout_restart_proxmox_csi_on_workload              ~L3179-L3196
-//
-// Stubs (port deferred):
-//   - _get_all_bootstrap_variables_as_yaml                 ~L3620-L3692
-//   - apply_bootstrap_config_to_management_cluster         ~L3692-L3810
-//   - merge_proxmox_bootstrap_secrets_from_kind            ~L3815-L3870
+// Package kindsync pushes Proxmox bootstrap state into kind
+// Secrets (so a re-run finds the same state in the management
+// cluster when local env is thin) and pulls it back on demand.
 package kindsync
 
 import (

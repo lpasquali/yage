@@ -1,20 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package postsync ports the Argo CD PostSync-hook helpers + proxmox-csi
-// smoke-test renderers.
-//
-// Bash source map:
-//   - workload_postsync_hooks_bootstrap_dir            ~L6143-6145
-//   - workload_postsync_hooks_discover_url             ~L6147-6166
-//   - workload_postsync_hooks_discover_ref             ~L6168-6183
-//   - workload_postsync_hooks_full_relpath             ~L6185-6196
-//   - workload_postsync_hooks_resolve_kubectl_image    ~L6198-6206
-//   - workload_postsync_kustomize_block_for_job        ~L6208-6226
-//   - proxmox_csi_smoke_bootstrap_dir                  ~L6741
-//   - proxmox_csi_smoke_k8s_version_for_image          ~L6744-6782
-//   - proxmox_csi_smoke_kubectl_oci_tag                ~L6785-6793
-//   - proxmox_csi_smoke_render_kustomize_block         ~L6796-6821
+// Package postsync hosts the Argo CD PostSync-hook helpers and
+// the proxmox-csi smoke-test renderers.
 package postsync
 
 import (

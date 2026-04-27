@@ -31,12 +31,12 @@ var argoAppGVR = schema.GroupVersionResource{
 	Resource: "applications",
 }
 
-// ApplyWorkloadArgoCDApplications ports apply_workload_argocd_applications
-// (L7039-L7311). Renders every enabled in-cluster Application (metrics-
-// server, proxmox-csi, kyverno, cert-manager, crossplane, cnpg,
-// external-secrets, infisical, spire-crds+spire, victoriametrics, otel,
-// grafana, backstage, keycloak, keycloak-realm-operator) into a single
-// multi-doc YAML and applies it to the workload via its kubeconfig.
+// ApplyWorkloadArgoCDApplications renders every enabled
+// in-cluster Application (metrics-server, proxmox-csi, kyverno,
+// cert-manager, crossplane, cnpg, external-secrets, infisical,
+// spire-crds+spire, victoriametrics, otel, grafana, backstage,
+// keycloak, keycloak-realm-operator) into a single multi-doc YAML
+// and applies it to the workload via its kubeconfig.
 func ApplyWorkloadArgoCDApplications(cfg *config.Config) {
 	if !cfg.ArgoCDEnabled || !cfg.WorkloadArgoCDEnabled {
 		return
@@ -210,8 +210,9 @@ storageClass:
 	logx.Log("In-cluster Argo CD Applications submitted on the workload.")
 }
 
-// WaitForWorkloadArgoCDApplicationsHealthy ports
-// wait_for_workload_argocd_applications_healthy (L7313-L7360).
+// WaitForWorkloadArgoCDApplicationsHealthy waits for every enabled
+// in-cluster Argo CD Application on the workload to reach
+// Healthy + Synced state.
 func WaitForWorkloadArgoCDApplicationsHealthy(cfg *config.Config) {
 	if !cfg.ArgoCDEnabled || !cfg.WorkloadArgoCDEnabled {
 		return

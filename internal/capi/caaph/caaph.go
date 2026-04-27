@@ -1,22 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package caaph ports the Cluster API Add-on Provider Helm workflow —
-// HelmChartProxy rendering + apply for Cilium, plus the Argo CD Operator
-// + ArgoCD CR installation on the workload cluster.
+// Package caaph drives the Cluster API Add-on Provider Helm
+// workflow: HelmChartProxy rendering + apply for Cilium, plus the
+// Argo CD Operator + ArgoCD CR installation on the workload
+// cluster.
 //
-// Bash source map (the original bash port):
-//   - patch_capi_cluster_caaph_helm_labels                     ~L5362-5429
-//   - caaph_print_helmchartproxy_cilium_yaml                   ~L5433-5513
-//   - apply_workload_cilium_helmchartproxy                     ~L5515-5533
-//   - apply_workload_cilium_lbb_to_workload_if_enabled         ~L5536-5558
-//   - apply_workload_argocd_operator_and_argocd_cr             ~L5562-5695
-//
-// All kubectl shell-outs in this package have been migrated to the
-// in-process k8sclient (client-go) layer except `kubectl apply -k <git-url>`
-// for the Argo CD Operator install — replicating kustomize-from-Git in Go
-// would require pulling sigs.k8s.io/kustomize/api (~10MB of deps) for a
-// single call site, so that one shell-out is intentionally retained.
+// All kubectl shell-outs in this package go through the in-process
+// k8sclient (client-go) layer except `kubectl apply -k <git-url>`
+// for the Argo CD Operator install — replicating kustomize-from-Git
+// in Go requires pulling sigs.k8s.io/kustomize/api (~10MB of deps)
+// for a single call site, so that one shell-out is intentionally
+// retained.
 package caaph
 
 import (
@@ -36,6 +31,7 @@ import (
 
 	"github.com/lpasquali/yage/internal/capi/cilium"
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/airgap"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
@@ -269,7 +265,7 @@ func CiliumHelmChartProxyYAML(cfg *config.Config, kprOn bool) string {
 	fmt.Fprintln(&sb, "    matchLabels:")
 	fmt.Fprintln(&sb, "      caaph: enabled")
 	fmt.Fprintln(&sb, "  chartName: cilium")
-	fmt.Fprintln(&sb, "  repoURL: https://helm.cilium.io/")
+	fmt.Fprintf(&sb, "  repoURL: %s\n", airgap.RewriteHelmRepo("https://helm.cilium.io/"))
 	fmt.Fprintf(&sb, "  version: %q\n", ver)
 	fmt.Fprintln(&sb, "  namespace: kube-system")
 	fmt.Fprintln(&sb, "  options:")
@@ -367,8 +363,8 @@ func ApplyWorkloadCiliumLBBToWorkload(cfg *config.Config, writeWorkloadKubeconfi
 	_ = cli.ApplyMultiDocYAML(context.Background(), manifest)
 }
 
-// ApplyWorkloadArgoCDOperatorAndCR ports
-// apply_workload_argocd_operator_and_argocd_cr (L5562-L5695).
+// ApplyWorkloadArgoCDOperatorAndCR installs the Argo CD Operator
+// and an ArgoCD CR on the workload cluster.
 // writeWorkloadKubeconfig returns the path to a tmp kubeconfig that
 // targets the workload cluster (managed by the caller so the cleanup is
 // predictable).
@@ -531,8 +527,7 @@ func patchOperatorEnv(ctx context.Context, cli *k8sclient.Client, ns, name, envK
 	return err
 }
 
-// buildArgoCDCR emits the ArgoCD CR YAML. Flags match the bash
-// heredoc conditionals (L5593-L5681).
+// buildArgoCDCR emits the ArgoCD CR YAML.
 func buildArgoCDCR(version, ns string, prom, mon, disableIngress, serverInsecure bool) string {
 	if version == "" {
 		version = "v3.3.8"

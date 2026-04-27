@@ -16,18 +16,19 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/airgap"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
-// ApplyWorkloadArgoHelmProxies ports caaph_apply_workload_argo_helm_proxies
-// (L5698-L5761). Installs Argo CD Operator + ArgoCD CR via CAAPH by
-// applying a HelmChartProxy for the argoproj argocd-apps chart; the root
-// Application name equals cfg.WorkloadClusterName.
+// ApplyWorkloadArgoHelmProxies installs Argo CD Operator + ArgoCD
+// CR via CAAPH by applying a HelmChartProxy for the argoproj
+// argocd-apps chart; the root Application name equals
+// cfg.WorkloadClusterName.
 //
-// The Argo CD Operator install itself is delegated to the caller via
-// `installOperator`, which ports apply_workload_argocd_operator_and_argocd_cr —
-// that keeps the caller in control of the kubeconfig plumbing.
+// The Argo CD Operator install itself is delegated to the caller
+// via `installOperator` so the caller stays in control of the
+// kubeconfig plumbing.
 func ApplyWorkloadArgoHelmProxies(cfg *config.Config, installOperator func()) {
 	if !cfg.IsWorkloadGitopsCaaphMode() {
 		return
@@ -69,7 +70,7 @@ func ApplyWorkloadArgoHelmProxies(cfg *config.Config, installOperator func()) {
 	fmt.Fprintln(&sb, "    matchLabels:")
 	fmt.Fprintln(&sb, "      caaph: enabled")
 	fmt.Fprintln(&sb, "  chartName: argocd-apps")
-	fmt.Fprintln(&sb, "  repoURL: https://argoproj.github.io/argo-helm")
+	fmt.Fprintf(&sb, "  repoURL: %s\n", airgap.RewriteHelmRepo("https://argoproj.github.io/argo-helm"))
 	fmt.Fprintf(&sb, "  namespace: %s\n", argoNS)
 	fmt.Fprintln(&sb, "  options:")
 	fmt.Fprintln(&sb, "    wait: true")

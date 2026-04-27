@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package bootstrap is the orchestrator. The bash script's top-level flow
-// (phases 1-10, roughly L7700-L8509) is the model we're porting piecewise.
+// Package bootstrap is the orchestrator. It drives the top-level
+// bootstrap phases and the standalone modes.
 package orchestrator
 
 import (
@@ -42,7 +42,7 @@ import (
 
 // Run executes the top-level bootstrap flow. Returns an exit code.
 func Run(cfg *config.Config) int {
-	// Apply the KIND_CLUSTER_NAME default the bash main() does at L7713.
+	// Apply the KIND_CLUSTER_NAME default.
 	if cfg.KindClusterName == "" {
 		if cfg.ClusterName != "" {
 			cfg.KindClusterName = cfg.ClusterName
@@ -50,7 +50,7 @@ func Run(cfg *config.Config) int {
 			cfg.KindClusterName = "capi-provisioner"
 		}
 	}
-	// ALLOWED_NODES falls back to PROXMOX_NODE once parsing is done (L8266).
+	// ALLOWED_NODES falls back to PROXMOX_NODE once parsing is done.
 	if cfg.AllowedNodes == "" {
 		cfg.AllowedNodes = cfg.Providers.Proxmox.Node
 	}
@@ -72,7 +72,7 @@ func Run(cfg *config.Config) int {
 	}
 
 	// -------------------------------------------------------------------------
-	// Standalone: kind backup / restore (bash L7746-L7760)
+	// Standalone: kind backup / restore
 	// -------------------------------------------------------------------------
 	switch cfg.BootstrapKindStateOp {
 	case "backup":
@@ -94,7 +94,7 @@ func Run(cfg *config.Config) int {
 	}
 
 	// -------------------------------------------------------------------------
-	// Standalone: --workload-rollout (bash L7860-L7941)
+	// Standalone: --workload-rollout
 	// -------------------------------------------------------------------------
 	if cfg.WorkloadRolloutStandalone {
 		shell.RequireCmd("kubectl")
@@ -189,7 +189,7 @@ func Run(cfg *config.Config) int {
 	}
 
 	// -------------------------------------------------------------------------
-	// Standalone: --argocd-print-access / --argocd-port-forward (L7943-L7968)
+	// Standalone: --argocd-print-access / --argocd-port-forward
 	// -------------------------------------------------------------------------
 	if cfg.ArgoCDPrintAccessStandalone || cfg.ArgoCDPortForwardStandalone {
 		shell.RequireCmd("kubectl")
@@ -223,11 +223,11 @@ func Run(cfg *config.Config) int {
 	}
 
 	// -------------------------------------------------------------------------
-	// Pre-phase: ensure CAPI manifest path (bash L7970)
+	// Pre-phase: ensure CAPI manifest path
 	// -------------------------------------------------------------------------
 	EnsureCAPIManifestPath(cfg)
 
-	// --- Purge (bash L7972-L7979) ---
+	// --- Purge ---
 	if cfg.Purge {
 		if !cfg.Force {
 			if !promptx.Confirm("Purge generated files and Terraform state before continuing?") {
@@ -237,9 +237,9 @@ func Run(cfg *config.Config) int {
 		PurgeGeneratedArtifacts(cfg)
 	}
 
-	// --- CLUSTER_SET_ID + identity suffix (bash L7981-L8007) ---
+	// --- CLUSTER_SET_ID + identity suffix ---
 	if cfg.Providers.Proxmox.RecreateIdentities {
-		logx.Log("Re-creation mode: identity parameters are resolved in Phase 2 (Terraform state or CAPI/CSI token IDs in kind / env).")
+		logx.Log("Re-creation mode: identity parameters are resolved later (Terraform state or CAPI/CSI token IDs in kind / env).")
 		if cfg.ClusterSetID != "" && cfg.Providers.Proxmox.IdentitySuffix == "" {
 			cfg.Providers.Proxmox.IdentitySuffix = pveapi.DeriveIdentitySuffix(cfg.ClusterSetID)
 		}
@@ -262,9 +262,9 @@ func Run(cfg *config.Config) int {
 	}
 
 	// =========================================================================
-	// PHASE 1: Install all dependencies (bash L8009-L8123)
+	// Dependency install phase
 	// =========================================================================
-	logx.Log("Phase 1: Installing all dependencies...")
+	logx.Log("Installing all dependencies...")
 
 	if err := installer.SystemDependencies(); err != nil {
 		logx.Die("ensure_system_dependencies failed: %v", err)
@@ -273,7 +273,7 @@ func Run(cfg *config.Config) int {
 	shell.RequireCmd("curl")
 	shell.RequireCmd("python3")
 
-	// Docker (bash L8020-L8034)
+	// Docker
 	installer.Docker()
 
 	// kubectl first pass, then merge secrets from kind (may update ClusterctlVersion
@@ -337,7 +337,6 @@ func Run(cfg *config.Config) int {
 	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 
 	// Determine whether to skip heavy maintenance (upgrade Docker, BPG provider).
-	// Matches bash PHASE1_SKIP_HEAVY_MAINTENANCE logic (L8086-L8093).
 	skipHeavy := false
 	if cfg.NoDeleteKind {
 		skipHeavy = true
@@ -364,32 +363,34 @@ func Run(cfg *config.Config) int {
 		logx.Die("ensure_opentofu failed: %v", err)
 	}
 	shell.RequireCmd("tofu")
-	if !skipHeavy {
+	if !skipHeavy && cfg.InfraProvider == "proxmox" {
 		if err := opentofux.InstallBPGProvider(cfg); err != nil {
 			logx.Die("install_bpg_proxmox_provider failed: %v", err)
 		}
 	}
 
 	EnsureKindConfig(cfg)
-	logx.Log("Phase 1 complete: all dependencies installed.")
+	logx.Log("Dependency install complete: all dependencies installed.")
 
 	// =========================================================================
-	// PHASE 2: Bootstrap (bash L8125-L8509)
+	// Bootstrap phase
 	// =========================================================================
-	logx.Log("Phase 2: Running orchestrator...")
+	logx.Log("Running orchestrator...")
 
-	// --- 0. Proxmox identity bootstrap (bash L8133-L8211) ---
+	// --- Proxmox identity bootstrap ---
 	recreateOpenTofuDone := false
 	phase0IdentityBootstrap := false
-	if !cfg.ClusterctlCfgFilePresent() && !cfg.HaveClusterctlCredsInEnv() {
-		phase0IdentityBootstrap = true
-	}
-	if cfg.Providers.Proxmox.CSIConfig != "" {
-		if _, err := os.Stat(cfg.Providers.Proxmox.CSIConfig); err != nil {
+	if cfg.InfraProvider == "proxmox" {
+		if !cfg.ClusterctlCfgFilePresent() && !cfg.HaveClusterctlCredsInEnv() {
 			phase0IdentityBootstrap = true
 		}
-	} else if cfg.Providers.Proxmox.CSITokenID == "" || cfg.Providers.Proxmox.CSITokenSecret == "" {
-		phase0IdentityBootstrap = true
+		if cfg.Providers.Proxmox.CSIConfig != "" {
+			if _, err := os.Stat(cfg.Providers.Proxmox.CSIConfig); err != nil {
+				phase0IdentityBootstrap = true
+			}
+		} else if cfg.Providers.Proxmox.CSITokenID == "" || cfg.Providers.Proxmox.CSITokenSecret == "" {
+			phase0IdentityBootstrap = true
+		}
 	}
 
 	if phase0IdentityBootstrap {
@@ -452,7 +453,7 @@ func Run(cfg *config.Config) int {
 		}
 	}
 
-	if cfg.Providers.Proxmox.RecreateIdentities && !recreateOpenTofuDone {
+	if cfg.InfraProvider == "proxmox" && cfg.Providers.Proxmox.RecreateIdentities && !recreateOpenTofuDone {
 		if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 			EnsureProxmoxAdminConfig(cfg,
 				func() { kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg) },
@@ -469,91 +470,92 @@ func Run(cfg *config.Config) int {
 		}
 	}
 
-	// --- 1. Ensure clusterctl credentials (bash L8213-L8277) ---
-	if !cfg.ClusterctlCfgFilePresent() && !cfg.HaveClusterctlCredsInEnv() {
-		logx.Warn("Proxmox clusterctl API identity is not in the environment and no explicit local CLUSTERCTL_CFG is set.")
-		if promptx.Confirm("Enter Proxmox API values interactively now?") {
-			fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox VE URL (e.g. https://pve.example:8006): ")
-			cfg.Providers.Proxmox.URL = promptx.ReadLine()
-			fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox API TokenID (e.g. capmox@pve!capi): ")
-			cfg.Providers.Proxmox.Token = promptx.ReadLine()
-			fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox API Token secret (UUID): ")
-			cfg.Providers.Proxmox.Secret = promptx.ReadLine()
-			_ = kindsync.SyncBootstrapConfigToKind(cfg)
-			_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
-			logx.Log("Proxmox API identity updated in kind when the management cluster is reachable. clusterctl on disk is not used by default (temp file for CLI only).")
-		} else {
-			logx.Warn("Skipping interactive creation. Set PROXMOX_URL, PROXMOX_TOKEN, and PROXMOX_SECRET, or add them to %s on kind, or set CLUSTERCTL_CFG to a local YAML you maintain.",
-				cfg.Providers.Proxmox.BootstrapSecretNamespace)
-			logx.Warn("Expected format:")
-			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, `  PROXMOX_URL: "https://pve.example:8006"`)
-			fmt.Fprintln(os.Stderr, `  PROXMOX_TOKEN: "capmox@pve!capi"`)
-			fmt.Fprintln(os.Stderr, `  PROXMOX_SECRET: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"`)
-			fmt.Fprintln(os.Stderr)
-			fmt.Fprint(os.Stderr, "\033[1;33m[?]\033[0m Press ENTER once you have set env vars or kind Secrets, or a CLUSTERCTL_CFG file...")
-			_ = promptx.ReadLine()
-			kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
-			if !cfg.ClusterctlCfgFilePresent() && !cfg.HaveClusterctlCredsInEnv() {
-				logx.Die("Proxmox API identity still unset: not in kind Secrets, not in the environment, and no usable CLUSTERCTL_CFG. Aborting.")
+	var clusterctlCfgPath string
+	if cfg.InfraProvider == "proxmox" {
+		// --- Ensure clusterctl credentials ---
+		if !cfg.ClusterctlCfgFilePresent() && !cfg.HaveClusterctlCredsInEnv() {
+			logx.Warn("Proxmox clusterctl API identity is not in the environment and no explicit local CLUSTERCTL_CFG is set.")
+			if promptx.Confirm("Enter Proxmox API values interactively now?") {
+				fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox VE URL (e.g. https://pve.example:8006): ")
+				cfg.Providers.Proxmox.URL = promptx.ReadLine()
+				fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox API TokenID (e.g. capmox@pve!capi): ")
+				cfg.Providers.Proxmox.Token = promptx.ReadLine()
+				fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox API Token secret (UUID): ")
+				cfg.Providers.Proxmox.Secret = promptx.ReadLine()
+				_ = kindsync.SyncBootstrapConfigToKind(cfg)
+				_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
+				logx.Log("Proxmox API identity updated in kind when the management cluster is reachable. clusterctl on disk is not used by default (temp file for CLI only).")
+			} else {
+				logx.Warn("Skipping interactive creation. Set PROXMOX_URL, PROXMOX_TOKEN, and PROXMOX_SECRET, or add them to %s on kind, or set CLUSTERCTL_CFG to a local YAML you maintain.",
+					cfg.Providers.Proxmox.BootstrapSecretNamespace)
+				logx.Warn("Expected format:")
+				fmt.Fprintln(os.Stderr)
+				fmt.Fprintln(os.Stderr, `  PROXMOX_URL: "https://pve.example:8006"`)
+				fmt.Fprintln(os.Stderr, `  PROXMOX_TOKEN: "capmox@pve!capi"`)
+				fmt.Fprintln(os.Stderr, `  PROXMOX_SECRET: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"`)
+				fmt.Fprintln(os.Stderr)
+				fmt.Fprint(os.Stderr, "\033[1;33m[?]\033[0m Press ENTER once you have set env vars or kind Secrets, or a CLUSTERCTL_CFG file...")
+				_ = promptx.ReadLine()
+				kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
+				if !cfg.ClusterctlCfgFilePresent() && !cfg.HaveClusterctlCredsInEnv() {
+					logx.Die("Proxmox API identity still unset: not in kind Secrets, not in the environment, and no usable CLUSTERCTL_CFG. Aborting.")
+				}
+				logx.Log("Continuing with Proxmox credentials from env, kind, or explicit CLUSTERCTL_CFG file.")
 			}
-			logx.Log("Continuing with Proxmox credentials from env, kind, or explicit CLUSTERCTL_CFG file.")
 		}
-	}
 
-	// Fill URL/Token/Secret from an explicit local clusterctl file if not
-	// already populated from kind (matches bash L8255-L8259).
-	if !cfg.Providers.Proxmox.BootstrapKindSecretUsed && !cfg.Providers.Proxmox.KindCAPMOXActive && cfg.ClusterctlCfgFilePresent() {
+		// Fill URL/Token/Secret from an explicit local clusterctl file if not
+		// already populated from kind.
+		if !cfg.Providers.Proxmox.BootstrapKindSecretUsed && !cfg.Providers.Proxmox.KindCAPMOXActive && cfg.ClusterctlCfgFilePresent() {
+			if cfg.Providers.Proxmox.URL == "" {
+				cfg.Providers.Proxmox.URL = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_URL")
+			}
+			if cfg.Providers.Proxmox.Token == "" {
+				cfg.Providers.Proxmox.Token = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_TOKEN")
+			}
+			if cfg.Providers.Proxmox.Secret == "" {
+				cfg.Providers.Proxmox.Secret = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_SECRET")
+			}
+		}
+		cfg.Providers.Proxmox.Secret = pveapi.NormalizeTokenSecret(cfg.Providers.Proxmox.Secret, cfg.Providers.Proxmox.Token)
+		pveapi.ValidateTokenSecret("PROXMOX_SECRET", cfg.Providers.Proxmox.Secret)
+		pveapi.RefreshDerivedIdentityTokenIDs(cfg)
+		if cfg.Providers.Proxmox.TemplateID == "" {
+			cfg.Providers.Proxmox.TemplateID = "104"
+		}
+		if cfg.AllowedNodes == "" {
+			cfg.AllowedNodes = cfg.Providers.Proxmox.Node
+		}
+
+		var missingCreds []string
 		if cfg.Providers.Proxmox.URL == "" {
-			cfg.Providers.Proxmox.URL = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_URL")
+			missingCreds = append(missingCreds, "PROXMOX_URL")
 		}
 		if cfg.Providers.Proxmox.Token == "" {
-			cfg.Providers.Proxmox.Token = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_TOKEN")
+			missingCreds = append(missingCreds, "PROXMOX_TOKEN")
 		}
 		if cfg.Providers.Proxmox.Secret == "" {
-			cfg.Providers.Proxmox.Secret = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_SECRET")
+			missingCreds = append(missingCreds, "PROXMOX_SECRET")
 		}
-	}
-	cfg.Providers.Proxmox.Secret = pveapi.NormalizeTokenSecret(cfg.Providers.Proxmox.Secret, cfg.Providers.Proxmox.Token)
-	pveapi.ValidateTokenSecret("PROXMOX_SECRET", cfg.Providers.Proxmox.Secret)
-	pveapi.RefreshDerivedIdentityTokenIDs(cfg)
-	if cfg.Providers.Proxmox.TemplateID == "" {
-		cfg.Providers.Proxmox.TemplateID = "104"
-	}
-	if cfg.AllowedNodes == "" {
-		cfg.AllowedNodes = cfg.Providers.Proxmox.Node
+		if len(missingCreds) > 0 {
+			logx.Warn("Missing Proxmox configuration: %v", missingCreds)
+			logx.Die("Configure Proxmox credentials before running this script.")
+		}
+
+		// Test Proxmox API connectivity with the clusterctl token.
+		logx.Log("Testing Proxmox API connectivity at %s (clusterctl token)...", pveapi.HostBaseURL(cfg))
+		if err := pveapi.ResolveRegionAndNodeFromClusterctlAPI(cfg); err != nil {
+			logx.Die("Proxmox API connectivity check failed: %v. Verify PROXMOX_URL, PROXMOX_TOKEN, and PROXMOX_SECRET.", err)
+		}
+		logx.Log("Proxmox API reachable.")
+
+		clusterctlCfgPath = SyncClusterctlConfigFile(cfg)
+	} else {
+		ensureNonProxmoxClusterctlCredentials(cfg)
+		clusterctlCfgPath = SyncClusterctlConfigFile(cfg)
 	}
 
-	var missingCreds []string
-	if cfg.Providers.Proxmox.URL == "" {
-		missingCreds = append(missingCreds, "PROXMOX_URL")
-	}
-	if cfg.Providers.Proxmox.Token == "" {
-		missingCreds = append(missingCreds, "PROXMOX_TOKEN")
-	}
-	if cfg.Providers.Proxmox.Secret == "" {
-		missingCreds = append(missingCreds, "PROXMOX_SECRET")
-	}
-	if len(missingCreds) > 0 {
-		logx.Warn("Missing Proxmox configuration: %v", missingCreds)
-		logx.Die("Configure Proxmox credentials before running this script.")
-	}
-
-	// Test Proxmox API connectivity with the clusterctl token (bash L8279-L8289).
-	logx.Log("Testing Proxmox API connectivity at %s (clusterctl token)...", pveapi.HostBaseURL(cfg))
-	if err := pveapi.ResolveRegionAndNodeFromClusterctlAPI(cfg); err != nil {
-		// ResolveRegionAndNodeFromClusterctlAPI already does the connectivity
-		// check internally. For the explicit HTTP status code branch mirror
-		// (401/000/other) we catch the error here.
-		logx.Die("Proxmox API connectivity check failed: %v. Verify PROXMOX_URL, PROXMOX_TOKEN, and PROXMOX_SECRET.", err)
-	}
-	logx.Log("Proxmox API reachable.")
-
-	// Bootstrap the ephemeral or explicit clusterctl config file (bash L8293).
-	clusterctlCfgPath := SyncClusterctlConfigFile(cfg)
-	_ = clusterctlCfgPath
-
-	// --- 4. Check for existing kind clusters (bash L8295-L8315) ---
+	// --- Check for existing kind clusters ---
 	kindClusterReused := false
 	logx.Log("Checking for existing kind clusters...")
 	{
@@ -587,33 +589,36 @@ func Run(cfg *config.Config) int {
 		}
 	}
 
-	// --- 5. Resolve CAPMOX image tag (bash L8317-L8335) ---
-	logx.Log("Resolving CAPMOX image tag...")
-	capmoxTag := cfg.CAPMOXVersion
-	if capmoxTag != "" {
-		logx.Log("Using pinned CAPMOX version: %s", capmoxTag)
-	} else {
-		logx.Log("Cloning %s to determine latest stable tag...", cfg.CAPMOXRepo)
-		_ = os.RemoveAll(cfg.CAPMOXBuildDir)
-		if err := shell.Run("git", "clone", "--filter=blob:none", cfg.CAPMOXRepo, cfg.CAPMOXBuildDir); err != nil {
-			logx.Die("Failed to clone CAPMOX repo: %v", err)
-		}
-		out, _, _ := shell.CaptureIn(cfg.CAPMOXBuildDir, "git", "tag", "--list", "v*")
-		stableRE := regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
-		for _, ln := range strings.Split(out, "\n") {
-			ln = strings.TrimSpace(ln)
-			if stableRE.MatchString(ln) {
-				capmoxTag = ln // last stable tag after sort -V ordering
+	// --- Resolve CAPMOX image tag (Proxmox only) ---
+	var capmoxImage, capmoxTag string
+	if cfg.InfraProvider == "proxmox" {
+		logx.Log("Resolving CAPMOX image tag...")
+		capmoxTag = cfg.CAPMOXVersion
+		if capmoxTag != "" {
+			logx.Log("Using pinned CAPMOX version: %s", capmoxTag)
+		} else {
+			logx.Log("Cloning %s to determine latest stable tag...", cfg.CAPMOXRepo)
+			_ = os.RemoveAll(cfg.CAPMOXBuildDir)
+			if err := shell.Run("git", "clone", "--filter=blob:none", cfg.CAPMOXRepo, cfg.CAPMOXBuildDir); err != nil {
+				logx.Die("Failed to clone CAPMOX repo: %v", err)
 			}
+			out, _, _ := shell.CaptureIn(cfg.CAPMOXBuildDir, "git", "tag", "--list", "v*")
+			stableRE := regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+			for _, ln := range strings.Split(out, "\n") {
+				ln = strings.TrimSpace(ln)
+				if stableRE.MatchString(ln) {
+					capmoxTag = ln // last stable tag after sort -V ordering
+				}
+			}
+			if capmoxTag == "" {
+				logx.Die("Could not determine a stable release tag from %s.", cfg.CAPMOXRepo)
+			}
+			logx.Log("Latest stable tag detected: %s", capmoxTag)
 		}
-		if capmoxTag == "" {
-			logx.Die("Could not determine a stable release tag from %s.", cfg.CAPMOXRepo)
-		}
-		logx.Log("Latest stable tag detected: %s", capmoxTag)
+		capmoxImage = cfg.CAPMOXImageRepo + ":" + capmoxTag
 	}
-	capmoxImage := cfg.CAPMOXImageRepo + ":" + capmoxTag
 
-	// --- 6. Create kind cluster (bash L8337-L8365) ---
+	// --- Create kind cluster ---
 	if kindClusterReused {
 		logx.Log("Skipping kind cluster creation; reusing existing cluster '%s'.", cfg.KindClusterName)
 	} else {
@@ -641,7 +646,7 @@ func Run(cfg *config.Config) int {
 		}
 	}
 
-	// Load arm64 images or build them when the registry doesn't have arm64 (bash L8358-L8365).
+	// Load arm64 images or build them when the registry doesn't have arm64.
 	if kindClusterReused {
 		logx.Log("Reusing existing kind cluster — skipping arm64 image checks and kind-load (images already present from previous bootstrap).")
 	} else {
@@ -650,7 +655,9 @@ func Run(cfg *config.Config) int {
 		if i := strings.LastIndex(cfg.IPAMImage, ":"); i >= 0 {
 			ipamTag = cfg.IPAMImage[i+1:]
 		}
-		_ = installer.BuildIfNoArm64(cfg, capmoxImage, cfg.CAPMOXRepo, capmoxTag, cfg.CAPMOXBuildDir, cfg.KindClusterName)
+		if cfg.InfraProvider == "proxmox" && capmoxImage != "" {
+			_ = installer.BuildIfNoArm64(cfg, capmoxImage, cfg.CAPMOXRepo, capmoxTag, cfg.CAPMOXBuildDir, cfg.KindClusterName)
+		}
 		_ = installer.BuildIfNoArm64(cfg, cfg.CAPICoreImage, cfg.CAPICoreRepo, cfg.ClusterctlVersion, "./cluster-api", cfg.KindClusterName)
 		_ = installer.BuildIfNoArm64(cfg, cfg.CAPIBootstrapImage, cfg.CAPICoreRepo, cfg.ClusterctlVersion, "./cluster-api", cfg.KindClusterName)
 		_ = installer.BuildIfNoArm64(cfg, cfg.CAPIControlplaneImage, cfg.CAPICoreRepo, cfg.ClusterctlVersion, "./cluster-api", cfg.KindClusterName)
@@ -659,21 +666,23 @@ func Run(cfg *config.Config) int {
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
 	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 
-	// --- 7. Management cluster CNI (bash L8369-L8372) ---
+	// --- Management cluster CNI ---
 	logx.Log("Using kind's default CNI (kindnet) on the management cluster; skipping Cilium install.")
 
-	// --- 8. Initialize Cluster API (bash L8374-L8423) ---
+	// --- Initialize Cluster API ---
 	InstallMetricsServerOnKindManagement(cfg)
 
 	logx.Log("Initializing Cluster API (infrastructure=%s, ipam=%s, addon=helm)...", cfg.InfraProvider, cfg.IPAMProvider)
 	clusterctlCfgPath = SyncClusterctlConfigFile(cfg)
-	initArgs := []string{
-		"clusterctl", "init",
-		"--config", clusterctlCfgPath,
+	initArgs := []string{"clusterctl", "init"}
+	if clusterctlCfgPath != "" {
+		initArgs = append(initArgs, "--config", clusterctlCfgPath)
+	}
+	initArgs = append(initArgs,
 		"--infrastructure", cfg.InfraProvider,
 		"--ipam", cfg.IPAMProvider,
 		"--addon", "helm",
-	}
+	)
 	// --bootstrap-mode k3s swaps the kubeadm control-plane + bootstrap
 	// providers for the K3s ones. kubeadm is the default and clusterctl
 	// installs it implicitly when --control-plane / --bootstrap are
@@ -702,7 +711,7 @@ func Run(cfg *config.Config) int {
 		logx.Die("clusterctl init failed: %v", err)
 	}
 
-	// Wait for CAAPH add-on provider (bash L8387-L8394).
+	// Wait for CAAPH add-on provider.
 	logx.Log("Waiting for CAAPH (add-on provider Helm) to become ready, if present...")
 	mgmtCli, mgmtErr := k8sclient.ForCurrent()
 	if mgmtErr != nil {
@@ -717,7 +726,7 @@ func Run(cfg *config.Config) int {
 		logx.Warn("caaph-system not found after clusterctl init --addon helm — verify CAAPH; HelmChartProxy may fail without it.")
 	}
 
-	// Wait for core CAPI controllers (bash L8396-L8408).
+	// Wait for core CAPI controllers.
 	logx.Log("Waiting for core CAPI controllers to become ready...")
 	for _, d := range []struct{ ns, name string }{
 		{"capi-system", "capi-controller-manager"},
@@ -729,20 +738,12 @@ func Run(cfg *config.Config) int {
 		}
 	}
 
-	// Wait for webhook service endpoints (bash L8410-L8412).
+	// Wait for webhook service endpoints.
 	logx.Log("Waiting for CAPI webhook service endpoints...")
 	kubectl.WaitForServiceEndpoint("capi-kubeadm-bootstrap-system", "capi-kubeadm-bootstrap-webhook-service", 300*time.Second)
 	kubectl.WaitForServiceEndpoint("capi-kubeadm-control-plane-system", "capi-kubeadm-control-plane-webhook-service", 300*time.Second)
 
-	// Wait for CAPMOX (bash L8414-L8421).
-	logx.Log("Waiting for Proxmox provider (capmox-controller-manager) to become ready...")
-	if err := waitDeploymentReady(mgmtCli, "capmox-system", "capmox-controller-manager", 300*time.Second); err != nil {
-		logx.Die("capmox-controller-manager did not become Available: %v", err)
-	}
-	logx.Log("Waiting for CAPMOX mutating webhook endpoint (ProxmoxCluster apply)...")
-	kubectl.WaitForServiceEndpoint("capmox-system", "capmox-webhook-service", 300*time.Second)
-
-	opentofux.RecreateResyncCapmox(cfg)
+	waitInfraProviderAfterClusterctlInit(cfg, mgmtCli)
 
 	// --- Capacity check: confirm the planned clusters fit inside
 	// cfg.ResourceBudgetFraction (default 0.75) of the available
@@ -755,14 +756,14 @@ func Run(cfg *config.Config) int {
 	// CAPMOX rejects a pool reference that doesn't exist, so we
 	// create the workload pool here and (when --pivot is enabled) the
 	// mgmt pool too. Idempotent: existing pools are silently kept.
-	if cfg.Providers.Proxmox.Pool != "" {
+	if cfg.InfraProvider == "proxmox" && cfg.Providers.Proxmox.Pool != "" {
 		if err := pveapi.EnsurePool(cfg, cfg.Providers.Proxmox.Pool); err != nil {
 			logx.Warn("Proxmox pool %s: %v — VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Pool, err)
 		} else {
 			logx.Log("Proxmox pool '%s' ensured (workload).", cfg.Providers.Proxmox.Pool)
 		}
 	}
-	if cfg.PivotEnabled && cfg.Providers.Proxmox.Mgmt.Pool != "" {
+	if cfg.InfraProvider == "proxmox" && cfg.PivotEnabled && cfg.Providers.Proxmox.Mgmt.Pool != "" {
 		if err := pveapi.EnsurePool(cfg, cfg.Providers.Proxmox.Mgmt.Pool); err != nil {
 			logx.Warn("Proxmox pool %s: %v — mgmt VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Mgmt.Pool, err)
 		} else {
@@ -770,27 +771,41 @@ func Run(cfg *config.Config) int {
 		}
 	}
 
-	// --- 9.5 Pivot to a Proxmox-hosted management cluster (bash L8848-L8884) ---
-	// CAPI bootstrap-and-pivot pattern. When PivotEnabled is true: kind
-	// provisions a single-node management cluster on Proxmox, clusterctl
-	// init runs against it, clusterctl move migrates CAPI inventory from
-	// kind to mgmt, the yage-system Secrets are mirrored, the
-	// kind context is rebound to point at the mgmt cluster, and downstream
-	// phases run against mgmt. The kind cluster is torn down at the end
-	// (unless --pivot-keep-kind / --no-delete-kind).
+	// --- Pivot ---
+	// CAPI bootstrap-and-pivot pattern. With PivotEnabled (the
+	// default): kind provisions a single-node management cluster on
+	// the active provider, clusterctl init runs against it,
+	// clusterctl move migrates CAPI inventory from kind to mgmt, the
+	// yage-system Secrets are mirrored, the kind context is rebound
+	// to point at the mgmt cluster, and downstream phases run
+	// against mgmt. The kind cluster is torn down at the end (unless
+	// --pivot-keep-kind / --no-delete-kind).
+	//
+	// When the active provider does not implement PivotTarget,
+	// pivot is silently downgraded to "kind stays as the management
+	// plane" so PivotEnabled-by-default does not break runs against
+	// providers without a pivot path.
+	if cfg.PivotEnabled {
+		if pt, perr := provider.For(cfg); perr == nil {
+			if _, terr := pt.PivotTarget(cfg); errors.Is(terr, provider.ErrNotApplicable) {
+				logx.Log("pivot: %s does not yet implement PivotTarget — keeping kind as the management plane.", cfg.InfraProvider)
+				cfg.PivotEnabled = false
+			}
+		}
+	}
 	if cfg.PivotEnabled {
 		if cfg.PivotDryRun {
-			logx.Log("Phase 2.95: PIVOT DRY-RUN — provisioning mgmt cluster + clusterctl-init, then `clusterctl move --dry-run`. Workload stays on kind; no state moves.")
+			logx.Log("Pivot phase: PIVOT DRY-RUN — provisioning mgmt cluster + clusterctl-init, then `clusterctl move --dry-run`. Workload stays on kind; no state moves.")
 		} else {
-			logx.Log("Phase 2.95: pivoting CAPI from kind → Proxmox-hosted management cluster...")
+			logx.Log("Pivot phase: pivoting CAPI from kind → Proxmox-hosted management cluster...")
 		}
 		mgmtKubeconfig, err := pivot.EnsureManagementCluster(cfg)
 		if err != nil {
 			logx.Die("pivot: EnsureManagementCluster: %v", err)
 		}
-		// Phase E.3 / §13.4 #5: thread the kubeconfig path through
-		// cfg so Provider.PivotTarget can return it. Provider is
-		// stateless; orchestrator publishes the path here.
+		// Thread the kubeconfig path through cfg so Provider.PivotTarget
+		// can return it. Provider is stateless; orchestrator publishes
+		// the path here.
 		cfg.MgmtKubeconfigPath = mgmtKubeconfig
 		if err := pivot.InstallCAPIOnManagement(cfg, mgmtKubeconfig); err != nil {
 			logx.Die("pivot: InstallCAPIOnManagement: %v", err)
@@ -821,7 +836,21 @@ func Run(cfg *config.Config) int {
 		logx.Log("pivot: complete; subsequent phases will target the management cluster.")
 	}
 
-	// --- 9. Apply workload cluster manifest (bash L8425-L8494) ---
+	// --- --stop-before-workload escape hatch ---
+	// Integration tests exit here: mgmt cluster is up on the provider,
+	// kind is torn down, no workload churn. Re-run without the flag
+	// (or send the same yage --print-command output) to provision the
+	// workload.
+	if cfg.StopBeforeWorkload {
+		if cfg.PivotEnabled {
+			logx.Log("--stop-before-workload: mgmt cluster is up, no workload manifest applied. Done.")
+		} else {
+			logx.Log("--stop-before-workload: kind is the management plane (no pivot ran), no workload manifest applied. Done.")
+		}
+		return 0
+	}
+
+	// --- Apply workload cluster manifest ---
 	MaybeInteractiveSelectWorkloadCluster(cfg)
 	capimanifest.TryFillWorkloadInputsFromManagement(cfg)
 	// Re-apply proxmox-bootstrap-config so snapshot keys beat live backfill.
@@ -870,7 +899,7 @@ func Run(cfg *config.Config) int {
 		return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
 	})
 
-	// Metrics-server on workload (bash L8472-L8478).
+	// Metrics-server on workload.
 	if cfg.EnableWorkloadMetricsServer {
 		if cfg.ArgoCDEnabled && cfg.WorkloadArgoCDEnabled {
 			logx.Log("workload metrics-server: deploy with your app-of-apps repo (%s); ENABLE_WORKLOAD_METRICS_SERVER is informational when Argo delivers apps from Git.", cfg.WorkloadAppOfAppsGitURL)
@@ -879,7 +908,7 @@ func Run(cfg *config.Config) int {
 		}
 	}
 
-	// Proxmox CSI config Secret on the workload (bash L8481-L8489).
+	// Proxmox CSI config Secret on the workload.
 	if cfg.Providers.Proxmox.CSIEnabled && cfg.ArgoCDEnabled && cfg.WorkloadArgoCDEnabled {
 		csi.LoadVarsFromConfig(cfg)
 		if cfg.Providers.Proxmox.CSIURL == "" {
@@ -895,14 +924,14 @@ func Run(cfg *config.Config) int {
 		}
 	}
 
-	// Pre-install argocd-redis Secret on the workload (bash L8492-L8494).
+	// Pre-install argocd-redis Secret on the workload.
 	if cfg.ArgoCDEnabled && cfg.WorkloadArgoCDEnabled {
 		argocd.ApplyRedisSecretToWorkload(cfg, func() (string, error) {
 			return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
 		})
 	}
 
-	// --- 10. Argo CD on workload (bash L8496-L8508) ---
+	// --- Argo CD on workload ---
 	if cfg.ArgoCDEnabled {
 		logx.Log("Argo CD on the workload: Argo CD Operator + ArgoCD CR, then CAAPH argocd-apps (root Application name %s; see --workload-app-of-apps-git-*).", cfg.WorkloadClusterName)
 		if cfg.WorkloadArgoCDEnabled {
@@ -986,13 +1015,11 @@ func validateMinVCPU(cfg *config.Config) error {
 // cfg.AllowResourceOvercommit is set, in which case the error is
 // downgraded to a warning and nil is returned.
 //
-// Per Phase A.5: capacity acquisition lives behind the Provider
-// interface (provider.For(cfg).Inventory) instead of the previous
-// direct capacity.FetchHostCapacity + capacity.FetchExistingUsage
-// pair. Providers that don't model capacity as flat
-// Total/Used/Available (AWS, Azure, GCP, Hetzner, vSphere) return
-// ErrNotApplicable and the preflight is skipped silently per
-// §13.4 #1.
+// Capacity acquisition lives behind the Provider interface
+// (provider.For(cfg).Inventory). Providers that don't model
+// capacity as flat Total/Used/Available (AWS, Azure, GCP, Hetzner,
+// vSphere) return ErrNotApplicable and the preflight is skipped
+// silently per §13.4 #1.
 func preflightCapacity(cfg *config.Config) error {
 	prov, err := provider.For(cfg)
 	if err != nil {
@@ -1104,6 +1131,49 @@ func totalReplicas(p capacity.Plan) int {
 		n += it.Replicas
 	}
 	return n
+}
+
+// ensureNonProxmoxClusterctlCredentials checks that clusterctl can
+// authenticate to the selected cloud when not using the Proxmox +
+// OpenTofu identity path.
+func ensureNonProxmoxClusterctlCredentials(cfg *config.Config) {
+	if cfg.ClusterctlCfgFilePresent() {
+		return
+	}
+	switch cfg.InfraProvider {
+	case "aws":
+		if !cfg.HaveAWSCloudCreds() {
+			logx.Die("AWS infrastructure selected but AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are not both set in the environment (CAPA / clusterctl need them). Set CLUSTERCTL_CFG if you use a different credential flow.")
+		}
+		logx.Log("AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are set — skipping Proxmox OpenTofu identity bootstrap.")
+	default:
+		logx.Warn("Skipping Proxmox OpenTofu identity bootstrap for infrastructure provider %q — ensure the environment (or CLUSTERCTL_CFG) supplies the credentials clusterctl expects.", cfg.InfraProvider)
+	}
+}
+
+// waitInfraProviderAfterClusterctlInit waits for the infra-provider
+// controllers + webhooks that must be healthy before workload
+// manifest generation (CAPMOX for Proxmox, CAPA for AWS, …).
+func waitInfraProviderAfterClusterctlInit(cfg *config.Config, mgmtCli *k8sclient.Client) {
+	switch cfg.InfraProvider {
+	case "proxmox":
+		logx.Log("Waiting for Proxmox provider (capmox-controller-manager) to become ready...")
+		if err := waitDeploymentReady(mgmtCli, "capmox-system", "capmox-controller-manager", 300*time.Second); err != nil {
+			logx.Die("capmox-controller-manager did not become Available: %v", err)
+		}
+		logx.Log("Waiting for CAPMOX mutating webhook endpoint (ProxmoxCluster apply)...")
+		kubectl.WaitForServiceEndpoint("capmox-system", "capmox-webhook-service", 300*time.Second)
+		opentofux.RecreateResyncCapmox(cfg)
+	case "aws":
+		logx.Log("Waiting for AWS provider (capa-controller-manager) to become ready...")
+		if err := waitDeploymentReady(mgmtCli, "capa-system", "capa-controller-manager", 300*time.Second); err != nil {
+			logx.Die("capa-controller-manager did not become Available: %v", err)
+		}
+		logx.Log("Waiting for CAPA webhook endpoint...")
+		kubectl.WaitForServiceEndpoint("capa-system", "capa-webhook-service", 300*time.Second)
+	default:
+		logx.Warn("No provider-specific CAPI controller wait is implemented for %q — continuing after core CAPI webhooks.", cfg.InfraProvider)
+	}
 }
 
 // rebindKindContextToMgmt writes a fresh KUBECONFIG file containing the

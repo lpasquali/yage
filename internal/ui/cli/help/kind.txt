@@ -1,0 +1,21 @@
+kind — management cluster name / config / backup / restore
+
+    --kind-cluster-name NAME      Management kind cluster name (default: yage-mgmt when
+                                  unset; xapiri prompts for it as the first question).
+    --kind-config PATH            kind cluster config file (default: ephemeral minimal)
+    --bootstrap-config-file PATH  Local config.yaml used for stale-detection (default: ./config.yaml)
+
+    --kind-backup [PATH]          Snapshot kind state to PATH (.tar.gz). Encrypted when set.
+    --kind-restore PATH           Restore kind state from PATH and exit
+    --node-image IMAGE            Override the kind worker base image (kindest/node:vX.Y.Z).
+                                  Useful when the public image is mirrored elsewhere.
+
+    --proxmox-bootstrap-admin-secret NAME  kind Secret for Terraform / admin PVE API
+                                           (default: proxmox-bootstrap-admin-credentials)
+    --capi-manifest PATH          Workload CAPI manifest on disk (default: kept in a kind Secret)
+
+xapiri integration
+    The TUI brings the kind cluster up before any prompt runs (so step 8 can persist into the
+    yage-system/bootstrap-config Secret without falling back to disk). YAGE_XAPIRI_SKIP_KIND=1
+    runs the wizard offline. YAGE_XAPIRI_DISK_FALLBACK=1 re-enables the legacy ~/.config/yage/
+    bootstrap.yaml path.

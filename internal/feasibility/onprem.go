@@ -79,11 +79,11 @@ func CheckOnPrem(cfg *config.Config, host *capacity.HostCapacity) (Verdict, erro
 		},
 	}
 
-	// The on-prem fork iterates the AirgapCompatible providers in
-	// the §22.2 set: proxmox, vsphere, openstack, capd. We don't
-	// import internal/provider here to keep the dep graph flat;
-	// the names are stable per the airgap whitelist.
-	onPremNames := []string{"capd", "openstack", "proxmox", "vsphere"}
+	// The on-prem fork iterates the AirgapCompatible providers:
+	// proxmox, vsphere, openstack, docker (CAPD's registry name).
+	// We don't import internal/provider here to keep the dep graph
+	// flat; the names are stable per the airgap whitelist.
+	onPremNames := []string{"docker", "openstack", "proxmox", "vsphere"}
 
 	for _, name := range onPremNames {
 		pv := ProviderVerdict{

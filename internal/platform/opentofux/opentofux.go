@@ -1,24 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package opentofux ports the OpenTofu-backed Proxmox identity
+// Package opentofux drives the OpenTofu-backed Proxmox identity
 // bootstrap flow.
 //
-// Bash source map (the original bash port):
-//   - install_bpg_proxmox_provider                          ~L2860-2879
-//   - write_embedded_terraform_files                        ~L2881-3038
-//   - apply_proxmox_identity_terraform                      ~L3040-3067
-//   - resolve_recreate_proxmox_identity_context             ~L3098-3127
-//   - proxmox_identity_terraform_state_rm_all               ~L3141-3151
-//   - recreate_proxmox_identities_terraform                 ~L3201-3281
-//   - recreate_identities_resync_and_rollout_capmox         ~L3284-3290
-//   - recreate_identities_workload_csi_secrets              ~L3293-3309
-//   - extract_identity_tf_inputs_from_state                 ~L7443-7494
-//   - destroy_proxmox_identity_terraform_state              ~L7497-7552
-//
-// State format is unchanged from Terraform — the on-disk state file is
-// named terraform.tfstate (the OpenTofu default) and is read/written by
-// either binary.
+// State format: the on-disk state file is named terraform.tfstate
+// (the OpenTofu default) and is read/written by either binary.
 package opentofux
 
 import (
@@ -124,7 +111,8 @@ func applyVars(cfg *config.Config) []string {
 	}
 }
 
-// ApplyIdentity ports apply_proxmox_identity_terraform (L3040-L3067).
+// ApplyIdentity runs `tofu init` + `tofu apply` for the Proxmox
+// CAPI/CSI identity bootstrap.
 func ApplyIdentity(cfg *config.Config) error {
 	if err := WriteEmbeddedFiles(cfg); err != nil {
 		return err
@@ -137,9 +125,8 @@ func ApplyIdentity(cfg *config.Config) error {
 	return runTofu(cfg, args...)
 }
 
-// StateRmAll ports proxmox_identity_terraform_state_rm_all (L3141-L3151).
-// Walks `tofu state list` and runs `tofu state rm` on each entry, with
-// warn-don't-fail semantics on individual failures.
+// StateRmAll walks `tofu state list` and runs `tofu state rm` on
+// each entry, with warn-don't-fail semantics on individual failures.
 func StateRmAll(cfg *config.Config) error {
 	if _, err := os.Stat(stateFile()); err != nil {
 		logx.Warn("No OpenTofu state to clear at %s.", StateDir())
@@ -170,9 +157,9 @@ func GetOutput(name string) string {
 	return strings.TrimSpace(out)
 }
 
-// ExtractIdentityInputsFromState ports extract_identity_tf_inputs_from_state
-// (L7443-L7494). Returns (clusterSetID, csiUserID, csiTokenPrefix,
-// capiUserID, capiTokenPrefix) by parsing the tfstate JSON.
+// ExtractIdentityInputsFromState returns (clusterSetID, csiUserID,
+// csiTokenPrefix, capiUserID, capiTokenPrefix) by parsing the
+// tfstate JSON.
 func ExtractIdentityInputsFromState(statePath string) (string, string, string, string, string, error) {
 	raw, err := os.ReadFile(statePath)
 	if err != nil {
@@ -238,9 +225,8 @@ func ExtractIdentityInputsFromState(statePath string) (string, string, string, s
 		nil
 }
 
-// ResolveRecreateContext ports resolve_recreate_proxmox_identity_context
-// (L3098-L3127). Prefers the extracted state-file inputs, falls back to
-// token-id inference if no state exists.
+// ResolveRecreateContext prefers the extracted state-file inputs,
+// falls back to token-id inference if no state exists.
 func ResolveRecreateContext(cfg *config.Config) {
 	if _, err := os.Stat(stateFile()); err == nil {
 		csID, csiUser, csiPfx, capiUser, capiPfx, err := ExtractIdentityInputsFromState(stateFile())
@@ -270,8 +256,8 @@ func ResolveRecreateContext(cfg *config.Config) {
 	logx.Log("Re-creation: inferred Proxmox identity suffix %s from token id format.", cfg.Providers.Proxmox.IdentitySuffix)
 }
 
-// RecreateIdentities ports recreate_proxmox_identities_terraform
-// (L3201-L3281). Full rotation flow with two branches:
+// RecreateIdentities runs the full identity rotation flow with two
+// branches:
 //
 //   - PROXMOX_IDENTITY_RECREATE_STATE_RM=true: empty state then apply from
 //     scratch (PVE was wiped).
@@ -284,7 +270,7 @@ func RecreateIdentities(cfg *config.Config) error {
 	// ensure_proxmox_admin_config lives in the orchestrator, not here —
 	// callers should have run it before.
 	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
-		logx.Die("Recreate: need PROXMOX_URL, PROXMOX_ADMIN_USERNAME, PROXMOX_ADMIN_TOKEN (set env, kind Secret %s/%s, or PROXMOX_ADMIN_CONFIG to a legacy file).",
+		logx.Die("Recreate: need PROXMOX_URL, PROXMOX_ADMIN_USERNAME, PROXMOX_ADMIN_TOKEN (set env, kind Secret %s/%s, or PROXMOX_ADMIN_CONFIG to a local file).",
 			cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName)
 	}
 	ResolveRecreateContext(cfg)
@@ -354,9 +340,8 @@ func RecreateIdentities(cfg *config.Config) error {
 	return nil
 }
 
-// RecreateResyncCapmox ports recreate_identities_resync_and_rollout_capmox
-// (L3284-L3290). After capmox-system and its webhook exist, re-push
-// in-cluster creds and restart the CAPMOX controller.
+// RecreateResyncCapmox re-pushes in-cluster creds and restarts the
+// CAPMOX controller after capmox-system and its webhook exist.
 func RecreateResyncCapmox(cfg *config.Config) {
 	if !cfg.Providers.Proxmox.RecreateIdentities {
 		return
@@ -367,11 +352,10 @@ func RecreateResyncCapmox(cfg *config.Config) {
 	kindsync.RolloutRestartCapmoxController(cfg)
 }
 
-// RecreateIdentitiesWorkloadCSISecrets ports
-// recreate_identities_workload_csi_secrets (bash L3293-L3309). No-op
-// unless cfg.Providers.Proxmox.RecreateIdentities is true. Applies the updated CSI
-// config Secret to the workload, optionally restarts the CSI controller,
-// and final-syncs bootstrap config to kind.
+// RecreateIdentitiesWorkloadCSISecrets applies the updated CSI
+// config Secret to the workload, optionally restarts the CSI
+// controller, and final-syncs bootstrap config to kind. No-op
+// unless cfg.Providers.Proxmox.RecreateIdentities is true.
 func RecreateIdentitiesWorkloadCSISecrets(cfg *config.Config) {
 	if !cfg.Providers.Proxmox.RecreateIdentities {
 		return
@@ -440,8 +424,8 @@ func base64Decode(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
-// DestroyIdentity ports destroy_proxmox_identity_terraform_state
-// (L7497-L7552). No-op when the state file is missing. Dies when any of
+// DestroyIdentity runs `tofu destroy` against the Proxmox identity
+// state. No-op when the state file is missing. Dies when any of
 // the five state-extracted inputs is empty.
 func DestroyIdentity(cfg *config.Config) error {
 	sf := stateFile()

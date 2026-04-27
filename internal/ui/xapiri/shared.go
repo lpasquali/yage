@@ -20,15 +20,36 @@ import (
 	"strings"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/pricing"
+	"github.com/lpasquali/yage/internal/ui/cli"
 	"github.com/lpasquali/yage/internal/ui/plan"
 )
 
-// greet prints the opening lines. Reused as-is from the previous
-// stub-with-prompts implementation so the shell-prompt style and
-// cultural framing are preserved verbatim.
+// greet prints the opening lines. The shell-prompt style and
+// cultural framing are deliberately quiet.
 func (s *state) greet() {
 	s.r.info("xapiri — let's shape this deployment together.")
 	s.r.info("press enter to keep the value in [brackets].")
+}
+
+// stepKindClusterName asks the operator for a name for the kind
+// management cluster. It is the first prompt because every later
+// step (cost-compare's progress lines, the persist step, the
+// kubectl context the orchestrator writes to) needs a name to use,
+// and EnsureClusterUp errors out when cfg.KindClusterName is empty.
+//
+// The DNS-1123 validator is the same one the rest of yage applies
+// to kubernetes-style names (see prompts.go). When the operator
+// already passed --kind-cluster-name or KIND_CLUSTER_NAME, we still
+// echo the value back so they can confirm or change it.
+func (s *state) stepKindClusterName() error {
+	s.r.section("kind management cluster")
+	cur := s.cfg.KindClusterName
+	if cur == "" {
+		cur = "yage-mgmt"
+	}
+	s.cfg.KindClusterName = s.r.promptDNSLabel("kind cluster name", cur)
+	return nil
 }
 
 // step0_modePick auto-detects the fork from cfg + env (§22.1) and,
@@ -104,8 +125,8 @@ func (s *state) step1_environment() error {
 	s.env = envTier(pick)
 	// Stamp the on/off toggles the existing cfg already exposes —
 	// these are read by add-ons rendering, dry-run plan, and the
-	// orchestrator preflight. We don't touch monitoring here (no
-	// dedicated bool yet); §17 Phase E adds it.
+	// orchestrator preflight. Monitoring stays untouched here (no
+	// dedicated bool yet).
 	switch s.env {
 	case envDev:
 		s.cfg.ArgoCDEnabled = false
@@ -170,9 +191,9 @@ func (s *state) step3_workloadShape() error {
 	s.workload.HasQueue = s.r.promptYesNo("add-on: message queue?", s.workload.HasQueue)
 	s.workload.HasObjStore = s.r.promptYesNo("add-on: object storage?", s.workload.HasObjStore)
 	s.workload.HasCache = s.r.promptYesNo("add-on: in-memory cache?", s.workload.HasCache)
-	// Stamp worker count from the workload size so existing
-	// orchestrator code paths see a sensible number even before
-	// Track α's feasibility-derived sizing lands.
+	// Stamp worker count from the workload size so orchestrator
+	// code paths see a sensible number while feasibility-derived
+	// sizing matures.
 	totalApps := 0
 	for _, b := range s.workload.Apps {
 		totalApps += b.Count
@@ -185,7 +206,66 @@ func (s *state) step3_workloadShape() error {
 		}
 		s.cfg.WorkerMachineCount = strconv.Itoa(w)
 	}
+	// §23 feasibility + cost paths read cfg.Workload — keep it in
+	// sync with the walkthrough-local s.workload.
+	syncWorkloadShapeToCfg(s.cfg, s.workload, s.resil, s.env, s.fork)
 	return nil
+}
+
+// syncWorkloadShapeToCfg copies xapiri's step-3 answers onto
+// cfg.Workload so feasibility.Check and any cost estimator that keys
+// off the stated product shape see the same numbers the user typed.
+func syncWorkloadShapeToCfg(cfg *config.Config, w workloadShape, resil resilienceTier, env envTier, fork forkType) {
+	if cfg == nil {
+		return
+	}
+	apps := make([]config.AppGroup, 0, len(w.Apps))
+	for _, b := range w.Apps {
+		if b.Count <= 0 {
+			continue
+		}
+		tpl := strings.ToLower(strings.TrimSpace(b.Template))
+		if tpl != "light" && tpl != "medium" && tpl != "heavy" {
+			continue
+		}
+		apps = append(apps, config.AppGroup{Count: b.Count, Template: tpl})
+	}
+	var res string
+	switch resil {
+	case resilienceHA:
+		res = "ha"
+	case resilienceHAMulti:
+		res = "ha-mr"
+	default:
+		res = "single"
+	}
+	var envStr string
+	switch env {
+	case envStaging:
+		envStr = "staging"
+	case envProd:
+		envStr = "prod"
+	default:
+		envStr = "dev"
+	}
+	egress := w.EgressGBMo
+	if fork == forkOnPrem {
+		// On-prem fork never prompts egress; feasibility's §23.6
+		// sandbag only applies to the cloud cost-compare path — use
+		// the same lazy default as the cloud prompt so Check() doesn't
+		// attach a spurious "egress unset" block when a later CLI run
+		// sets BudgetUSDMonth on the same cfg.
+		if egress <= 0 && w.DBGB > 0 {
+			egress = w.DBGB * 2
+		}
+	}
+	cfg.Workload = config.WorkloadShape{
+		Apps:          apps,
+		DatabaseGB:    w.DBGB,
+		EgressGBMonth: egress,
+		Resilience:    res,
+		Environment:   envStr,
+	}
 }
 
 // promptAppBuckets reads space-separated `count×template` pairs
@@ -290,6 +370,12 @@ func (s *state) step6_providerDetails() error {
 		return nil
 	}
 	s.r.section(fmt.Sprintf("%s settings", name))
+	s.ensureGeoLookup()
+	if s.geoOK && geoHasCentroids(name) {
+		if ranked := geoRankedRegions(name, s.geoLat, s.geoLon, 8); len(ranked) > 0 {
+			s.r.info("nearest %s zones (great-circle): %s", name, strings.Join(ranked, ", "))
+		}
+	}
 	t := sub.Type()
 	any := false
 	for i := 0; i < t.NumField(); i++ {
@@ -300,6 +386,13 @@ func (s *state) step6_providerDetails() error {
 		if isInternalBookkeeping(f.Name) {
 			continue
 		}
+		if isOverheadField(f.Name) {
+			// Already priced into the compare row using a default.
+			// Re-prompting would let the user enter a number that
+			// silently disagrees with the headline they just saw.
+			// Settable via --<provider>-<flag> when needed.
+			continue
+		}
 		cur := sub.Field(i).String()
 		if cur != "" {
 			// Already filled — skip (per §22.4 spec). Re-running
@@ -308,11 +401,15 @@ func (s *state) step6_providerDetails() error {
 			continue
 		}
 		any = true
+		hint := geoBracketDefault(name, f.Name, s.geoLat, s.geoLon, s.geoOK)
+		if hint == "" {
+			hint = cur
+		}
 		var ans string
 		if isSensitiveFieldName(f.Name) {
 			ans = s.r.promptSecret(f.Name, cur)
 		} else {
-			ans = s.r.promptString(f.Name, cur)
+			ans = s.r.promptString(f.Name, hint)
 		}
 		if sub.Field(i).CanSet() {
 			sub.Field(i).SetString(ans)
@@ -365,7 +462,7 @@ func (s *state) step7_review() error {
 		verdict, ferr = runFeasibilityCheck(s.cfg)
 	}
 	if verdict == FeasibilityUnchecked {
-		pw.Skip("feasibility gate not wired (Track α pending) — proceed at own risk.")
+		pw.Skip("feasibility gate not wired — proceed at own risk.")
 	} else if ferr != nil {
 		pw.Bullet("%s %s — %v", verdict.symbol(), verdict, ferr)
 		s.r.info("feasibility refuses this shape — go back to step 3 (workload) and shrink, or step 4 (budget/provider) and grow.")
@@ -414,10 +511,12 @@ func (s *state) renderTCOLine(pw plan.Writer) {
 	}
 	elec := c.HardwareWatts / 1000.0 * c.HardwareKWHRateUSD * 720
 	total := amort + elec + c.HardwareSupportUSDMonth
-	pw.Bullet("amortization:   $%.2f/mo", amort)
-	pw.Bullet("electricity:    $%.2f/mo (%.0fW × $%.3f/kWh × 720h)", elec, c.HardwareWatts, c.HardwareKWHRateUSD)
-	pw.Bullet("support:        $%.2f/mo", c.HardwareSupportUSDMonth)
-	pw.Bullet("derived total:  $%.2f/mo", total)
+	pw.Bullet("amortization:   %s/mo", pricing.FormatTaller(amort, "USD"))
+	pw.Bullet("electricity:    %s/mo (%.0fW × %s/kWh × 720h)",
+		pricing.FormatTaller(elec, "USD"), c.HardwareWatts,
+		pricing.FormatTaller(c.HardwareKWHRateUSD, "USD"))
+	pw.Bullet("support:        %s/mo", pricing.FormatTaller(c.HardwareSupportUSDMonth, "USD"))
+	pw.Bullet("derived total:  %s/mo", pricing.FormatTaller(total, "USD"))
 }
 
 // renderCloudCostLine pulls the chosen provider's row out of
@@ -426,7 +525,7 @@ func (s *state) renderTCOLine(pw plan.Writer) {
 // vendor API was unreachable.
 func (s *state) renderCloudCostLine(pw plan.Writer) {
 	pw.Section("Monthly bill (cloud)")
-	rows := compareCloudsForReview(s.cfg)
+	rows := compareCloudsForReview(s.cfg, nil)
 	for _, r := range rows {
 		if r.ProviderName != s.cfg.InfraProvider {
 			continue
@@ -435,10 +534,13 @@ func (s *state) renderCloudCostLine(pw plan.Writer) {
 			pw.Skip("%s estimate unavailable: %v", r.ProviderName, r.Err)
 			return
 		}
-		pw.Bullet("%s estimate: $%.2f/mo", r.ProviderName, r.Estimate.TotalUSDMonthly)
+		pw.Bullet("%s estimate: %s/mo",
+			r.ProviderName, pricing.FormatTaller(r.Estimate.TotalUSDMonthly, "USD"))
 		if s.budgetUSDMonth > 0 {
-			pw.Bullet("budget:         $%.2f/mo (after %.0f%% headroom: $%.2f)",
-				s.budgetUSDMonth, s.headroomPct*100, s.budgetAfterHeadroom)
+			pw.Bullet("budget:         %s/mo (after %.0f%% headroom: %s)",
+				pricing.FormatTaller(s.budgetUSDMonth, "USD"),
+				s.headroomPct*100,
+				pricing.FormatTaller(s.budgetAfterHeadroom, "USD"))
 		}
 		if r.Estimate.Note != "" {
 			pw.Bullet("note:           %s", r.Estimate.Note)
@@ -448,10 +550,11 @@ func (s *state) renderCloudCostLine(pw plan.Writer) {
 	pw.Skip("provider %s missing from cost-compare; estimate unavailable.", s.cfg.InfraProvider)
 }
 
-// step8_persistAndDecide always writes the bootstrap-config Secret
-// (or local fallback when the kind cluster isn't up yet — see
-// persist.go) and asks "deploy now?" Yes flips s.deployNow; no
-// exits quietly. Either way Run() returns 0.
+// step8_persistAndDecide writes the bootstrap-config Secret to the
+// kind cluster (or, with YAGE_XAPIRI_DISK_FALLBACK=1, to disk),
+// echoes the equivalent `yage <flags>` invocation so the operator
+// can capture it for pipelines / cost reports, and asks "deploy
+// now?" Yes flips s.deployNow; no exits quietly.
 func (s *state) step8_persistAndDecide() error {
 	s.r.section("persist + decide")
 	dest, err := persistConfig(s.w, s.cfg)
@@ -460,6 +563,20 @@ func (s *state) step8_persistAndDecide() error {
 		return err
 	}
 	s.r.info("written to %s", dest)
+
+	// Echo the equivalent CLI. Sensitive values render as $ENV refs
+	// so the output is safe to paste into a pipeline definition or
+	// runbook. `yage --print-command` reproduces this output later.
+	fmt.Fprintln(s.w)
+	fmt.Fprintln(s.w, "  to reproduce this configuration without the wizard:")
+	fmt.Fprintln(s.w)
+	for _, ln := range strings.Split(cli.RenderCommand(s.cfg, cli.SensitiveAsEnv), "\n") {
+		fmt.Fprintln(s.w, "    "+ln)
+	}
+	fmt.Fprintln(s.w)
+	fmt.Fprintln(s.w, "  (also retrievable any time via: yage --print-command)")
+	fmt.Fprintln(s.w)
+
 	s.deployNow = s.r.promptYesNo("deploy now?", false)
 	if !s.deployNow {
 		s.r.info("nothing deployed; the next non-xapiri yage run will pick the saved config up.")

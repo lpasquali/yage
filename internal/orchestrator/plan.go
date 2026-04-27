@@ -51,10 +51,10 @@ func PrintPlanTo(w io.Writer, cfg *config.Config) {
 	fmt.Fprintln(w, hr)
 
 	// Provider-specific Describe* sections live behind the Provider
-	// interface (Phase B / §8). Resolve once; if the provider is
-	// unknown or refused (airgapped + cloud), the three hooks below
-	// become no-op Skip lines. Cross-cutting sections (capacity,
-	// cost, allocations, retention) stay in the orchestrator.
+	// interface. Resolve once; if the provider is unknown or refused
+	// (airgapped + cloud), the three hooks below become no-op Skip
+	// lines. Cross-cutting sections (capacity, cost, allocations,
+	// retention) stay in the orchestrator.
 	prov, perr := provider.For(cfg)
 
 	planStandalone(w, cfg)
@@ -133,7 +133,7 @@ func planPrePhase(w io.Writer, cfg *config.Config) {
 }
 
 func planPhase1(w io.Writer, cfg *config.Config) {
-	section(w, "Phase 1 — install host dependencies (CLIs for the operator)")
+	section(w, "Dependency install — host CLIs for the operator")
 	bullet(w, "system packages: git, curl, python3 (apt/dnf/yum/apk)")
 	bullet(w, "Docker: install if missing; upgrade unless --no-delete-kind or kind cluster exists")
 	for _, t := range []struct{ name, ver string }{
@@ -155,11 +155,9 @@ func planPhase1(w io.Writer, cfg *config.Config) {
 	}
 }
 
-// describeIdentity is the Phase B (§8) replacement for the
-// previous Proxmox-specific planPhase2Identity. The provider's
-// PlanDescriber.DescribeIdentity hook owns the bullets; if no
-// provider resolved (unknown name, airgapped + cloud), we surface
-// a Skip explaining why.
+// describeIdentity delegates to the provider's
+// PlanDescriber.DescribeIdentity hook. If no provider resolved
+// (unknown name, airgapped + cloud), surface a Skip explaining why.
 func describeIdentity(pw plan.Writer, cfg *config.Config, prov provider.Provider, perr error) {
 	if perr != nil {
 		pw.Section("Identity bootstrap")
@@ -170,7 +168,7 @@ func describeIdentity(pw plan.Writer, cfg *config.Config, prov provider.Provider
 }
 
 func planPhase2Clusterctl(w io.Writer, cfg *config.Config) {
-	section(w, "Phase 2.1 — clusterctl credentials")
+	section(w, "clusterctl credentials")
 	if cfg.ClusterctlCfg != "" {
 		bullet(w, "use explicit clusterctl config: %s", cfg.ClusterctlCfg)
 	} else {
@@ -179,7 +177,7 @@ func planPhase2Clusterctl(w io.Writer, cfg *config.Config) {
 }
 
 func planPhase2Kind(w io.Writer, cfg *config.Config) {
-	section(w, "Phase 2.4 — kind cluster")
+	section(w, "kind cluster")
 	want := "kind-" + cfg.KindClusterName
 	if k8sclient.ContextExists(want) {
 		if cfg.Force && !cfg.NoDeleteKind {
@@ -193,15 +191,14 @@ func planPhase2Kind(w io.Writer, cfg *config.Config) {
 }
 
 func planPhase2CAPI(w io.Writer, cfg *config.Config) {
-	section(w, "Phase 2.8 — clusterctl init on kind")
+	section(w, "clusterctl init on kind")
 	bullet(w, "providers: infrastructure=%s, ipam=%s, addon=helm", cfg.InfraProvider, cfg.IPAMProvider)
 	bullet(w, "CAPMOX image: %s (build arm64 if needed)", firstNonEmptyStr(cfg.CAPMOXVersion, "<resolve from CAPMOX_REPO>"))
 }
 
 // describeWorkload delegates to the provider's
-// PlanDescriber.DescribeWorkload hook (Phase B / §8). Provider-
-// agnostic; per-cloud bullet text lives in
-// internal/provider/<name>/plan.go.
+// PlanDescriber.DescribeWorkload hook. Provider-agnostic; per-cloud
+// bullet text lives in internal/provider/<name>/plan.go.
 func describeWorkload(pw plan.Writer, cfg *config.Config, prov provider.Provider, perr error) {
 	if perr != nil {
 		pw.Section("Workload Cluster")
@@ -212,9 +209,9 @@ func describeWorkload(pw plan.Writer, cfg *config.Config, prov provider.Provider
 }
 
 // describePivot delegates to the provider's
-// PlanDescriber.DescribePivot hook (Phase B / §8). When pivot isn't
-// applicable the provider emits a Skip; the orchestrator no longer
-// hardcodes Proxmox-specific pivot bullets.
+// PlanDescriber.DescribePivot hook. When pivot is not applicable
+// the provider emits a Skip; the orchestrator does not hardcode
+// Proxmox-specific pivot bullets.
 func describePivot(pw plan.Writer, cfg *config.Config, prov provider.Provider, perr error) {
 	if perr != nil {
 		pw.Section("Pivot to managed mgmt cluster")
@@ -225,7 +222,7 @@ func describePivot(pw plan.Writer, cfg *config.Config, prov provider.Provider, p
 }
 
 func planPhase210ArgoCD(w io.Writer, cfg *config.Config) {
-	section(w, "Phase 2.10 — Argo CD on workload")
+	section(w, "Argo CD on workload")
 	if !cfg.ArgoCDEnabled {
 		skip(w, "ARGOCD_ENABLED=false (--disable-argocd)")
 		return
@@ -257,11 +254,6 @@ func planFinal(w io.Writer, cfg *config.Config) {
 // available host capacity. The active provider's Inventory drives
 // the live-host side; providers that return ErrNotApplicable
 // (per §13.4 #1: AWS/Azure/GCP/Hetzner/vSphere) skip the section.
-//
-// Phase A.5: capacity acquisition went through provider.Inventory
-// instead of the direct capacity.FetchHostCapacity +
-// capacity.FetchExistingUsage pair. Same math, same verdict — only
-// the plumbing moved.
 func planCapacity(w io.Writer, cfg *config.Config) {
 	section(w, "Capacity budget")
 	plan := capacity.PlanFor(cfg)

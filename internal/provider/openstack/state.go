@@ -3,23 +3,23 @@
 
 package openstack
 
-// Phase D state-handoff hooks for OpenStack.
+// State-handoff hooks for OpenStack.
 //
 // See docs/abstraction-plan.md §11 + §14.D + §13's OpenStack
 // validation report. OpenStack is one of the two flat-quota clouds
-// alongside Proxmox (per §13's per-provider fit summary), so it's
-// also a candidate for a future real Inventory implementation.
+// alongside Proxmox (per §13's per-provider fit summary), so it is
+// a candidate for a real Inventory implementation.
 
 import (
 	"github.com/lpasquali/yage/internal/config"
 )
 
-// KindSyncFields persists OpenStack runtime config landed on cfg in
-// commit f6ca113. clouds.yaml content (OS_AUTH_URL, project name,
-// app credentials) flows from env / operator-supplied file and
-// stays out of the kind Secret; the named-cloud / project / region /
-// flavor / image / failure-domain / SSH-key fields here are
-// non-secret runtime config the next yage run needs.
+// KindSyncFields persists OpenStack runtime config from cfg.
+// clouds.yaml content (OS_AUTH_URL, project name, app credentials)
+// flows from env / operator-supplied file and stays out of the
+// kind Secret; the named-cloud / project / region / flavor / image
+// / failure-domain / SSH-key fields here are non-secret runtime
+// config the next yage run needs.
 func (p *Provider) KindSyncFields(cfg *config.Config) map[string]string {
 	out := map[string]string{}
 	add := func(k, v string) {

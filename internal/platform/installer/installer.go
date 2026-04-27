@@ -277,11 +277,11 @@ func SystemDependencies() error {
 	return nil
 }
 
-// Helm installs the helm CLI for end-user interaction with the deployed
-// CAPI infrastructure. The bootstrap itself drives Helm via
-// `helm.sh/helm/v3` in-process; this binary is shipped for users so they
-// can `helm list` / `helm install` against their workload cluster after
-// orchestrator. Mirrors ensure_helm_present (bash L5851-L5857) — fetches the
+// Helm installs the helm CLI for end-user interaction with the
+// deployed CAPI infrastructure. The bootstrap itself drives Helm
+// via `helm.sh/helm/v3` in-process; this binary is shipped for
+// users so they can `helm list` / `helm install` against their
+// workload cluster after the orchestrator finishes. Fetches the
 // upstream get-helm-3 script and runs it under the privilege helper.
 func Helm() error {
 	if shell.CommandExists("helm") {
@@ -301,9 +301,9 @@ func Helm() error {
 	return nil
 }
 
-// Docker installs Docker Engine when it is not already on PATH. Ports
-// bash L8020-L8034 (curl get.docker.com, optional usermod, systemctl
-// enable --now docker).
+// Docker installs Docker Engine when it is not already on PATH
+// (curl get.docker.com, optional usermod, systemctl enable --now
+// docker).
 func Docker() {
 	if shell.CommandExists("docker") {
 		v, _, _ := shell.Capture("docker", "--version")
@@ -332,9 +332,9 @@ func Docker() {
 	logx.Log("Docker installed successfully.")
 }
 
-// UpgradeDocker upgrades docker-ce / docker-ce-cli / containerd.io via
-// the host package manager. Ports bash L8098-L8109. Best-effort: unknown
-// package managers are warned about and skipped.
+// UpgradeDocker upgrades docker-ce / docker-ce-cli / containerd.io
+// via the host package manager. Best-effort: unknown package
+// managers are warned about and skipped.
 func UpgradeDocker() {
 	switch {
 	case shell.CommandExists("apt-get"):

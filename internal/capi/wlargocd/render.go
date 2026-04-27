@@ -1,18 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package wlargocd ports the workload Argo CD Application YAML
-// renderers. Each renderer emits a complete `---`-prefixed Application
-// document the orchestrator will concatenate into one kubectl-apply
+// Package wlargocd renders workload Argo CD Application YAML.
+// Each renderer emits a complete `---`-prefixed Application
+// document the orchestrator concatenates into one kubectl-apply
 // stream.
-//
-// Bash source map (the original bash port):
-//   - _wl_argocd_render_helm_git           ~L6229-6318
-//   - _kyverno_argocd_values_toleration_fragment ~L6321-6333
-//   - _wl_argocd_render_kyverno            ~L6344-6468
-//   - _wl_argocd_render_helm               ~L6471-6556
-//   - _wl_argocd_render_helm_oci           ~L6559-6646
-//   - _wl_argocd_render_kustomize_git      ~L6649-6736
 package wlargocd
 
 import (

@@ -45,9 +45,10 @@ const (
 	capmoxLiveSecretName = "capmox-manager-credentials"
 )
 
-// handoffTarget describes one Secret to copy from kind → mgmt. Namespace
-// is resolved at call-time so an empty config field (e.g. legacy
-// Providers.Proxmox.BootstrapSecretName) is treated as "no such Secret to copy".
+// handoffTarget describes one Secret to copy from kind → mgmt.
+// Namespace is resolved at call-time so an empty config field
+// (e.g. an unset Providers.Proxmox.BootstrapSecretName) is
+// treated as "no such Secret to copy".
 type handoffTarget struct {
 	Namespace string
 	Name      string
@@ -55,9 +56,10 @@ type handoffTarget struct {
 	Description string
 }
 
-// expectedHandoffTargets returns the list of Secrets we attempt to hand off,
-// in deterministic order. Empty Name entries are filtered by the caller —
-// e.g. the legacy single-Secret name is empty in the default split layout.
+// expectedHandoffTargets returns the list of Secrets to attempt
+// to hand off, in deterministic order. Empty Name entries are
+// filtered by the caller — for example, the single-Secret name is
+// empty in the default split layout.
 func expectedHandoffTargets(cfg *config.Config) []handoffTarget {
 	ns := cfg.Providers.Proxmox.BootstrapSecretNamespace
 	return []handoffTarget{
@@ -65,7 +67,7 @@ func expectedHandoffTargets(cfg *config.Config) []handoffTarget {
 		{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapCAPMOXSecretName, Description: "CAPI / clusterctl credentials"},
 		{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapCSISecretName, Description: "CSI credentials"},
 		{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapAdminSecretName, Description: "admin token YAML"},
-		{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapSecretName, Description: "legacy single-Secret credentials"},
+		{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapSecretName, Description: "single-Secret credentials"},
 		{Namespace: capmoxLiveNamespace, Name: capmoxLiveSecretName, Description: "live capmox-controller credentials"},
 	}
 }
@@ -79,7 +81,7 @@ func expectedHandoffTargets(cfg *config.Config) []handoffTarget {
 //   - <Providers.Proxmox.BootstrapCAPMOXSecretName>          (CAPI clusterctl creds)
 //   - <Providers.Proxmox.BootstrapCSISecretName>             (CSI creds)
 //   - <Providers.Proxmox.BootstrapAdminSecretName>           (admin token YAML)
-//   - <Providers.Proxmox.BootstrapSecretName>                (legacy single-Secret form)
+//   - <Providers.Proxmox.BootstrapSecretName>                (single-Secret form)
 //   - capmox-system/capmox-manager-credentials    (the live capmox copy)
 //
 // Both kindCtx and mgmtKubeconfig identify the source / destination. The

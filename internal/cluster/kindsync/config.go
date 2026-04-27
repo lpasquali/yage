@@ -44,17 +44,17 @@ func configYAMLHeader(cfg *config.Config) string {
 	)
 }
 
-// MergeProxmoxBootstrapSecretsFromKind ports
-// merge_proxmox_bootstrap_secrets_from_kind. Overlays from (in order):
+// MergeProxmoxBootstrapSecretsFromKind overlays kind Secret state
+// onto cfg in order:
 //
 //  1. the config.yaml Secret — snapshot keys subject to *_EXPLICIT
 //     guards, other keys fill-if-empty.
-//  2. the CAPI/CSI credentials Secret(s): legacy single Secret when
+//  2. the CAPI/CSI credentials Secret(s): single Secret when
 //     PROXMOX_BOOTSTRAP_SECRET_NAME is set, otherwise split
-//     CAPMOX + CSI Secrets, with a fallback to the old
+//     CAPMOX + CSI Secrets, with a fallback to the
 //     "proxmox-bootstrap-credentials" name.
 //  3. the admin Secret (proxmox-admin.yaml data key) when distinct
-//     from the legacy credentials Secret.
+//     from the credentials Secret.
 //  4. capmox-system/capmox-manager-credentials — last-chance fallback
 //     for PROXMOX_URL/TOKEN/SECRET.
 //
@@ -88,7 +88,7 @@ func MergeProxmoxBootstrapSecretsFromKind(cfg *config.Config) {
 	}
 	if legacyJSON != "" {
 		if fillFromCredsJSON(cfg, legacyJSON, true) {
-			logx.Log("Filled unset values from cluster API secrets on %s (legacy or migration combined Secret).", ctx)
+			logx.Log("Filled unset values from cluster API secrets on %s (combined Secret).", ctx)
 			cfg.Providers.Proxmox.BootstrapKindSecretUsed = true
 		}
 	}
@@ -107,7 +107,7 @@ func MergeProxmoxBootstrapSecretsFromKind(cfg *config.Config) {
 		}
 	}
 
-	// --- 3. admin Secret (skip when same as legacy or same name already merged) ---
+	// --- 3. admin Secret (skip when same as the credentials Secret already merged) ---
 	if cfg.Providers.Proxmox.BootstrapAdminSecretName != "" &&
 		(cfg.Providers.Proxmox.BootstrapSecretName == "" ||
 			cfg.Providers.Proxmox.BootstrapAdminSecretName != cfg.Providers.Proxmox.BootstrapSecretName) {
@@ -128,15 +128,15 @@ func MergeProxmoxBootstrapSecretsFromKind(cfg *config.Config) {
 		}
 	}
 
-	// Bash tail: reapply_workload_git_defaults + sync CAPI controller
+	// Tail: reapply workload-git defaults + sync CAPI controller
 	// image refs to the (possibly merged) ClusterctlVersion.
 	cfg.ReapplyWorkloadGitDefaults()
 	cfg.SyncCAPIControllerImagesToClusterctlVersion()
 }
 
 // applyConfigYAML fetches the bootstrap-config Secret, parses the
-// `config.yaml` (or legacy `config.json`) body into a flat map, applies
-// legacy-key migrations, then overlays via Config.ApplySnapshotKV.
+// `config.yaml` (or `config.json`) body into a flat map, applies
+// key migrations, then overlays via Config.ApplySnapshotKV.
 // Returns true when something was applied.
 func applyConfigYAML(cfg *config.Config, ctx string) bool {
 	raw := getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapConfigSecretName)
@@ -156,8 +156,10 @@ func applyConfigYAML(cfg *config.Config, ctx string) bool {
 	return true
 }
 
-// migrateLegacyKeys mirrors the bash `_legacy_to_worker` fold and the
-// TEMPLATE_VMID → PROXMOX_TEMPLATE_ID carry-forward. Modifies kv in place.
+// migrateLegacyKeys folds older worker keys (BOOT_VOLUME_*, NUM_*,
+// MEMORY_MIB) into their WORKER_* equivalents and applies the
+// TEMPLATE_VMID → PROXMOX_TEMPLATE_ID carry-forward. Modifies kv
+// in place.
 func migrateLegacyKeys(kv map[string]string) {
 	pairs := []struct{ old, new string }{
 		{"BOOT_VOLUME_DEVICE", "WORKER_BOOT_VOLUME_DEVICE"},
@@ -179,18 +181,17 @@ func migrateLegacyKeys(kv map[string]string) {
 }
 
 // fillFromCredsJSON decodes a combined CAPI-ish Secret (url/token/secret
-// + any embedded proxmox-admin.yaml) and fills matching cfg fields that
-// are currently empty. The `capiAliases` switch controls which alias set
-// applies; we reuse the same list for both the legacy single-Secret and
-// the default-split CAPMOX Secret paths. Returns true when any field was
-// actually set.
+// + any embedded proxmox-admin.yaml) and fills matching cfg fields
+// that are currently empty. The same alias map covers both the
+// single-Secret and the default-split CAPMOX Secret paths. Returns
+// true when any field was actually set.
 func fillFromCredsJSON(cfg *config.Config, secJSON string, _ bool) bool {
 	data := decodeAllSecretData(secJSON)
 	if len(data) == 0 {
 		return false
 	}
-	// Merge embedded proxmox-admin.yaml lines into the top-level key map
-	// (match bash: ytxt.splitlines → cfg["k"] = v).
+	// Merge embedded proxmox-admin.yaml lines into the top-level
+	// key map.
 	ak := stringOrDefault(decodeSecretDataKey(secJSON, "proxmox-admin.yaml"), data["proxmox-admin.yaml"])
 	if ak != "" {
 		for k, v := range parseFlatYAMLOrJSON(ak) {
@@ -303,13 +304,11 @@ func fillFromCapmoxManagerJSON(cfg *config.Config, secJSON string) bool {
 }
 
 // fillEmptyFromMap dispatches to the active provider's
-// AbsorbConfigYAML method (Phase D / §11). Was a 30-case switch
-// over PROXMOX_* keys before the kindsync rewrite — that body
-// moved to internal/provider/proxmox/state.go where it belongs.
+// AbsorbConfigYAML method (§11).
 //
 // Per-provider absorber implementations populate empty cfg fields
-// from non-empty kv values; the orchestrator's caller (config.go,
-// creds-JSON, csi-JSON, admin-JSON envelope readers) hands the
+// from non-empty kv values; the orchestrator's callers (config.go,
+// creds-JSON, csi-JSON, admin-JSON envelope readers) hand the
 // merged map here regardless of which provider is active. Cost-
 // only providers inherit a no-op via MinStub.
 //
@@ -391,10 +390,9 @@ func TryLoadBootstrapConfigFromKind(cfg *config.Config) {
 
 // getSecretJSON returns a JSON serialisation of the named Secret on the
 // given context, or "" when the Secret is missing or the context cannot
-// be loaded. The serialisation matches what `kubectl get secret -o json`
-// produced previously: corev1.Secret.Data is a map[string][]byte, and
-// json.Marshal encodes []byte values as base64 strings — so existing
-// callers that base64-decode the .data[key] still see the same bytes.
+// be loaded. corev1.Secret.Data is a map[string][]byte, and
+// json.Marshal encodes []byte values as base64 strings — callers
+// that base64-decode .data[key] see the original bytes.
 func getSecretJSON(kctx, ns, name string) string {
 	if ns == "" || name == "" {
 		return ""
@@ -488,10 +486,10 @@ func decodeAllSecretData(secretJSON string) map[string]string {
 
 var flatKVLineRE = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$`)
 
-// parseFlatYAMLOrJSON accepts either a JSON object literal (legacy
-// config.json) or a flat YAML key:value body (config.yaml). Strips
-// `#` comments, honours a single pair of surrounding single- or
-// double-quotes on values. Matches bash `parse_bootstrap_map`.
+// parseFlatYAMLOrJSON accepts either a JSON object literal
+// (config.json) or a flat YAML key:value body (config.yaml).
+// Strips `#` comments, honours a single pair of surrounding single-
+// or double-quotes on values.
 func parseFlatYAMLOrJSON(text string) map[string]string {
 	trim := strings.TrimLeftFunc(text, func(r rune) bool {
 		return r == ' ' || r == '\t' || r == '\n' || r == '\r'

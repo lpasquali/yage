@@ -3,14 +3,12 @@
 
 package aws
 
-// AWS provider plan-output hooks (Phase B per §8/§14.B + §13's
-// AWS validation report).
+// AWS provider plan-output hooks.
 //
 // Minimum-bar implementation per §13.4: prints cluster shape +
-// sizing + skips for parts AWS doesn't do. Cost component breakdown
+// sizing + skips for parts AWS does not do. Cost component breakdown
 // (NAT GW count, ALB hourly, etc.) lives in the central Cost
-// section, not here. The AWS dry-run no longer prints Proxmox
-// phases — that was the bug §8 was designed to fix.
+// section, not here.
 
 import (
 	"github.com/lpasquali/yage/internal/config"

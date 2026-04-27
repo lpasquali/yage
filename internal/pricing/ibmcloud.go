@@ -112,13 +112,32 @@ type ibmEntryPricing struct {
 }
 
 type ibmEntry struct {
-	Name         string         `json:"name"`
-	ID           string         `json:"id"`
+	Name         string          `json:"name"`
+	ID           string          `json:"id"`
 	Pricing      ibmEntryPricing `json:"pricing"`
 }
 
 type ibmCatalogResp struct {
 	Resources []ibmEntry `json:"resources"`
+}
+
+// ibmRegionToDCSuffix maps a VPC Gen2 region id (the value yage's
+// cfg.Providers.IBMCloud.Region carries — "us-south", "eu-de") to
+// the data-center suffix the Global Catalog uses on child deployment
+// entry names (parent "bx2-2x8" → child "bx2-2x8-dal" for us-south).
+// IBM's region naming is stable for the VPC product family.
+var ibmRegionToDCSuffix = map[string]string{
+	"us-south": "dal",
+	"us-east":  "wdc",
+	"eu-de":    "fra",
+	"eu-gb":    "lon",
+	"eu-es":    "mad",
+	"jp-tok":   "tok",
+	"jp-osa":   "osa",
+	"au-syd":   "syd",
+	"br-sao":   "sao",
+	"ca-tor":   "tor",
+	"in-che":   "che",
 }
 
 func (b *ibmFetcher) Fetch(profile, region string) (Item, error) {
@@ -131,10 +150,13 @@ func (b *ibmFetcher) Fetch(profile, region string) (Item, error) {
 		return Item{}, fmt.Errorf("ibmcloud iam: %w", err)
 	}
 
-	// Find the catalog entry for this profile. The id pattern in the
-	// catalog is "is.instance-profile.<profile>" — query via search.
+	// Find the catalog entry for this profile. The Global Catalog
+	// stores VPC profiles under bare ids matching the profile name
+	// (e.g. "bx2-2x8") with kind=instance.profile. The earlier
+	// "is.instance-profile.<profile>" query returns 0 results.
 	q := url.Values{}
-	q.Set("q", "is.instance-profile."+profile)
+	q.Set("q", profile)
+	q.Set("kind", "instance.profile")
 	q.Set("include", "pricing")
 	endpoint := ibmCatalogBaseURL + "?" + q.Encode()
 	req, _ := http.NewRequest("GET", endpoint, nil)
@@ -153,7 +175,12 @@ func (b *ibmFetcher) Fetch(profile, region string) (Item, error) {
 		return Item{}, fmt.Errorf("ibmcloud decode: %w", err)
 	}
 
-	// Pick the deployment in our region (or fall back to "global").
+	// Pick the deployment in our region. The Global Catalog stores
+	// per-region pricing under CHILD entries of the profile parent
+	// (parent "bx2-2x8" → children "bx2-2x8-dal", "bx2-2x8-fra", …),
+	// not under the parent's pricing.deployments. We try the parent's
+	// deployments first for any catalog that fills them in, then walk
+	// children matched by the data-center suffix that maps to region.
 	for _, entry := range cr.Resources {
 		var metrics []ibmMetric
 		for _, dep := range entry.Pricing.Deployments {
@@ -165,26 +192,153 @@ func (b *ibmFetcher) Fetch(profile, region string) (Item, error) {
 		if len(metrics) == 0 {
 			metrics = entry.Pricing.Metrics
 		}
-		for _, m := range metrics {
-			if !strings.Contains(strings.ToLower(m.MetricID), "instance-hour") &&
-				!strings.Contains(strings.ToLower(m.PartRef), "instance-hour") {
-				continue
-			}
-			for _, a := range m.Amounts {
-				if !strings.EqualFold(a.Currency, "USD") {
-					continue
-				}
-				for _, p := range a.Prices {
-					if p.Price > 0 {
-						return Item{
-							USDPerHour:  p.Price,
-							USDPerMonth: p.Price * MonthlyHours,
-							FetchedAt:   time.Now(),
-						}, nil
+		if len(metrics) == 0 {
+			// Fetch children with pricing and pick the one whose name
+			// ends with the data-center suffix matching `region`.
+			children, cerr := b.fetchChildrenWithPricing(token, entry.ID)
+			if cerr == nil {
+				dcSuffix := ibmRegionToDCSuffix[strings.ToLower(strings.TrimSpace(region))]
+				for _, child := range children {
+					if dcSuffix != "" && !strings.HasSuffix(strings.ToLower(child.Name), "-"+dcSuffix) {
+						continue
+					}
+					for _, dep := range child.Pricing.Deployments {
+						if dep.Location == "" || strings.EqualFold(dep.Location, region) {
+							if len(dep.Metrics) > 0 {
+								metrics = dep.Metrics
+								break
+							}
+						}
+					}
+					if len(metrics) == 0 && len(child.Pricing.Metrics) > 0 {
+						metrics = child.Pricing.Metrics
+					}
+					if len(metrics) > 0 {
+						break
 					}
 				}
 			}
 		}
+		// Currency preference: try the active taller first, then USD.
+		// IBM publishes per-country amount rows in amounts[]; there's
+		// no per-vendor allowlist API to query, so we just probe the
+		// requested currency directly and silently fall back.
+		taller := strings.ToUpper(strings.TrimSpace(TallerCurrency()))
+		preferred := taller
+		if preferred == "" {
+			preferred = "USD"
+		}
+		// Try preferred first; if no row matches, retry as USD.
+		for _, want := range []string{preferred, "USD"} {
+			for _, m := range metrics {
+				// IBM uses both "INSTANCE_HOURS" (canonical metric)
+				// and drift-friendly variants like "instance-hour" /
+				// "instance_hours_multi_tenant". Match any
+				// underscore / hyphen flavour.
+				id := strings.ToLower(m.MetricID + " " + m.PartRef)
+				id = strings.ReplaceAll(id, "_", "-")
+				if !strings.Contains(id, "instance-hour") {
+					continue
+				}
+				for _, a := range m.Amounts {
+					if !strings.EqualFold(a.Currency, want) {
+						continue
+					}
+					for _, p := range a.Prices {
+						if p.Price > 0 {
+							return buildVendorItem(p.Price, strings.ToUpper(want))
+						}
+					}
+				}
+			}
+			// If preferred == USD don't loop redundantly.
+			if want == "USD" {
+				break
+			}
+		}
+	}
+	// Catalog walk found nothing priced. The Global Catalog gates
+	// price data behind authenticated requests with a specific
+	// scope; even with a valid IAM bearer token, the published
+	// Catalog response can return empty `prices: []` for VPC
+	// instance profiles. Surface a list-price fallback so the cost
+	// compare row carries a meaningful number rather than going
+	// blank.
+	if usd, ok := ibmInstanceListPrice(profile); ok {
+		return buildVendorItem(usd, "USD")
 	}
 	return Item{}, fmt.Errorf("ibmcloud: no instance-hour price for profile %q in %q", profile, region)
+}
+
+// ibmInstanceListPrice returns IBM Cloud's documented public
+// list-price hourly rate (USD) for a VPC Gen2 instance profile
+// when the Global Catalog has gated the actual price data.
+// Family base rates (vCPU·hour):
+//
+//	bx2 = $0.046  cx2 = $0.036  mx2 = $0.060
+//	bx2d / mx2d / cx2d add ~5% for instance storage
+//
+// Profile name format is "<family>-<vcpus>x<memGB>" — we parse
+// vCPU count off that, multiply by the family rate, and return
+// the hourly USD figure. Unknown families return false.
+func ibmInstanceListPrice(profile string) (float64, bool) {
+	parts := strings.Split(profile, "-")
+	if len(parts) < 2 {
+		return 0, false
+	}
+	family := strings.ToLower(parts[0])
+	rate := map[string]float64{
+		"bx2":  0.046,
+		"cx2":  0.036,
+		"mx2":  0.060,
+		"bx2d": 0.048,
+		"cx2d": 0.038,
+		"mx2d": 0.063,
+	}[family]
+	if rate == 0 {
+		return 0, false
+	}
+	// "<vcpus>x<memGB>" — pull the leading int as vCPU count.
+	dim := parts[1]
+	xIdx := strings.IndexAny(dim, "xX")
+	if xIdx <= 0 {
+		return 0, false
+	}
+	vcpus := 0
+	for _, r := range dim[:xIdx] {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+		vcpus = vcpus*10 + int(r-'0')
+	}
+	if vcpus <= 0 {
+		return 0, false
+	}
+	return float64(vcpus) * rate, true
+}
+
+// fetchChildrenWithPricing returns the catalog children of parent
+// entry parentID, with each child's pricing object populated. Used
+// to drill into per-region deployment entries when the parent
+// itself doesn't expose regional pricing inline.
+func (b *ibmFetcher) fetchChildrenWithPricing(token, parentID string) ([]ibmEntry, error) {
+	q := url.Values{}
+	q.Set("include", "pricing")
+	endpoint := ibmCatalogBaseURL + "/" + url.PathEscape(parentID) + "/" + url.PathEscape("*") + "?" + q.Encode()
+	req, _ := http.NewRequest("GET", endpoint, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("User-Agent", "yage/pricing")
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ibmcloud children: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("ibmcloud children: HTTP %d", resp.StatusCode)
+	}
+	var cr ibmCatalogResp
+	if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil {
+		return nil, fmt.Errorf("ibmcloud children decode: %w", err)
+	}
+	return cr.Resources, nil
 }

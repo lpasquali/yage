@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package csix ports Proxmox CSI config helpers: loading from the
-// local YAML, and pushing the config Secret into the workload cluster.
-//
-// Bash source map:
-//   - load_csi_vars_from_config                              ~L5822-5843
-//   - apply_proxmox_csi_config_secret_to_workload_cluster    ~L6096-6140
+// Package csi hosts Proxmox CSI config helpers: loading from the
+// local YAML, and pushing the config Secret into the workload
+// cluster.
 package csi
 
 import (
@@ -26,9 +23,10 @@ import (
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
-// LoadVarsFromConfig ports load_csi_vars_from_config. Fills empty
-// cfg.ProxmoxCSI{URL,TokenID,TokenSecret} and cfg.Providers.Proxmox.Region from the
-// on-disk PROXMOX_CSI_CONFIG YAML when that file exists.
+// LoadVarsFromConfig fills empty
+// cfg.ProxmoxCSI{URL,TokenID,TokenSecret} and
+// cfg.Providers.Proxmox.Region from the on-disk PROXMOX_CSI_CONFIG
+// YAML when that file exists.
 func LoadVarsFromConfig(cfg *config.Config) {
 	if cfg.Providers.Proxmox.CSIConfig == "" {
 		return
@@ -67,11 +65,10 @@ func LoadVarsFromConfig(cfg *config.Config) {
 	}
 }
 
-// ApplyConfigSecretToWorkload ports
-// apply_proxmox_csi_config_secret_to_workload_cluster
-// (L6096-L6140). Pushes a Secret named <cluster>-proxmox-csi-config into
-// cfg.Providers.Proxmox.CSINamespace on the workload, and mirrors the same content
-// under the short name proxmox-csi-config.
+// ApplyConfigSecretToWorkload pushes a Secret named
+// <cluster>-proxmox-csi-config into cfg.Providers.Proxmox.CSINamespace
+// on the workload, and mirrors the same content under the short
+// name proxmox-csi-config.
 func ApplyConfigSecretToWorkload(cfg *config.Config, writeWorkloadKubeconfig func() (string, error)) {
 	wk, err := writeWorkloadKubeconfig()
 	if err != nil || wk == "" {

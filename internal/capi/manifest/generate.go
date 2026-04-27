@@ -23,13 +23,11 @@ import (
 	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
 )
 
-// TryFillWorkloadInputsFromManagement ports
-// try_fill_workload_manifest_inputs_from_management_cluster
-// (the original bash port L5024-L5147). Best-effort fill from the management
-// cluster: pulls PROXMOX_TEMPLATE_ID / PROXMOX_NODE from existing
-// ProxmoxMachineTemplates, and network + DNS from the live
-// ProxmoxCluster when the workload is selected. Guards respect the
-// *_EXPLICIT flags so CLI-locked keys aren't overwritten.
+// TryFillWorkloadInputsFromManagement is a best-effort fill from
+// the management cluster: pulls PROXMOX_TEMPLATE_ID / PROXMOX_NODE
+// from existing ProxmoxMachineTemplates, and network + DNS from the
+// live ProxmoxCluster when the workload is selected. Guards respect
+// the *_EXPLICIT flags so CLI-locked keys are not overwritten.
 func TryFillWorkloadInputsFromManagement(cfg *config.Config) {
 	mctx := "kind-" + cfg.KindClusterName
 	if !k8sclient.ContextExists(mctx) {
@@ -54,8 +52,7 @@ func TryFillWorkloadInputsFromManagement(cfg *config.Config) {
 
 	pmtList, err := cli.Dynamic.Resource(pmtGVR).Namespace("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		// CRD missing or not yet installed — bail like bash did when
-		// `kubectl get crd proxmoxmachinetemplates...` failed.
+		// CRD missing or not yet installed — bail.
 		if apierrors.IsNotFound(err) || isNoMatchError(err) {
 			return
 		}
@@ -219,11 +216,10 @@ func unstructuredField(obj map[string]any, path ...string) (any, bool) {
 	return cur, true
 }
 
-// GenerateWorkloadManifestIfMissing ports generate_workload_manifest_if_missing
-// (L5149-L5268). Reuses an existing manifest unless stale or the file is
-// empty; otherwise runs `clusterctl generate cluster` with the
-// appropriate Proxmox env vars set, writes to cfg.CAPIManifest, then
-// runs ApplyRoleResourceOverrides.
+// GenerateWorkloadManifestIfMissing reuses an existing manifest
+// unless stale or the file is empty; otherwise runs `clusterctl
+// generate cluster` with the appropriate Proxmox env vars set,
+// writes to cfg.CAPIManifest, then runs ApplyRoleResourceOverrides.
 //
 // ensureClusterctlConfig is injected by the orchestrator — it's expected
 // to return the path to a clusterctl config YAML (the ephemeral one from
@@ -268,25 +264,37 @@ func GenerateWorkloadManifestIfMissing(
 		}
 	}
 
-	var missing []string
-	if cfg.Providers.Proxmox.URL == "" {
-		missing = append(missing, "PROXMOX_URL")
-	}
-	if cfg.Providers.Proxmox.Region == "" {
-		missing = append(missing, "PROXMOX_REGION")
-	}
-	if cfg.Providers.Proxmox.Node == "" {
-		missing = append(missing, "PROXMOX_NODE")
-	}
-	if cfg.Providers.Proxmox.TemplateID == "" {
-		missing = append(missing, "PROXMOX_TEMPLATE_ID")
-	}
-	if len(missing) > 0 {
-		logx.Warn("Missing workload manifest inputs: %s", strings.Join(missing, " "))
-		if cfg.BootstrapCAPIUseSecret {
-			logx.Die("Set them as command-line options or environment variables before generating the workload cluster manifest.")
+	switch cfg.InfraProvider {
+	case "aws":
+		if os.Getenv("AWS_ACCESS_KEY_ID") == "" || os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
+			logx.Die("Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY before generating the workload cluster manifest.")
 		}
-		logx.Die("Set them as command-line options or environment variables before generating %s.", cfg.CAPIManifest)
+		if cfg.Providers.AWS.SSHKeyName == "" {
+			logx.Die("Set AWS_SSH_KEY_NAME before generating an AWS workload manifest (required by the upstream CAPA cluster template).")
+		}
+	case "proxmox":
+		var missing []string
+		if cfg.Providers.Proxmox.URL == "" {
+			missing = append(missing, "PROXMOX_URL")
+		}
+		if cfg.Providers.Proxmox.Region == "" {
+			missing = append(missing, "PROXMOX_REGION")
+		}
+		if cfg.Providers.Proxmox.Node == "" {
+			missing = append(missing, "PROXMOX_NODE")
+		}
+		if cfg.Providers.Proxmox.TemplateID == "" {
+			missing = append(missing, "PROXMOX_TEMPLATE_ID")
+		}
+		if len(missing) > 0 {
+			logx.Warn("Missing workload manifest inputs: %s", strings.Join(missing, " "))
+			if cfg.BootstrapCAPIUseSecret {
+				logx.Die("Set them as command-line options or environment variables before generating the workload cluster manifest.")
+			}
+			logx.Die("Set them as command-line options or environment variables before generating %s.", cfg.CAPIManifest)
+		}
+	default:
+		logx.Die("automatic clusterctl generate cluster for --infrastructure %q is not implemented; use proxmox or supply a pre-rendered manifest (CAPI_MANIFEST / --capi-manifest).", cfg.InfraProvider)
 	}
 
 	if cfg.BootstrapCAPIUseSecret {
@@ -295,7 +303,7 @@ func GenerateWorkloadManifestIfMissing(
 		logx.Log("%s not found — generating workload cluster manifest with clusterctl...", cfg.CAPIManifest)
 	}
 
-	if cfg.Providers.Proxmox.CSIURL == "" {
+	if cfg.InfraProvider == "proxmox" && cfg.Providers.Proxmox.CSIURL == "" {
 		cfg.Providers.Proxmox.CSIURL = pveapi.APIJSONURL(cfg)
 	}
 
@@ -307,6 +315,9 @@ func GenerateWorkloadManifestIfMissing(
 	// K3s-only KThreesControlPlane / KThreesConfigTemplate documents
 	// (PatchKubeadmSkipKubeProxyForCilium is a no-op against them).
 	if cfg.BootstrapMode == "k3s" {
+		if cfg.InfraProvider != "proxmox" {
+			logx.Die("BOOTSTRAP_MODE=k3s is only supported with --infra-provider proxmox today.")
+		}
 		logx.Log("BOOTSTRAP_MODE=k3s — rendering embedded K3s manifest (no clusterctl generate; upstream CAPMOX ships no k3s flavor).")
 		if err := MaterializeK3sManifest(cfg, false, cfg.CAPIManifest); err != nil {
 			logx.Die("render K3s manifest: %v", err)
@@ -322,21 +333,12 @@ func GenerateWorkloadManifestIfMissing(
 	if ensureClusterctlConfig != nil {
 		ctlCfg = ensureClusterctlConfig()
 	}
-	if ctlCfg == "" || !fileExists(ctlCfg) {
-		logx.Die("clusterctl config is not available after bootstrap_sync_clusterctl_config_file (set PROXMOX_URL, PROXMOX_TOKEN, PROXMOX_SECRET, or CLUSTERCTL_CFG).")
-	}
-
-	bridge := cfg.Providers.Proxmox.Bridge
-	sourceNode := cfg.Providers.Proxmox.SourceNode
-	if sourceNode == "" {
-		sourceNode = cfg.Providers.Proxmox.Node
-	}
-	sshKeys := cfg.VMSSHKeys
-	if sshKeys == "" {
-		sshKeys = readAuthorizedKeys()
-		if sshKeys != "" {
-			logx.Log("Loading SSH keys from local ~/.ssh/authorized_keys (override with VM_SSH_KEYS or config.yaml)...")
+	if cfg.InfraProvider == "proxmox" {
+		if ctlCfg == "" || !fileExists(ctlCfg) {
+			logx.Die("clusterctl config is not available after bootstrap_sync_clusterctl_config_file (set PROXMOX_URL, PROXMOX_TOKEN, PROXMOX_SECRET, or CLUSTERCTL_CFG).")
 		}
+	} else if ctlCfg != "" && !fileExists(ctlCfg) {
+		logx.Die("clusterctl config file does not exist: %s", ctlCfg)
 	}
 
 	tmp, err := os.CreateTemp("", "capi-gen-*.yaml")
@@ -346,39 +348,91 @@ func GenerateWorkloadManifestIfMissing(
 	tmpPath := tmp.Name()
 	tmp.Close()
 
-	args := []string{
-		"generate", "cluster", cfg.WorkloadClusterName,
-		"--config", ctlCfg,
-		"--kubernetes-version", cfg.WorkloadKubernetesVersion,
-		"--control-plane-machine-count", cfg.ControlPlaneMachineCount,
-		"--worker-machine-count", cfg.WorkerMachineCount,
-		"--infrastructure", cfg.InfraProvider,
+	var cmd *exec.Cmd
+	switch cfg.InfraProvider {
+	case "proxmox":
+		bridge := cfg.Providers.Proxmox.Bridge
+		sourceNode := cfg.Providers.Proxmox.SourceNode
+		if sourceNode == "" {
+			sourceNode = cfg.Providers.Proxmox.Node
+		}
+		sshKeys := cfg.VMSSHKeys
+		if sshKeys == "" {
+			sshKeys = readAuthorizedKeys()
+			if sshKeys != "" {
+				logx.Log("Loading SSH keys from local ~/.ssh/authorized_keys (override with VM_SSH_KEYS or config.yaml)...")
+			}
+		}
+		args := []string{
+			"generate", "cluster", cfg.WorkloadClusterName,
+			"--config", ctlCfg,
+			"--kubernetes-version", cfg.WorkloadKubernetesVersion,
+			"--control-plane-machine-count", cfg.ControlPlaneMachineCount,
+			"--worker-machine-count", cfg.WorkerMachineCount,
+			"--infrastructure", cfg.InfraProvider,
+		}
+		cmd = exec.Command("clusterctl", args...)
+		cmd.Env = append(os.Environ(),
+			"PROXMOX_URL="+cfg.Providers.Proxmox.URL,
+			"PROXMOX_REGION="+cfg.Providers.Proxmox.Region,
+			"PROXMOX_NODE="+cfg.Providers.Proxmox.Node,
+			"PROXMOX_TEMPLATE_ID="+cfg.Providers.Proxmox.TemplateID,
+			"PROXMOX_POOL="+cfg.Providers.Proxmox.Pool,
+			"TEMPLATE_VMID="+cfg.Providers.Proxmox.TemplateID,
+			"BRIDGE="+bridge,
+			"PROXMOX_SOURCENODE="+sourceNode,
+			"VM_SSH_KEYS="+sshKeys,
+			"CONTROL_PLANE_ENDPOINT_IP="+cfg.ControlPlaneEndpointIP,
+			"NODE_IP_RANGES="+cfg.NodeIPRanges,
+			"GATEWAY="+cfg.Gateway,
+			"IP_PREFIX="+cfg.IPPrefix,
+			"DNS_SERVERS="+cfg.DNSServers,
+			"ALLOWED_NODES="+cfg.AllowedNodes,
+			"PROXMOX_CLOUDINIT_STORAGE="+cfg.Providers.Proxmox.CloudinitStorage,
+			"BOOT_VOLUME_DEVICE="+cfg.Providers.Proxmox.WorkerBootVolumeDevice,
+			"BOOT_VOLUME_SIZE="+cfg.Providers.Proxmox.WorkerBootVolumeSize,
+			"NUM_SOCKETS="+cfg.Providers.Proxmox.WorkerNumSockets,
+			"NUM_CORES="+cfg.Providers.Proxmox.WorkerNumCores,
+			"MEMORY_MIB="+cfg.Providers.Proxmox.WorkerMemoryMiB,
+		)
+	case "aws":
+		args := []string{
+			"generate", "cluster", cfg.WorkloadClusterName,
+		}
+		if ctlCfg != "" {
+			args = append(args, "--config", ctlCfg)
+		}
+		args = append(args,
+			"--kubernetes-version", cfg.WorkloadKubernetesVersion,
+			"--control-plane-machine-count", cfg.ControlPlaneMachineCount,
+			"--worker-machine-count", cfg.WorkerMachineCount,
+			"--infrastructure", "aws",
+		)
+		cmd = exec.Command("clusterctl", args...)
+		region := cfg.Providers.AWS.Region
+		if region == "" {
+			region = "us-east-1"
+		}
+		cpType := cfg.Providers.AWS.ControlPlaneMachineType
+		if cpType == "" {
+			cpType = "t3.large"
+		}
+		nodeType := cfg.Providers.AWS.NodeMachineType
+		if nodeType == "" {
+			nodeType = "t3.medium"
+		}
+		cmd.Env = append(os.Environ(),
+			"AWS_REGION="+region,
+			"AWS_CONTROL_PLANE_MACHINE_TYPE="+cpType,
+			"AWS_NODE_MACHINE_TYPE="+nodeType,
+			"AWS_SSH_KEY_NAME="+cfg.Providers.AWS.SSHKeyName,
+			"AWS_AMI_ID="+cfg.Providers.AWS.AMIID,
+			"EXP_CLUSTER_RESOURCE_SET=false",
+		)
+	default:
+		logx.Die("internal error: unhandled infrastructure %q in clusterctl generate path", cfg.InfraProvider)
 	}
-	// (K3s mode short-circuits above; reaching here means kubeadm.)
-	cmd := exec.Command("clusterctl", args...)
-	cmd.Env = append(os.Environ(),
-		"PROXMOX_URL="+cfg.Providers.Proxmox.URL,
-		"PROXMOX_REGION="+cfg.Providers.Proxmox.Region,
-		"PROXMOX_NODE="+cfg.Providers.Proxmox.Node,
-		"PROXMOX_TEMPLATE_ID="+cfg.Providers.Proxmox.TemplateID,
-		"PROXMOX_POOL="+cfg.Providers.Proxmox.Pool,
-		"TEMPLATE_VMID="+cfg.Providers.Proxmox.TemplateID,
-		"BRIDGE="+bridge,
-		"PROXMOX_SOURCENODE="+sourceNode,
-		"VM_SSH_KEYS="+sshKeys,
-		"CONTROL_PLANE_ENDPOINT_IP="+cfg.ControlPlaneEndpointIP,
-		"NODE_IP_RANGES="+cfg.NodeIPRanges,
-		"GATEWAY="+cfg.Gateway,
-		"IP_PREFIX="+cfg.IPPrefix,
-		"DNS_SERVERS="+cfg.DNSServers,
-		"ALLOWED_NODES="+cfg.AllowedNodes,
-		"PROXMOX_CLOUDINIT_STORAGE="+cfg.Providers.Proxmox.CloudinitStorage,
-		"BOOT_VOLUME_DEVICE="+cfg.Providers.Proxmox.WorkerBootVolumeDevice,
-		"BOOT_VOLUME_SIZE="+cfg.Providers.Proxmox.WorkerBootVolumeSize,
-		"NUM_SOCKETS="+cfg.Providers.Proxmox.WorkerNumSockets,
-		"NUM_CORES="+cfg.Providers.Proxmox.WorkerNumCores,
-		"MEMORY_MIB="+cfg.Providers.Proxmox.WorkerMemoryMiB,
-	)
+
 	out, err := os.Create(tmpPath)
 	if err != nil {
 		logx.Die("Cannot open tmp manifest: %v", err)
@@ -388,6 +442,9 @@ func GenerateWorkloadManifestIfMissing(
 	if runErr := cmd.Run(); runErr != nil {
 		out.Close()
 		os.Remove(tmpPath)
+		if cfg.InfraProvider == "aws" {
+			logx.Die("clusterctl generate cluster failed for AWS. Verify AWS_* template variables, SSH key, and credentials.")
+		}
 		logx.Die("clusterctl generate cluster failed. Verify required template variables in %s.", ctlCfg)
 	}
 	out.Close()
@@ -421,9 +478,9 @@ func GenerateWorkloadManifestIfMissing(
 	}
 }
 
-// DiscoverWorkloadClusterIdentity ports discover_workload_cluster_identity
-// (L5270-L5304). Reads the manifest, finds the (first) Cluster doc, and
-// sets cfg.WorkloadClusterName + cfg.WorkloadClusterNamespace.
+// DiscoverWorkloadClusterIdentity reads the manifest, finds the
+// (first) Cluster doc, and sets cfg.WorkloadClusterName +
+// cfg.WorkloadClusterNamespace.
 func DiscoverWorkloadClusterIdentity(cfg *config.Config, manifestPath string) {
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil || len(raw) == 0 {
@@ -452,10 +509,10 @@ func DiscoverWorkloadClusterIdentity(cfg *config.Config, manifestPath string) {
 	}
 }
 
-// EnsureWorkloadClusterLabel ports ensure_workload_cluster_label
-// (L5306-L5358). Adds `cluster.x-k8s.io/cluster-name: "<name>"` to the
-// first Cluster doc's metadata.labels (creating the labels block if
-// absent), writing the manifest back.
+// EnsureWorkloadClusterLabel adds
+// `cluster.x-k8s.io/cluster-name: "<name>"` to the first Cluster
+// doc's metadata.labels (creating the labels block if absent),
+// writing the manifest back.
 func EnsureWorkloadClusterLabel(cfg *config.Config, manifestPath, clusterName string) error {
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {

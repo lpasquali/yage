@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,10 +27,22 @@ import (
 // path surfaces "Hetzner estimate unavailable: HCLOUD_TOKEN
 // not set" rather than fabricate a number.
 //
-// USD conversion: env YAGE_EUR_USD overrides the
-// default rate; we don't pull live FX (out of scope) but the
-// rate is one knob, easy to override per-run.
+// EUR is Hetzner's "datacenter currency" — the same role USD plays
+// for AWS/Azure/GCP/etc. The fetcher fills Item.NativeAmount and
+// Item.NativeCurrency with the unmodified EUR figure, and converts
+// to USD via the standard FX path (pricing.toUSD) for the canonical
+// USDPerHour/USDPerMonth fields used by cross-vendor sort. There is
+// no hetzner-specific FX knob — open.er-api.com supplies the EUR
+// rate alongside every other currency.
 const hetznerServerTypesURL = "https://api.hetzner.cloud/v1/server_types"
+
+// hetznerDeprecatedServerTypes maps server type names removed from the
+// public catalog (Hetzner Cloud changelog 2025-10-16) to their
+// successors so existing configs and env vars keep pricing.
+var hetznerDeprecatedServerTypes = map[string]string{
+	"cx22": "cx23", "cx32": "cx33", "cx42": "cx43", "cx52": "cx53",
+	"cpx11": "cpx12", "cpx21": "cpx22", "cpx31": "cpx32", "cpx41": "cpx42", "cpx51": "cpx52",
+}
 
 // hetznerToken returns the Hetzner Cloud project token used for
 // pricing queries. Read order: cfg.Cost.Credentials (set by main
@@ -71,21 +84,16 @@ type hetznerListResp struct {
 	ServerTypes []hetznerServerType `json:"server_types"`
 }
 
-// eurToUSD returns the EUR→USD conversion rate. Read order:
-// cfg.Cost.Currency.EURUSDOverride (via pricing.SetCurrency) →
-// env-var fallback → hard-coded 1.08 default. See §16.
-func eurToUSD() float64 {
-	if prefs.EURUSDOverride != "" {
-		if f, err := strconv.ParseFloat(prefs.EURUSDOverride, 64); err == nil && f > 0 {
-			return f
-		}
+// nativeToUSDOrZero converts a hetzner native amount (EUR) to USD
+// via the standard FX path. On FX failure we return 0; callers
+// surface NativeAmount instead, and FormatTaller's USD-fallback
+// chain ensures the UI still renders something.
+func nativeToUSDOrZero(eurAmount float64) float64 {
+	usd, err := toUSD(eurAmount, "EUR")
+	if err != nil {
+		return 0
 	}
-	if v := os.Getenv("YAGE_EUR_USD"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
-			return f
-		}
-	}
-	return 1.08
+	return usd
 }
 
 func (h *hetznerFetcher) Fetch(sku, region string) (Item, error) {
@@ -111,33 +119,39 @@ func (h *hetznerFetcher) Fetch(sku, region string) (Item, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
 		return Item{}, fmt.Errorf("hetzner decode: %w", err)
 	}
-	for _, st := range list.ServerTypes {
-		if st.Name != sku {
-			continue
-		}
-		for _, p := range st.Prices {
-			if p.Location != region {
+	tryNames := []string{sku}
+	if alt, ok := hetznerDeprecatedServerTypes[strings.ToLower(strings.TrimSpace(sku))]; ok && alt != sku {
+		tryNames = append(tryNames, alt)
+	}
+	for _, name := range tryNames {
+		for _, st := range list.ServerTypes {
+			if st.Name != name {
 				continue
 			}
-			hourEUR, _ := strconv.ParseFloat(p.PriceHourly.Gross, 64)
-			monthEUR, _ := strconv.ParseFloat(p.PriceMonthly.Gross, 64)
-			rate := eurToUSD()
-			return Item{
-				USDPerHour:  hourEUR * rate,
-				USDPerMonth: monthEUR * rate,
-				FetchedAt:   time.Now(),
-			}, nil
+			for _, p := range st.Prices {
+				if p.Location != region {
+					continue
+				}
+				hourEUR, _ := strconv.ParseFloat(p.PriceHourly.Gross, 64)
+				monthEUR, _ := strconv.ParseFloat(p.PriceMonthly.Gross, 64)
+				return Item{
+					USDPerHour:     nativeToUSDOrZero(hourEUR),
+					USDPerMonth:    nativeToUSDOrZero(monthEUR),
+					NativeCurrency: "EUR",
+					NativeAmount:   monthEUR,
+					FetchedAt:      time.Now(),
+				}, nil
+			}
+			return Item{}, fmt.Errorf("hetzner: sku %q not priced in region %q", name, region)
 		}
-		return Item{}, fmt.Errorf("hetzner: sku %q not priced in region %q", sku, region)
 	}
 	return Item{}, fmt.Errorf("hetzner: unknown server_type %q", sku)
 }
 
 // HetznerVolumeUSDPerGBMonth fetches the per-GB-month price of
 // a Hetzner Cloud Volume. Hetzner publishes volume pricing on
-// a separate /pricing endpoint; we use the public one
-// (auth-free) and convert EUR → USD using the same rate as
-// server pricing.
+// a separate /pricing endpoint; we use the public one and
+// convert EUR → USD via the standard pricing.toUSD path.
 const hetznerPricingURL = "https://api.hetzner.cloud/v1/pricing"
 
 type hetznerVolumePrice struct {
@@ -199,7 +213,7 @@ func HetznerVolumeUSDPerGBMonth() (float64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("hetzner pricing: parse: %w", err)
 	}
-	return eur * eurToUSD(), nil
+	return toUSD(eur, "EUR")
 }
 
 // HetznerLoadBalancerUSDPerMonth fetches the live monthly cap for
@@ -230,7 +244,7 @@ func HetznerLoadBalancerUSDPerMonth(lbType string) (float64, error) {
 		if !found {
 			return 0, fmt.Errorf("hetzner LB %q: no priced location", lbType)
 		}
-		return bestEUR * eurToUSD(), nil
+		return toUSD(bestEUR, "EUR")
 	}
 	return 0, fmt.Errorf("hetzner LB %q: not in catalog", lbType)
 }
@@ -246,5 +260,5 @@ func HetznerFloatingIPUSDPerMonth() (float64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("hetzner pricing fip: parse: %w", err)
 	}
-	return eur * eurToUSD(), nil
+	return toUSD(eur, "EUR")
 }

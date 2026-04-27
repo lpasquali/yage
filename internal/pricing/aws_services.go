@@ -21,18 +21,38 @@ import (
 //
 //   AmazonEKS         — EKS control plane $/hour, region-specific
 //   AmazonECS         — Fargate $/vCPU-hour and $/GB-hour
-//   AmazonVPC         — NAT Gateway hourly + per-GB processed,
-//                       Internet egress $/GB
+//   AmazonEC2         — NAT Gateway hourly + per-GB processed (SKUs
+//                       moved here from AmazonVPC in the bulk catalog)
+//   AmazonVPC         — Internet egress $/GB (and legacy paths)
 //   AWSELB            — ALB / NLB hourly + LCU/NLCU $/hour
 //   AmazonCloudWatch  — CloudWatch Logs ingestion + storage $/GB
-//   AmazonRoute53     — Hosted zone $/month (priced under
-//                       region "aws-global" in the catalog)
+//   AmazonRoute53     — Hosted zone $/month (priced globally; the
+//                       hosted-zone SKUs live in the top-level
+//                       AmazonRoute53 bulk index with no region
+//                       segment in the URL)
 //
-// All helpers take the workload region as input. For services that
-// price globally (Route53), the helper hits the special
-// pricing.us-east-1.amazonaws.com /aws-global/ index.
+// All helpers take the workload region as input. Route53 is priced
+// globally — its helper ignores the input region and reads the
+// top-level (no-region) AmazonRoute53 offer file.
 
 const awsBulkServicesCacheTTL = 7 * 24 * time.Hour
+
+// awsBulkProductFamily returns the lowercased product family from
+// AWS Price List bulk JSON. Modern catalogs put productFamily on the
+// product object; older rows sometimes nested it under
+// attributes["productFamily"].
+func awsBulkProductFamily(p awsBulkProduct) string {
+	f := strings.TrimSpace(p.ProductFamily)
+	if f == "" {
+		f = p.Attributes["productFamily"]
+	}
+	return strings.ToLower(f)
+}
+
+func awsIsAWSRegionProduct(p awsBulkProduct) bool {
+	lt := strings.TrimSpace(p.Attributes["locationType"])
+	return lt == "" || lt == "AWS Region"
+}
 
 type awsServiceFetcher struct {
 	mu         sync.Mutex
@@ -44,20 +64,33 @@ var awsSvc = &awsServiceFetcher{httpClient: &http.Client{Timeout: 120 * time.Sec
 func awsBulkServiceCachePath(service, region string) string {
 	d := cacheDir()
 	_ = os.MkdirAll(d, 0o755)
-	return fmt.Sprintf("%s/aws-svc-%s-%s.json", d, service, region)
+	tag := region
+	if tag == "" {
+		tag = "global"
+	}
+	return fmt.Sprintf("%s/aws-svc-%s-%s.json", d, service, tag)
 }
 
 // downloadServiceBulk fetches and caches the raw JSON for one
 // (service, region) pair. service is the offer code (e.g.
 // "AmazonEKS", "AmazonVPC"). region is either an AWS region
-// short code or "aws-global" for catalogues priced globally.
+// short code, "aws-global" for catalogues priced globally, or
+// "" to read the top-level (no-region) offer file — used by
+// services like AmazonRoute53 whose SKUs live only in the
+// service's root index.
 func (a *awsServiceFetcher) downloadServiceBulk(service, region string) (string, error) {
 	cache := awsBulkServiceCachePath(service, region)
 	if st, err := os.Stat(cache); err == nil && time.Since(st.ModTime()) < awsBulkServicesCacheTTL {
 		return cache, nil
 	}
-	url := fmt.Sprintf("%s/offers/v1.0/aws/%s/current/%s/index.json",
-		awsPricingHost, service, region)
+	var url string
+	if region == "" {
+		url = fmt.Sprintf("%s/offers/v1.0/aws/%s/current/index.json",
+			awsPricingHost, service)
+	} else {
+		url = fmt.Sprintf("%s/offers/v1.0/aws/%s/current/%s/index.json",
+			awsPricingHost, service, region)
+	}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := a.httpClient.Do(req)
@@ -257,13 +290,16 @@ func AWSFargatePerHour(region string) (vcpuHour, gbHour float64, err error) {
 
 // AWSNATGatewayPricing — hourly + per-GB processed.
 func AWSNATGatewayPricing(region string) (hourly, gbProcessed float64, err error) {
-	pl, err := awsSvc.loadServiceBulk("AmazonVPC", region)
+	// NAT Gateway SKUs live under AmazonEC2 (NGW:NatGateway group) in
+	// current AWS Price List Bulk API JSON; AmazonVPC no longer lists them.
+	pl, err := awsSvc.loadServiceBulk("AmazonEC2", region)
 	if err != nil {
 		return 0, 0, err
 	}
 	for skuID, prod := range pl.Products {
 		ut := strings.ToLower(prod.Attributes["usagetype"])
-		if !strings.Contains(ut, "natgateway") {
+		grp := strings.ToLower(prod.Attributes["group"])
+		if !strings.Contains(ut, "natgateway") && !strings.Contains(grp, "ngw:natgateway") {
 			continue
 		}
 		pd, perr := onDemandPriceDim(pl, skuID)
@@ -298,13 +334,14 @@ func AWSApplicationLBPricing(region string) (hourly, lcuHour float64, err error)
 		return 0, 0, err
 	}
 	for skuID, prod := range pl.Products {
-		ut := strings.ToLower(prod.Attributes["usagetype"])
-		grp := strings.ToLower(prod.Attributes["group"])
-		// ALB hours: usagetype ends with "LoadBalancerUsage", productFamily "Load Balancer-Application"
-		fam := strings.ToLower(prod.Attributes["productFamily"])
-		if !strings.Contains(fam, "application") && !strings.Contains(grp, "application") {
+		if !awsIsAWSRegionProduct(prod) {
 			continue
 		}
+		op := strings.ToLower(prod.Attributes["operation"])
+		if !strings.Contains(op, "application") {
+			continue
+		}
+		ut := strings.ToLower(prod.Attributes["usagetype"])
 		pd, perr := onDemandPriceDim(pl, skuID)
 		if perr != nil {
 			continue
@@ -337,12 +374,14 @@ func AWSNetworkLBPricing(region string) (hourly, lcuHour float64, err error) {
 		return 0, 0, err
 	}
 	for skuID, prod := range pl.Products {
-		ut := strings.ToLower(prod.Attributes["usagetype"])
-		fam := strings.ToLower(prod.Attributes["productFamily"])
-		grp := strings.ToLower(prod.Attributes["group"])
-		if !strings.Contains(fam, "network") && !strings.Contains(grp, "network") {
+		if !awsIsAWSRegionProduct(prod) {
 			continue
 		}
+		op := strings.ToLower(prod.Attributes["operation"])
+		if !strings.Contains(op, "network") {
+			continue
+		}
+		ut := strings.ToLower(prod.Attributes["usagetype"])
 		pd, perr := onDemandPriceDim(pl, skuID)
 		if perr != nil {
 			continue
@@ -409,8 +448,14 @@ func AWSCloudWatchLogsPricing(region string) (ingest, storage float64, err error
 	}
 	for skuID, prod := range pl.Products {
 		ut := strings.ToLower(prod.Attributes["usagetype"])
-		fam := strings.ToLower(prod.Attributes["productFamily"])
-		if !strings.Contains(fam, "logs") && !strings.Contains(ut, "logs") {
+		fam := awsBulkProductFamily(prod)
+		// Modern catalogs price log ingest/storage under productFamily
+		// "Data Payload" with usagetype like USE1-VendedLog-Bytes
+		// (ingest) and USE1-VendedLogIA-Bytes (IA storage tier).
+		// Older rows used "Logs" / "ingestion" / "DataStored" tokens.
+		isLog := strings.Contains(fam, "log") || strings.Contains(ut, "log") ||
+			strings.Contains(ut, "vendedlog")
+		if !isLog {
 			continue
 		}
 		pd, perr := onDemandPriceDim(pl, skuID)
@@ -422,6 +467,14 @@ func AWSCloudWatchLogsPricing(region string) (ingest, storage float64, err error
 			continue
 		}
 		switch {
+		case strings.Contains(ut, "vendedlogia"):
+			if storage == 0 || usd < storage {
+				storage = usd
+			}
+		case strings.Contains(ut, "vendedlog"):
+			if ingest == 0 || usd < ingest {
+				ingest = usd
+			}
 		case strings.Contains(ut, "datascanned") || strings.Contains(ut, "ingestion"):
 			if ingest == 0 || usd < ingest {
 				ingest = usd
@@ -438,16 +491,148 @@ func AWSCloudWatchLogsPricing(region string) (ingest, storage float64, err error
 	return ingest, storage, nil
 }
 
+// AWSRDSPostgresHourly returns the on-demand $/hour for a managed
+// Postgres instance type in region. engineFlavor is "postgres" for
+// stock RDS Postgres or "aurora-postgresql" for Aurora Postgres
+// (the AWS Bulk JSON uses the human label "Aurora PostgreSQL" but
+// we accept the API form too). Caller multiplies by MonthlyHours
+// to get the monthly compute number; storage is priced separately
+// via AWSRDSStorageUSDPerGBMonth.
+func AWSRDSPostgresHourly(instanceType, region, engineFlavor string) (float64, error) {
+	pl, err := awsSvc.loadServiceBulk("AmazonRDS", region)
+	if err != nil {
+		return 0, err
+	}
+	loc := awsRegionLong(region)
+	wantEngine := awsRDSEngineLabel(engineFlavor)
+	wantDeploy := "Single-AZ"
+	if strings.Contains(strings.ToLower(engineFlavor), "aurora") {
+		// Aurora is always multi-AZ behind the scenes; the bulk JSON
+		// uses an empty deploymentOption or "Multi-AZ" depending on
+		// the row. Don't constrain by deployment for Aurora.
+		wantDeploy = ""
+	}
+	best := 0.0
+	matched := false
+	for skuID, prod := range pl.Products {
+		attr := prod.Attributes
+		if !strings.EqualFold(attr["instanceType"], instanceType) {
+			continue
+		}
+		if !strings.EqualFold(attr["location"], loc) {
+			continue
+		}
+		if !strings.EqualFold(attr["databaseEngine"], wantEngine) {
+			continue
+		}
+		if wantDeploy != "" {
+			if !strings.EqualFold(attr["deploymentOption"], wantDeploy) {
+				continue
+			}
+		}
+		// Skip BYOL / SQL-licensed rows; we want the bundled
+		// (no-license) on-demand SKU.
+		lic := strings.ToLower(attr["licenseModel"])
+		if lic != "" && !strings.Contains(lic, "no license") && !strings.Contains(lic, "included") {
+			continue
+		}
+		pd, perr := onDemandPriceDim(pl, skuID)
+		if perr != nil {
+			continue
+		}
+		usd, perr := strconv.ParseFloat(pd.PricePerUnit["USD"], 64)
+		if perr != nil || usd <= 0 {
+			continue
+		}
+		if !matched || usd < best {
+			best = usd
+			matched = true
+		}
+	}
+	if !matched {
+		return 0, fmt.Errorf("aws rds: no on-demand price for %s/%s in %s",
+			instanceType, wantEngine, region)
+	}
+	return best, nil
+}
+
+// awsRDSEngineLabel normalizes engineFlavor into the value AWS Bulk
+// JSON uses on the databaseEngine attribute.
+func awsRDSEngineLabel(engineFlavor string) string {
+	s := strings.ToLower(strings.TrimSpace(engineFlavor))
+	switch s {
+	case "aurora", "aurora-postgresql", "aurora postgres", "aurora postgresql":
+		return "Aurora PostgreSQL"
+	case "", "postgres", "postgresql":
+		return "PostgreSQL"
+	}
+	return engineFlavor
+}
+
+// AWSRDSStorageUSDPerGBMonth returns RDS general-purpose (gp2)
+// storage $/GB-month in region. The AmazonRDS bulk catalog encodes
+// storage SKUs under productFamily="Database Storage" with
+// volumeType containing "General Purpose" and a usagetype like
+// "RDS:GP2-Storage".
+func AWSRDSStorageUSDPerGBMonth(region string) (float64, error) {
+	pl, err := awsSvc.loadServiceBulk("AmazonRDS", region)
+	if err != nil {
+		return 0, err
+	}
+	loc := awsRegionLong(region)
+	best := 0.0
+	matched := false
+	for skuID, prod := range pl.Products {
+		attr := prod.Attributes
+		if !strings.EqualFold(attr["location"], loc) {
+			continue
+		}
+		fam := awsBulkProductFamily(prod)
+		if !strings.Contains(fam, "database storage") {
+			continue
+		}
+		vt := strings.ToLower(attr["volumeType"])
+		ut := strings.ToLower(attr["usagetype"])
+		isGP := strings.Contains(vt, "general purpose") ||
+			strings.Contains(ut, "gp2-storage") ||
+			strings.Contains(ut, "gp3-storage")
+		if !isGP {
+			continue
+		}
+		pd, perr := onDemandPriceDim(pl, skuID)
+		if perr != nil {
+			continue
+		}
+		usd, perr := strconv.ParseFloat(pd.PricePerUnit["USD"], 64)
+		if perr != nil || usd <= 0 {
+			continue
+		}
+		if !matched || usd < best {
+			best = usd
+			matched = true
+		}
+	}
+	if !matched {
+		return 0, fmt.Errorf("aws rds storage: no GP $/GB-month in %s", region)
+	}
+	return best, nil
+}
+
 // AWSRoute53ZoneUSDPerMonth — hosted zone $/month.
-// Route53 is priced globally — the catalog uses region "aws-global".
+// Route53 is priced globally; the hosted-zone SKUs
+// (productFamily "DNS Zone", usagetype "HostedZone…") live only
+// in the top-level AmazonRoute53 bulk index — the regional offer
+// files contain DNS Query / Profile / Outpost SKUs but no zone
+// pricing. We read the no-region offer file by passing an empty
+// region to loadServiceBulk.
 func AWSRoute53ZoneUSDPerMonth(_ string) (float64, error) {
-	pl, err := awsSvc.loadServiceBulk("AmazonRoute53", "aws-global")
+	pl, err := awsSvc.loadServiceBulk("AmazonRoute53", "")
 	if err != nil {
 		return 0, err
 	}
 	for skuID, prod := range pl.Products {
 		ut := strings.ToLower(prod.Attributes["usagetype"])
-		fam := strings.ToLower(prod.Attributes["productFamily"])
+		fam := awsBulkProductFamily(prod)
 		if !strings.Contains(fam, "dns zone") && !strings.Contains(ut, "hostedzone") {
 			continue
 		}

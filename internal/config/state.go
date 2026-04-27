@@ -37,6 +37,12 @@ func (c *Config) HaveClusterctlCredsInEnv() bool {
 	return c.Providers.Proxmox.URL != "" && c.Providers.Proxmox.Token != "" && c.Providers.Proxmox.Secret != ""
 }
 
+// HaveAWSCloudCreds reports whether static IAM user keys are present in
+// the environment (CAPA / clusterctl generate typical path).
+func (c *Config) HaveAWSCloudCreds() bool {
+	return os.Getenv("AWS_ACCESS_KEY_ID") != "" && os.Getenv("AWS_SECRET_ACCESS_KEY") != ""
+}
+
 // ReapplyWorkloadGitDefaults ports reapply_workload_git_defaults. When a
 // merge from the in-cluster config Secret cleared the workload app-of-
 // apps Git fields (empty values in config.yaml), re-derive defaults from

@@ -3,12 +3,11 @@
 
 package kindsync
 
-// Phase D / §16 commit 2: the new yage-system/bootstrap-config
-// Secret schema. WriteBootstrapConfigSecret emits the canonical
-// state at end-of-run (or after xapiri commits a config);
+// The yage-system/bootstrap-config Secret schema (§16 c2):
+// WriteBootstrapConfigSecret emits the canonical state at
+// end-of-run (or after xapiri commits a config);
 // MergeBootstrapConfigFromKind populates cfg.Cost.Credentials +
-// (eventually) per-provider state from that Secret on subsequent
-// runs.
+// per-provider state from that Secret on subsequent runs.
 //
 // The schema is "flat keys with category prefixes":
 //
@@ -25,11 +24,9 @@ package kindsync
 //	<provider>.<key>        = (per-provider state from
 //	                           Provider.KindSyncFields)
 //
-// Today's Proxmox bootstrap-config Secret (proxmox-bootstrap-config
-// with config.yaml payload) is NOT replaced by this — the two
-// schemas coexist during the migration window. The legacy schema
-// is what live yage clusters already have on disk; the new schema
-// is what xapiri / new installs write.
+// The Proxmox bootstrap-config Secret (proxmox-bootstrap-config
+// with config.yaml payload) coexists with this schema; both are
+// recognized.
 
 import (
 	"context"
@@ -44,8 +41,7 @@ import (
 )
 
 // BootstrapConfigNamespace is the kind-side namespace yage owns
-// for its bootstrap state Secret. Renamed from
-// proxmox-bootstrap-system to yage-system in commit 5c128ec.
+// for its bootstrap state Secret.
 const BootstrapConfigNamespace = "yage-system"
 
 // BootstrapConfigSecretName is the name of the Secret inside
@@ -97,7 +93,7 @@ func WriteBootstrapConfigSecret(cfg *config.Config) error {
 	add("cost.digitalocean_token", cfg.Cost.Credentials.DigitalOceanToken)
 	add("cost.ibmcloud_api_key", cfg.Cost.Credentials.IBMCloudAPIKey)
 	add("cost.display_currency", cfg.Cost.Currency.DisplayCurrency)
-	add("cost.eur_usd_override", cfg.Cost.Currency.EURUSDOverride)
+	add("cost.data_center_location", cfg.Cost.Currency.DataCenterLocation)
 
 	return applySecret(bg, cli, BootstrapConfigNamespace, BootstrapConfigSecretName, data, map[string]string{
 		"app.kubernetes.io/managed-by": "yage",
@@ -112,15 +108,12 @@ func WriteBootstrapConfigSecret(cfg *config.Config) error {
 // exist or the kind cluster isn't reachable — the caller continues
 // with whatever cfg already has.
 //
-// Today's coverage:
+// Coverage:
 //   - cost.* → cfg.Cost.Credentials + cfg.Cost.Currency (full)
-//   - provider.<key> → routed to Provider.AbsorbConfigYAML, which
-//     today only has a Proxmox uppercase-key absorber; lowercase
-//     bare keys land as a no-op until per-provider absorbers ship.
-//     Net effect: Proxmox state from this NEW Secret schema is
-//     visible to the absorber as PROXMOX_<KEY> only when the
-//     legacy proxmox-bootstrap-config/config.yaml Secret is also
-//     present (which it is in production today).
+//   - provider.<key> → routed to Provider.AbsorbConfigYAML.
+//     Proxmox accepts uppercase keys (PROXMOX_*) from
+//     proxmox-bootstrap-config/config.yaml; lowercase bare keys are
+//     a no-op until per-provider absorbers ship.
 //   - universal keys (cluster_name, cluster_id, kubernetes_version)
 //     are filled when empty.
 func MergeBootstrapConfigFromKind(cfg *config.Config) error {
@@ -165,17 +158,14 @@ func MergeBootstrapConfigFromKind(cfg *config.Config) error {
 			assign(&cfg.Cost.Credentials.IBMCloudAPIKey, v)
 		case k == "cost.display_currency":
 			assign(&cfg.Cost.Currency.DisplayCurrency, v)
-		case k == "cost.eur_usd_override":
-			assign(&cfg.Cost.Currency.EURUSDOverride, v)
+		case k == "cost.data_center_location":
+			assign(&cfg.Cost.Currency.DataCenterLocation, v)
 		default:
 			// Provider-prefixed keys (proxmox.url, aws.region, …)
 			// are forwarded to the active provider's absorber as
-			// a unified map. Today only Proxmox absorbs, and only
-			// the legacy uppercase-key shape — lowercase bare
-			// keys land as a no-op for now.
-			//
-			// TODO: per-provider lowercase-bare-key absorbers
-			// (one per provider that ships KindSyncFields).
+			// a unified map. Currently only Proxmox absorbs, and
+			// only the uppercase-key shape — lowercase bare keys
+			// are a no-op until per-provider absorbers ship.
 			//
 			// no-op intentional — keep loop going.
 			_ = k

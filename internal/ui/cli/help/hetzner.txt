@@ -1,0 +1,21 @@
+hetzner — Hetzner Cloud / CAPHV flags
+
+    --hetzner-control-plane-machine-type TYPE  Hetzner instance type for the control plane
+                                               (e.g. cpx21, ccx13).
+    --hetzner-node-machine-type TYPE           Instance type for worker nodes.
+    --hetzner-location LOC        Datacenter location (e.g. nbg1, fsn1, hel1, ash, hil).
+    --hetzner-overhead-tier TIER  dev | prod (default) | enterprise — overhead bundle
+                                  (Load Balancer, primary IPs, snapshot retention).
+
+Credentials
+    HCLOUD_TOKEN                  Hetzner Cloud API token (required). Generate it under
+                                  Project → Security → API tokens.
+
+Pricing
+    Hetzner publishes prices in EUR. yage uses the EUR price natively when --data-center-location
+    resolves to a EUR-zone country; otherwise it FX-converts at display time through the standard
+    FX layer. Hetzner has no managed-K8s flavor — every cluster is self-managed CP on VMs.
+
+See also:
+    --help cost      cost compare, currency, on-prem TCO
+    --help airgap    --airgapped disables Hetzner entirely

@@ -3,11 +3,11 @@
 
 package azure
 
-// Phase D state-handoff hooks for Azure.
+// State-handoff hooks for Azure.
 //
 // See docs/abstraction-plan.md §11 + §14.D + §13's Azure validation.
 // Identity-model discriminator (SP / Managed Identity / Workload
-// Identity) deferred per §13.4 #4 — today Azure consumes operator-
+// Identity) is deferred per §13.4 #4 — Azure consumes operator-
 // supplied creds via env, so KindSyncFields holds only the
 // non-secret runtime config.
 

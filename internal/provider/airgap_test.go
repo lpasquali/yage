@@ -9,7 +9,7 @@ import (
 )
 
 func TestAirgapCompatible(t *testing.T) {
-	yes := []string{"proxmox", "openstack", "vsphere", "capd"}
+	yes := []string{"proxmox", "openstack", "vsphere", "docker"}
 	no := []string{"aws", "azure", "gcp", "hetzner", "digitalocean", "linode", "oci", "ibmcloud"}
 	for _, n := range yes {
 		if !AirgapCompatible(n) {

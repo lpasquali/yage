@@ -155,14 +155,14 @@ func Backup(cfg *config.Config, outPath string) error {
 	return nil
 }
 
-// backupNamespace writes data/<ns>/namespace.json + objects.jsonl + meta.json.
-// Equivalent to the inline Python in kind_bootstrap_state_backup (bash L2327-2392).
+// backupNamespace writes data/<ns>/namespace.json + objects.jsonl
+// + meta.json.
 func backupNamespace(ctx, ns, tmp string) error {
 	odir := filepath.Join(tmp, "data", ns)
 	if err := os.MkdirAll(odir, 0o755); err != nil {
 		return err
 	}
-	// namespace.json — ignore errors; bash does the same (only writes on rc=0).
+	// namespace.json — ignore errors; only write on rc=0.
 	if out, _, err := shell.Capture("kubectl", "--context", ctx, "get", "namespace", ns, "-o", "json"); err == nil && strings.TrimSpace(out) != "" {
 		if err := os.WriteFile(filepath.Join(odir, "namespace.json"), []byte(out), 0o644); err != nil {
 			return err

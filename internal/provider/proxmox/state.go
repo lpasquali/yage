@@ -3,9 +3,9 @@
 
 package proxmox
 
-// Phase D state-handoff hooks for Proxmox: KindSyncFields (kind-
-// side Secret), TemplateVars (clusterctl manifest substitution),
-// Purge (cleanup of yage-managed Proxmox state).
+// State-handoff hooks for Proxmox: KindSyncFields (kind-side
+// Secret), TemplateVars (clusterctl manifest substitution), Purge
+// (cleanup of yage-managed Proxmox state).
 //
 // See docs/abstraction-plan.md §11 + §14.D.
 
@@ -126,9 +126,9 @@ func firstNonEmpty(values ...string) string {
 // AbsorbConfigYAML is the reverse direction of KindSyncFields:
 // reads the Proxmox-flavored uppercase keys (PROXMOX_*) the kind-
 // side bootstrap Secret + creds/csi/admin JSON envelopes use, and
-// fills empty cfg fields with non-empty values. Was the body of
-// kindsync.fillEmptyFromMap before Phase D.7; lives here now so
-// kindsync can dispatch to the active provider generically. See §11.
+// fills empty cfg fields with non-empty values. Lives in the
+// provider package so kindsync can dispatch to the active provider
+// generically. See §11.
 func (p *Provider) AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bool {
 	assigned := false
 	assign := func(cur *string, v string) {
@@ -199,15 +199,15 @@ func (p *Provider) AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bo
 }
 
 // PivotTarget returns the destination kubeconfig + namespaces for
-// clusterctl move (Phase E / §12). Proxmox is the only provider
-// today that ships a real pivot target — the BPG-managed mgmt
-// cluster running on Proxmox VMs.
+// clusterctl move. Proxmox is the only provider that ships a real
+// pivot target — the BPG-managed mgmt cluster running on Proxmox
+// VMs.
 //
 // The kubeconfig path is read from cfg.MgmtKubeconfigPath, which
 // the orchestrator sets after EnsureManagementCluster() returns
 // (per §13.4 #5). When pivot is disabled or the kubeconfig path
-// hasn't been populated yet, return ErrNotApplicable so the
-// orchestrator falls through to keeping kind as the mgmt cluster.
+// is unset, return ErrNotApplicable so the orchestrator falls
+// through to keeping kind as the mgmt cluster.
 func (p *Provider) PivotTarget(cfg *config.Config) (provider.PivotTarget, error) {
 	if !cfg.PivotEnabled {
 		return provider.PivotTarget{}, provider.ErrNotApplicable

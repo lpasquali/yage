@@ -7,15 +7,11 @@ DESCRIPTION
     Bootstraps a kind-based CAPI management plane (Cilium CNI: Ingress,
     kube-proxy replacement, Hubble) and provisions a workload cluster on
     the configured infrastructure provider — proxmox, aws, azure, gcp,
-    hetzner, openstack, vsphere, capd, or any of the cost-only providers
+    hetzner, openstack, vsphere, docker, or any of the cost-only providers
     (digitalocean, linode, oci, ibmcloud). Pick one with --infra-provider
-    or set INFRA_PROVIDER. With --pivot (where supported), the CAPI
-    control plane is moved to a managed mgmt cluster on the same provider
-    (clusterctl move) and kind is torn down.
-
-    yage was originally a Go port of a bash script; the Go binary is
-    now the canonical implementation. See docs/ARCHITECTURE.md for
-    an in-process implementation overview.
+    or set INFRA_PROVIDER. By default, CAPI pivots to a managed mgmt
+    cluster on the same provider (clusterctl move) before the workload
+    is provisioned; --no-pivot keeps kind as the management plane.
 
 OPTIONS
 
@@ -45,13 +41,30 @@ OPTIONS
         --airgapped                   Disable every internet-requiring path: pricing fetchers, geo +
                                       FX detection, and the entire cloud-provider surface (AWS, Azure,
                                       GCP, Hetzner, DigitalOcean, Linode, OCI, IBM Cloud). Only on-prem
-                                      providers (Proxmox, OpenStack, vSphere, CAPD) remain selectable.
+                                      providers (Proxmox, OpenStack, vSphere, Docker/CAPD) remain selectable.
                                       Env: YAGE_AIRGAPPED.
         --image-registry-mirror URL   Prefix passed to `clusterctl init` so CAPI provider images come
                                       from an internal mirror instead of the public registries
                                       (registry.k8s.io, ghcr.io). Required in airgapped deployments;
                                       yage warns when --airgapped is set without this. Format: host/path
                                       with no trailing slash. Env: YAGE_IMAGE_REGISTRY_MIRROR.
+        --internal-ca-bundle PATH     PEM bundle of CAs trusted by every outbound HTTPS call yage makes
+                                      (Helm pulls, OCI image pulls in clusterctl, kubectl-against-workload,
+                                      pricing/inventory APIs). Loaded once at startup, installed on the Go
+                                      HTTP transport, and exported as SSL_CERT_FILE so child processes
+                                      (helm, clusterctl, kind, kubectl) trust it too. Useful in airgapped
+                                      envs and behind corp TLS-intercepting proxies. Env: YAGE_INTERNAL_CA_BUNDLE.
+        --helm-repo-mirror URL        Single base URL of an internal Helm chart repo (Harbor, ChartMuseum,
+                                      …) that yage rewrites every chart-repo reference onto. Format:
+                                      "https://harbor.internal/chartrepo/yage" (no trailing slash);
+                                      yage rewrites e.g. "https://charts.jetstack.io/cert-manager" to
+                                      "<mirror>/cert-manager". oci:// repos rewrite the same way. yage
+                                      warns when --airgapped is set without this. Env: YAGE_HELM_REPO_MIRROR.
+        --node-image IMAGE            Override the kind worker base image (kindest/node:vX.Y.Z) the
+                                      management plane boots from. Useful when the public image is
+                                      mirrored under a different name in an internal registry. Per-
+                                      provider node templates / AMIs / Glance images stay on their
+                                      own per-provider config fields. Env: YAGE_NODE_IMAGE.
         --hardware-cost-usd N         Self-hosted TCO (Proxmox / vSphere): full cluster capex in USD.
                                       Required to enable the cost estimate for self-hosted providers
                                       — without it they return ErrNotApplicable. Amortized straight-
@@ -183,7 +196,7 @@ OPTIONS
                                       via the admin API before manifest apply.
         --mgmt-proxmox-pool NAME      Same, for management-cluster VMs (default: capi-<mgmt-cluster-name>).
         --template-id ID              Catch-all Proxmox template VM ID (default: 104)
-        --template-vmid ID            Deprecated alias for --template-id
+        --template-vmid ID            Alias for --template-id
         --workload-control-plane-template-id ID  Per-machine-type override
         --workload-worker-template-id ID         Per-machine-type override
         --mgmt-control-plane-template-id ID      Per-machine-type override

@@ -51,13 +51,28 @@ var ErrUnavailable = errors.New("pricing: vendor API unreachable and no fresh ca
 const DefaultTTL = 24 * time.Hour
 
 // Item is one priced SKU pulled from a vendor API.
+//
+// Currency model: every vendor has a "datacenter currency" — the
+// currency in which their pricing team publishes the canonical
+// number. AWS/Azure/GCP/DO/Linode/IBM/OCI publish in USD; Hetzner
+// in EUR. Whatever that currency is, the Fetcher fills NativeAmount
+// with the unaltered figure and NativeCurrency with the ISO code.
+//
+// USDPerHour / USDPerMonth are also filled with the USD-equivalent
+// (computed via the live FX rate when NativeCurrency != "USD") so
+// cross-vendor sort and sums work in one canonical unit. Display
+// code prefers NativeAmount when NativeCurrency matches the active
+// taller — that avoids a round-trip through FX and surfaces the
+// vendor's published list price exactly.
 type Item struct {
-	Vendor      string    // "aws", "azure", "gcp", "hetzner"
-	SKU         string    // "t3.medium", "Standard_D2s_v3", "n2-standard-2", "cx22"
-	Region      string    // "us-east-1", "eastus", "us-central1", "fsn1"
-	USDPerHour  float64   // 0 when only monthly is meaningful
-	USDPerMonth float64   // = USDPerHour × 730 unless the vendor caps differently (Hetzner)
-	FetchedAt   time.Time
+	Vendor          string    // "aws", "azure", "gcp", "hetzner"
+	SKU             string    // "t3.medium", "Standard_D2s_v3", "n2-standard-2", "cx23"
+	Region          string    // "us-east-1", "eastus", "us-central1", "fsn1"
+	USDPerHour      float64   // 0 when only monthly is meaningful
+	USDPerMonth     float64   // = USDPerHour × 730 unless the vendor caps differently (Hetzner)
+	NativeCurrency  string    // ISO-4217 code of the vendor's datacenter currency; "" treated as "USD"
+	NativeAmount    float64   // monthly amount in NativeCurrency; 0 when not separately tracked
+	FetchedAt       time.Time
 }
 
 // Fetcher fetches a single SKU's price from a vendor API. Each

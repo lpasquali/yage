@@ -13,12 +13,12 @@ import (
 	"github.com/lpasquali/yage/internal/util/yamlx"
 )
 
-// EnsureProxmoxAdminConfig ports ensure_proxmox_admin_config
-// (L7620-L7701). Populates cfg.Providers.Proxmox.URL / Username / Token from:
+// EnsureProxmoxAdminConfig populates
+// cfg.Providers.Proxmox.URL / Username / Token from:
 //
-//  1. MergeProxmoxBootstrapSecretsFromKind (already run at top of the
-//     bootstrap flow).
-//  2. The PROXMOX_ADMIN_CONFIG legacy YAML file when set and present.
+//  1. MergeProxmoxBootstrapSecretsFromKind (already run at top of
+//     the bootstrap flow).
+//  2. The PROXMOX_ADMIN_CONFIG YAML file when set and present.
 //  3. Interactive prompts (only if stdin is a TTY).
 //
 // Dies when it still can't satisfy all three admin fields.
@@ -42,7 +42,7 @@ func EnsureProxmoxAdminConfig(cfg *config.Config, merge, syncConfig, syncCreds f
 	}
 
 	if !promptx.CanPrompt() {
-		logx.Die("Missing admin Proxmox configuration: %v. Set them via environment variables, kind Secret %s/%s (admin API), or PROXMOX_ADMIN_CONFIG to a legacy local YAML (not written by this script by default).",
+		logx.Die("Missing admin Proxmox configuration: %v. Set them via environment variables, kind Secret %s/%s (admin API), or PROXMOX_ADMIN_CONFIG to a local YAML you maintain.",
 			missing, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName)
 	}
 	if cfg.ProxmoxAdminCfgFilePresent() {
@@ -75,7 +75,7 @@ func EnsureProxmoxAdminConfig(cfg *config.Config, merge, syncConfig, syncCreds f
 		return
 	}
 
-	logx.Warn("Skipping interactive creation. Add admin API identity to kind Secret %s/%s (data key %s, or flat keys for migration), export the variables, or set PROXMOX_ADMIN_CONFIG to a legacy file you maintain (not auto-written here).",
+	logx.Warn("Skipping interactive creation. Add admin API identity to kind Secret %s/%s (data key %s, or flat keys for migration), export the variables, or set PROXMOX_ADMIN_CONFIG to a local file you maintain.",
 		cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName,
 		fallback(cfg.Providers.Proxmox.BootstrapAdminSecretKey, "proxmox-admin.yaml"))
 	logx.Warn("Expected format:")
@@ -84,7 +84,7 @@ func EnsureProxmoxAdminConfig(cfg *config.Config, merge, syncConfig, syncCreds f
 	fmt.Fprintln(os.Stderr, `  PROXMOX_ADMIN_USERNAME: "root@pam!capi-bootstrap"`)
 	fmt.Fprintln(os.Stderr, `  PROXMOX_ADMIN_TOKEN: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"`)
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprint(os.Stderr, "\033[1;33m[?]\033[0m Press ENTER once you have set kind Secrets, env, or a legacy admin YAML (PROXMOX_ADMIN_CONFIG)...")
+	fmt.Fprint(os.Stderr, "\033[1;33m[?]\033[0m Press ENTER once you have set kind Secrets, env, or an admin YAML (PROXMOX_ADMIN_CONFIG)...")
 	_ = promptx.ReadLine()
 
 	if merge != nil {
@@ -95,10 +95,10 @@ func EnsureProxmoxAdminConfig(cfg *config.Config, merge, syncConfig, syncCreds f
 		logx.Die("Proxmox admin still unset: not in kind Secrets (see %s), not in the environment, and not in PROXMOX_ADMIN_CONFIG. Aborting.",
 			cfg.Providers.Proxmox.BootstrapSecretNamespace)
 	}
-	logx.Log("Continuing with admin credentials from kind, environment, or legacy PROXMOX_ADMIN_CONFIG file.")
+	logx.Log("Continuing with admin credentials from kind, environment, or PROXMOX_ADMIN_CONFIG file.")
 }
 
-// fillFromAdminYAML reads the legacy admin YAML when set and fills any
+// fillFromAdminYAML reads the admin YAML when set and fills any
 // still-empty field. Non-destructive.
 func fillFromAdminYAML(cfg *config.Config) {
 	if !cfg.ProxmoxAdminCfgFilePresent() {

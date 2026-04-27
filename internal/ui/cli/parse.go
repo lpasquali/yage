@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package cli mirrors the bash parse_options() flag surface exactly.
+// Package cli parses the yage flag surface.
 //
-// Every case in the bash `case` statement has a matching case here, with the
-// same semantics:
+// Semantics:
 //   - boolean flags set the corresponding Config field
 //   - valued flags consume one argument
 //   - two flags (--kind-backup, --argocd-print-access, --argocd-port-forward,
 //     --workload-rollout) accept an OPTIONAL positional argument that must
 //     not start with "--"
-//   - --template-vmid is a deprecated alias for --template-id
-//   - --argocd-version is hard-removed; it emits a Die message
+//   - --template-vmid is an alias for --template-id
+//   - --argocd-version emits a Die message (not a recognized flag)
 package cli
 
 import (
@@ -25,7 +24,7 @@ import (
 
 // Parse consumes argv (without program name) and writes results into c.
 // On --help it prints usage and returns ExitHelp so main() can exit(0).
-// On unknown flags it calls logx.Die which exits(1), matching bash behavior.
+// On unknown flags it calls logx.Die which exits(1).
 func Parse(c *config.Config, argv []string) {
 	for i := 0; i < len(argv); i++ {
 		a := argv[i]
@@ -153,7 +152,7 @@ func Parse(c *config.Config, argv []string) {
 		case "--workload-gitops-mode":
 			v := shiftVal(a)
 			if v != "caaph" {
-				logx.Die("Only --workload-gitops-mode caaph is supported (got: %s). The legacy kind-argocd/management Argo path was removed.", v)
+				logx.Die("Only --workload-gitops-mode caaph is supported (got: %s).", v)
 			}
 			c.WorkloadGitopsMode = "caaph"
 		case "--workload-app-of-apps-git-url":
@@ -250,9 +249,8 @@ func Parse(c *config.Config, argv []string) {
 		case "--csi-default-class":
 			// §20: the canonical home for default-class is the top-
 			// level cfg.CSI.DefaultClass (multi-driver registry).
-			// Keep mirroring into Providers.Proxmox.CSIDefaultClass
-			// so the legacy Proxmox CSI install path keeps working
-			// until it migrates onto the registry.
+			// Mirror into Providers.Proxmox.CSIDefaultClass so the
+			// Proxmox CSI install path keeps reading the same value.
 			v := shiftVal(a)
 			c.CSI.DefaultClass = v
 			c.Providers.Proxmox.CSIDefaultClass = v
@@ -315,19 +313,108 @@ func Parse(c *config.Config, argv []string) {
 			c.PivotKeepKind = true
 		case "--pivot-dry-run":
 			c.PivotDryRun = true
+		case "--stop-before-workload":
+			// Exit after the pivot completes but before the workload
+			// manifest is applied. Integration-test escape hatch.
+			c.StopBeforeWorkload = true
 		case "--dry-run":
 			c.DryRun = true
 		case "--cost-compare":
 			c.CostCompare = true
+		case "--skip-providers":
+			// Comma-separated registry names to omit from the cost
+			// compare table. Doesn't affect the active --infra-provider
+			// — only the comparison view filters them. Env:
+			// YAGE_SKIP_PROVIDERS.
+			c.SkipProviders = strings.TrimSpace(shiftVal(a))
+		case "--allowed-providers":
+			// Comma-separated allowlist for the cost compare table.
+			// Inverse of --skip-providers. Composes with it (allowlist
+			// applies first; --skip-providers subtracts from the
+			// result). Env: YAGE_ALLOWED_PROVIDERS.
+			c.AllowedProviders = strings.TrimSpace(shiftVal(a))
+		case "--no-managed-postgres":
+			// Force in-cluster CloudNativePG even when the active
+			// vendor offers managed Postgres. Default uses the
+			// vendor's SaaS DB (RDS/Aurora/Cloud SQL/etc).
+			// Env: YAGE_USE_MANAGED_POSTGRES.
+			c.UseManagedPostgres = false
+		case "--postgres-cpu-millicores":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil && n >= 0 {
+				c.PostgresCPUMillicoresOverride = n
+			}
+		case "--postgres-memory-mib":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil && n >= 0 {
+				c.PostgresMemoryMiBOverride = n
+			}
+		case "--postgres-volume-gb":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil && n >= 0 {
+				c.PostgresVolumeGBOverride = n
+			}
+		case "--mq-cpu-millicores":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil && n >= 0 {
+				c.MQCPUMillicoresOverride = n
+			}
+		case "--mq-memory-mib":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil && n >= 0 {
+				c.MQMemoryMiBOverride = n
+			}
+		case "--mq-volume-gb":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil && n >= 0 {
+				c.MQVolumeGBOverride = n
+			}
+		case "--objstore-cpu-millicores":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil && n >= 0 {
+				c.ObjStoreCPUMillicoresOverride = n
+			}
+		case "--objstore-memory-mib":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil && n >= 0 {
+				c.ObjStoreMemoryMiBOverride = n
+			}
+		case "--objstore-volume-gb":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil && n >= 0 {
+				c.ObjStoreVolumeGBOverride = n
+			}
+		case "--cache-cpu-millicores":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil && n >= 0 {
+				c.CacheCPUMillicoresOverride = n
+			}
+		case "--cache-memory-mib":
+			if n, err := strconv.Atoi(shiftVal(a)); err == nil && n >= 0 {
+				c.CacheMemoryMiBOverride = n
+			}
 		case "--budget-usd-month":
 			if f, err := strconv.ParseFloat(shiftVal(a), 64); err == nil {
 				c.BudgetUSDMonth = f
 			}
+		case "--data-center-location":
+			// ISO-3166 alpha-2 country code (e.g. IT, DE, US). Drives
+			// nearest-region defaults for every provider with a
+			// centroid table AND the active taller currency. See
+			// CostCurrency.DataCenterLocation for the resolution
+			// order. Env: YAGE_DATA_CENTER_LOCATION.
+			c.Cost.Currency.DataCenterLocation = strings.ToUpper(
+				strings.TrimSpace(shiftVal(a)))
 		case "--print-pricing-setup":
 			// Special: not really a flag, more of a subcommand.
 			// Print the IAM/token setup snippet for the named
 			// vendor (or all vendors with "all") and exit.
 			c.PrintPricingSetup = strings.ToLower(strings.TrimSpace(shiftVal(a)))
+		case "--print-command":
+			// Standalone subcommand: render the equivalent `yage
+			// <flags>` invocation and exit. Optional next-arg picks
+			// the sensitive-value mode (env|raw|masked); default
+			// "env" emits $VAR refs so the output is shell-runnable
+			// without committing secrets to the pipeline.
+			c.PrintCommand = "env"
+			if v, ok := optPositional(); ok {
+				lv := strings.ToLower(strings.TrimSpace(v))
+				if lv == "env" || lv == "raw" || lv == "masked" {
+					c.PrintCommand = lv
+				} else {
+					logx.Die("--print-command mode must be one of: env, raw, masked")
+				}
+			}
 		case "--xapiri":
 			// Launch the interactive configuration TUI and exit.
 			// See package internal/xapiri for the cultural note.
@@ -340,6 +427,19 @@ func Parse(c *config.Config, argv []string) {
 			// Internal-mirror prefix for CAPI provider images (used
 			// in airgapped deployments). See §17 follow-up.
 			c.ImageRegistryMirror = strings.TrimRight(strings.TrimSpace(shiftVal(a)), "/")
+		case "--internal-ca-bundle":
+			// PEM bundle path; honored by every yage HTTP call and
+			// every child process via SSL_CERT_FILE. §17 / §21.4.
+			c.InternalCABundle = strings.TrimSpace(shiftVal(a))
+		case "--helm-repo-mirror":
+			// Single base URL that yage rewrites every chart-repo
+			// reference onto. Strip trailing slash so the rewriter's
+			// concat is unambiguous. §17 / §21.4.
+			c.HelmRepoMirror = strings.TrimRight(strings.TrimSpace(shiftVal(a)), "/")
+		case "--node-image":
+			// kind worker base-image override (kindest/node:vX.Y.Z).
+			// §17 / §21.4.
+			c.NodeImage = strings.TrimSpace(shiftVal(a))
 		case "--allow-resource-overcommit":
 			c.AllowResourceOvercommit = true
 		case "--overcommit-tolerance-pct":
@@ -569,7 +669,24 @@ func Parse(c *config.Config, argv []string) {
 			c.InfraProvider = strings.ToLower(strings.TrimSpace(shiftVal(a)))
 			c.InfraProviderDefaulted = false // explicit choice
 		case "-h", "--help":
-			PrintUsage(nil)
+			// Optional next-arg topic: drill into a specific help
+			// section. The arg must not start with "-".
+			topic := ""
+			if i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "-") {
+				i++
+				topic = argv[i]
+			}
+			PrintHelp(os.Stdout, topic)
+			os.Exit(0)
+		case "--completion":
+			if i+1 >= len(argv) {
+				logx.Die("--completion requires a shell name (bash, zsh, fish)")
+			}
+			i++
+			shell := argv[i]
+			if err := PrintShellCompletion(os.Stdout, shell); err != nil {
+				logx.Die("%v", err)
+			}
 			os.Exit(0)
 		default:
 			logx.Die("Unknown option: %s", a)

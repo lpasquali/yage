@@ -1,0 +1,13 @@
+---
+description: yage — use docs/AGENT_SYSTEM_PROMPT.md as canonical agent context for this repo
+globs: "**/*"
+alwaysApply: true
+---
+
+# yage agent prompt
+
+Treat **`docs/AGENT_SYSTEM_PROMPT.md`** (repo root = this `yage/` folder) as the full project system prompt: architecture, bootstrap phases, config surface, build/test commands, conventions (logx, shell, YAML document splitting, config flow), stack, common tasks, and gotchas.
+
+Supplementary docs in **`docs/`**: `ARCHITECTURE.md`, `abstraction-plan.md`, `providers.md`, `capacity-preflight.md`, `cost-and-pricing.md`.
+
+When instructions in those files conflict with generic assumptions, prefer the yage docs.

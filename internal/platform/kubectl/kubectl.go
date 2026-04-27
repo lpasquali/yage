@@ -1,18 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package kubectlx ports thin wrappers around kubectl that the rest of the
-// bootstrap calls repeatedly.
-//
-// Bash source map (the original bash port):
-//   - contains_line                                         ~L1130-1139
-//   - _resolve_bootstrap_kubectl_context                    ~L821-835
-//   - wait_for_service_endpoint                             ~L2059-2070
-//   - apply_workload_cluster_manifest_to_management_cluster ~L2075-2154
-//   - warn_regenerated_capi_manifest_immutable_risk         ~L2604-2613
-//
-// All kubectl shell-outs in this file have been migrated to the in-process
-// k8sclient (client-go) layer.
+// Package kubectl wraps kubectl-equivalent operations the rest of
+// the bootstrap calls repeatedly. All kubectl shell-outs in this
+// file go through the in-process k8sclient (client-go) layer.
 package kubectl
 
 import (

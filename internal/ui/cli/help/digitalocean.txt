@@ -1,0 +1,24 @@
+digitalocean — DigitalOcean / CAPDO flags
+
+DigitalOcean is currently a cost-only provider in yage: the cost estimator queries the live
+DigitalOcean pricing API for droplet rates, while CAPDO provisioning shares the standard
+self-managed CP-on-droplets flow.
+
+    --do-control-plane-machine-type SIZE   Droplet slug for the control plane
+                                           (e.g. s-2vcpu-4gb, c-2, g-2vcpu-8gb).
+    --do-node-machine-type SIZE            Droplet slug for worker nodes.
+    --do-region REGION             DO region (nyc1, nyc3, ams3, fra1, lon1, sgp1, tor1, ...).
+    --do-overhead-tier TIER        dev | prod (default) | enterprise — Load Balancer + bandwidth
+                                   bundle.
+
+Credentials
+    DIGITALOCEAN_TOKEN             Personal Access Token (required). Generate it under
+                                   API → Tokens.
+
+Pricing
+    DigitalOcean publishes USD-only. yage FX-converts at display time when the active taller is
+    not USD.
+
+See also:
+    --help cost      cost compare, currency
+    --help airgap    --airgapped disables DigitalOcean entirely

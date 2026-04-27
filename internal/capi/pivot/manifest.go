@@ -17,8 +17,9 @@ import (
 
 	"github.com/lpasquali/yage/internal/capi/manifest"
 	"github.com/lpasquali/yage/internal/config"
-	"github.com/lpasquali/yage/internal/ui/logx"
+	"github.com/lpasquali/yage/internal/platform/airgap"
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
+	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
 // renderManagementManifest generates the CAPI manifest for the management
@@ -376,7 +377,7 @@ func renderMgmtCiliumHelmChartProxy(cfg *config.Config) string {
 	fmt.Fprintln(&sb, "      caaph: enabled")
 	fmt.Fprintf(&sb, "      caaph.cilium.cluster-id: %q\n", clusterID)
 	fmt.Fprintln(&sb, "  chartName: cilium")
-	fmt.Fprintln(&sb, "  repoURL: https://helm.cilium.io/")
+	fmt.Fprintf(&sb, "  repoURL: %s\n", airgap.RewriteHelmRepo("https://helm.cilium.io/"))
 	fmt.Fprintf(&sb, "  version: %q\n", ver)
 	fmt.Fprintln(&sb, "  namespace: kube-system")
 	fmt.Fprintln(&sb, "  options:")

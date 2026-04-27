@@ -5,7 +5,7 @@
 ▸ Pre-phase
     • ClusterSetID = test-clusterset (identity suffix: <derived>)
 
-▸ Phase 1 — install host dependencies (CLIs for the operator)
+▸ Dependency install — host CLIs for the operator
     • system packages: git, curl, python3 (apt/dnf/yum/apk)
     • Docker: install if missing; upgrade unless --no-delete-kind or kind cluster exists
     • kubectl      v1.32.0    (install)
@@ -22,13 +22,13 @@
     ◦ skip: AWS uses operator-supplied IAM (env: AWS_ACCESS_KEY_ID / _SECRET_ACCESS_KEY / AWS_PROFILE)
     ◦ skip: CAPA bootstrap stack created out-of-band — `clusterawsadm bootstrap iam create-cloudformation-stack`
 
-▸ Phase 2.1 — clusterctl credentials
+▸ clusterctl credentials
     • synthesize ephemeral clusterctl config from Proxmox env (URL/TOKEN/SECRET)
 
-▸ Phase 2.4 — kind cluster
+▸ kind cluster
     • create kind cluster 'capi-test' (config: <ephemeral default>)
 
-▸ Phase 2.8 — clusterctl init on kind
+▸ clusterctl init on kind
     • providers: infrastructure=aws, ipam=in-cluster, addon=helm
     • CAPMOX image: v0.7.0 (build arm64 if needed)
 
@@ -42,7 +42,7 @@
 ▸ Pivot to managed mgmt cluster
     ◦ skip: AWS provider has no PivotTarget yet (kind remains the mgmt cluster)
 
-▸ Phase 2.10 — Argo CD on workload
+▸ Argo CD on workload
     • Argo CD Operator + ArgoCD CR (version v2.13.2, operator v0.12.2)
     • CAAPH argocd-apps HelmChartProxy → root Application 'capi-quickstart'
     •   app-of-apps: https://github.com/example/app-of-apps @ main, path apps

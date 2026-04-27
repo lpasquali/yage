@@ -5,10 +5,13 @@ package xapiri
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/feasibility"
 )
 
 // TestProperCase_RegisteredProviders covers every provider name that
@@ -205,5 +208,90 @@ func TestNewState_HeadroomDefault(t *testing.T) {
 	s2 := newStateWithReader(&bytes.Buffer{}, cfg, &bytes.Buffer{})
 	if s2.headroomPct != 0.20 {
 		t.Errorf("newStateWithReader headroomPct = %v, want 0.20", s2.headroomPct)
+	}
+}
+
+func TestSyncWorkloadShapeToCfg_CloudFork(t *testing.T) {
+	cfg := &config.Config{BudgetUSDMonth: 300}
+	w := workloadShape{
+		Apps:       []appBucket{{Count: 4, Template: "medium"}},
+		DBGB:       2,
+		EgressGBMo: 4,
+	}
+	syncWorkloadShapeToCfg(cfg, w, resilienceHA, envStaging, forkCloud)
+	if len(cfg.Workload.Apps) != 1 || cfg.Workload.Apps[0].Count != 4 || cfg.Workload.Apps[0].Template != "medium" {
+		t.Fatalf("Workload.Apps = %+v", cfg.Workload.Apps)
+	}
+	if cfg.Workload.DatabaseGB != 2 || cfg.Workload.EgressGBMonth != 4 {
+		t.Fatalf("DatabaseGB=%d EgressGBMonth=%d", cfg.Workload.DatabaseGB, cfg.Workload.EgressGBMonth)
+	}
+	if cfg.Workload.Resilience != "ha" || cfg.Workload.Environment != "staging" {
+		t.Fatalf("Resilience=%q Environment=%q", cfg.Workload.Resilience, cfg.Workload.Environment)
+	}
+	if _, err := feasibility.Check(cfg); err != nil {
+		t.Fatalf("feasibility.Check after sync: %v", err)
+	}
+}
+
+func TestSyncWorkloadShapeToCfg_OnPremEgressDefault(t *testing.T) {
+	cfg := &config.Config{BudgetUSDMonth: 100}
+	w := workloadShape{
+		Apps:       []appBucket{{Count: 2, Template: "light"}},
+		DBGB:       5,
+		EgressGBMo: 0,
+	}
+	syncWorkloadShapeToCfg(cfg, w, resilienceSingle, envDev, forkOnPrem)
+	if cfg.Workload.EgressGBMonth != 10 {
+		t.Fatalf("on-prem implicit egress = db×2: got %d want 10", cfg.Workload.EgressGBMonth)
+	}
+}
+
+func TestAwsCredentialsHint_accessKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	if got := awsCredentialsHint(); got != "AWS_ACCESS_KEY_ID ✓" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestAwsCredentialsHint_profile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_PROFILE", "yage-pricing")
+	want := "AWS_PROFILE=yage-pricing ✓"
+	if got := awsCredentialsHint(); got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestGeoNearestRegionID_nearLondon(t *testing.T) {
+	// Roughly London — does not require provider.Registered() (test
+	// binary may not link every provider init).
+	if got := geoNearestRegionID("aws", 51.5, -0.12); got != "eu-west-2" {
+		t.Fatalf("aws nearest=%q want eu-west-2", got)
+	}
+	if got := geoNearestRegionID("azure", 51.5, -0.12); got != "uksouth" {
+		t.Fatalf("azure nearest=%q want uksouth", got)
+	}
+}
+
+func TestAwsCredentialsHint_sharedConfigFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_PROFILE", "")
+	if err := os.Mkdir(filepath.Join(home, ".aws"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".aws", "credentials")
+	if err := os.WriteFile(path, []byte("[default]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join("~", ".aws/credentials") + " ✓"
+	if got := awsCredentialsHint(); got != want {
+		t.Fatalf("got %q want %q", got, want)
 	}
 }

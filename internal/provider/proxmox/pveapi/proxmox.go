@@ -3,13 +3,8 @@
 
 // Package pveapi is the low-level Proxmox VE HTTP client and helper
 // suite (URL parsing, token shape, region/node decoding, identity
-// hashing). It is the *implementation* layer that the Provider
+// hashing). It is the implementation layer that the Provider
 // abstraction (internal/provider/proxmox) sits on top of.
-//
-// The package was previously named `proxmox` and lived at
-// `internal/proxmox/`. That name collided with `internal/provider/
-// proxmox/` (the Provider plugin), so importing files routinely
-// aliased it to `pveapi`. Renamed to make that the canonical name.
 //
 // Direct importers fall in two camps:
 //   - `internal/provider/proxmox/`: the Provider plugin uses these
@@ -17,11 +12,7 @@
 //   - Orchestrator-side packages (`internal/orchestrator`,
 //     `cluster/kindsync`, `capi/caaph`, `capi/manifest`,
 //     `platform/opentofux`): use the helpers directly during phases
-//     that haven't yet moved behind the Provider interface.
-//
-// As phases B–E land, the orchestrator-side direct imports should
-// shrink — eventually only the Provider plugin should reach into
-// pveapi.
+//     that don't go through the Provider interface.
 package pveapi
 
 import (
@@ -40,21 +31,19 @@ import (
 )
 
 // Default user "bases" used when suffixes are derived from CLUSTER_SET_ID.
-// Match the bash DEFAULT_PROXMOX_*_USER_BASE constants (L1241-L1242).
 const (
 	DefaultCSIUserBase  = "kubernetes-csi@pve"
 	DefaultCAPIUserBase = "capmox@pve"
 )
 
-// GenerateUUIDv4 ports generate_uuid_v4(). Uses crypto/rand directly; the
-// bash fallback that reads /dev/urandom is unnecessary because Go's rand
-// package already does that.
+// GenerateUUIDv4 returns an RFC 4122 v4 UUID. Uses crypto/rand
+// (Go's rand package reads from getrandom(2) on Linux).
 func GenerateUUIDv4() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		// Deterministic fallback so tests / offline runs don't panic; in
 		// practice crypto/rand on Linux reads from getrandom(2) and never
-		// fails. Matches bash's od fallback intent.
+		// fails.
 		seed := make([]byte, 16)
 		binary.BigEndian.PutUint64(seed, uint64(42))
 		copy(b[:], seed)
@@ -292,10 +281,7 @@ func splitPrefixSuffix(s string) (string, string, bool) {
 
 // HashIdentityNameTag returns a short, stable hash tag for a manifest spec —
 // used by CAPI_PROXMOX_MACHINE_TEMPLATE_SPEC_REV=true to append "-t<8hex>"
-// to ProxmoxMachineTemplate names.
-//
-// Not in the bash section above but ports the SHA-256 prefix in the
-// companion comment block (L178-L181).
+// to ProxmoxMachineTemplate names. SHA-256 prefix.
 func HashIdentityNameTag(spec []byte) string {
 	sum := sha256.Sum256(spec)
 	return hex.EncodeToString(sum[:])[:8]

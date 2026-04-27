@@ -30,7 +30,7 @@ var onPremProviders = map[string]struct{}{
 	"proxmox":   {},
 	"openstack": {},
 	"vsphere":   {},
-	"capd":      {},
+	"docker":    {}, // CAPD registers itself as "docker"
 }
 
 // AirgapCompatible reports whether the named provider can run

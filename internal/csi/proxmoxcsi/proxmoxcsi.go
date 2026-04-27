@@ -61,11 +61,11 @@ func (driver) RenderValues(cfg *config.Config) (string, error) {
 	return b.String(), nil
 }
 
-// EnsureSecret reuses the legacy Secret-apply path. The Secret name,
-// namespace, and aliasing (<cluster>-proxmox-csi-config plus the
-// short proxmox-csi-config mirror) are an upstream-chart contract,
-// so the §20 migration is "register the driver" rather than
-// "rewrite the apply logic" — that lift can come later if desired.
+// EnsureSecret delegates to the existing Secret-apply path. The
+// Secret name, namespace, and aliasing
+// (<cluster>-proxmox-csi-config plus the short proxmox-csi-config
+// mirror) are an upstream-chart contract, so the §20 integration
+// is "register the driver" rather than "rewrite the apply logic".
 func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) error {
 	capicsi.ApplyConfigSecretToWorkload(cfg, func() (string, error) {
 		return workloadKubeconfigPath, nil

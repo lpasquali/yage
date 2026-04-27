@@ -61,7 +61,7 @@ const (
 // doesn't participate in.
 type Provider interface {
 	// Name is a stable internal id ("proxmox", "aws", "vsphere",
-	// "capd", "openstack", …). Used as the registry key.
+	// "docker" for CAPD, "openstack", …). Used as the registry key.
 	Name() string
 
 	// InfraProviderName is the value passed to clusterctl as
@@ -88,11 +88,11 @@ type Provider interface {
 	// count-based limits, multi-level hierarchies don't compose
 	// with flat subtraction).
 	//
-	// Per the Phase A spec (§13.4 #1): Proxmox and OpenStack-by-
-	// project populate Inventory cleanly. AWS, GCP, Azure, Hetzner,
-	// vSphere return ErrNotApplicable because their quota model
-	// can't be expressed as flat ResourceTotals. The orchestrator
-	// then skips capacity preflight for that provider and relies on
+	// Per §13.4 #1: Proxmox and OpenStack-by-project populate
+	// Inventory cleanly. AWS, GCP, Azure, Hetzner, vSphere return
+	// ErrNotApplicable because their quota model can't be expressed
+	// as flat ResourceTotals. The orchestrator then skips capacity
+	// preflight for that provider and relies on
 	// EstimateMonthlyCostUSD + DescribeWorkload as the only
 	// pre-deploy gates.
 	Inventory(cfg *config.Config) (*Inventory, error)
@@ -142,41 +142,38 @@ type Provider interface {
 	EstimateMonthlyCostUSD(cfg *config.Config) (CostEstimate, error)
 
 	// PlanDescriber emits the provider-specific dry-run plan
-	// sections via plan.Writer (Phase B / §8). Three hooks because
-	// the orchestrator inserts other phases between them; one big
-	// DescribePlan would force every provider to know the
-	// orchestrator's section ordering.
+	// sections via plan.Writer. Three hooks because the orchestrator
+	// inserts other phases between them; one big DescribePlan would
+	// force every provider to know the orchestrator's section
+	// ordering.
 	PlanDescriber
 
 	// KindSyncer returns the provider-specific fields persisted in
-	// the kind-side handoff Secret (Phase D / §11). Empty map = no
-	// state to persist.
+	// the kind-side handoff Secret. Empty map = no state to persist.
 	KindSyncer
 
 	// Purger reverses provider-managed state outside the workload
-	// cluster (Phase D / §11). Idempotent. nil return = nothing to
-	// clean up; ErrNotApplicable when the provider has no cleanup
-	// concept.
+	// cluster. Idempotent. nil return = nothing to clean up;
+	// ErrNotApplicable when the provider has no cleanup concept.
 	Purger
 
 	// TemplateVars returns the provider-specific env-style values
 	// substituted into the clusterctl manifest template at render
-	// time (Phase D / §11). Universal vars (CLUSTER_NAME,
-	// KUBERNETES_VERSION, etc.) come from the orchestrator and are
-	// NOT in this map.
+	// time. Universal vars (CLUSTER_NAME, KUBERNETES_VERSION, etc.)
+	// come from the orchestrator and are NOT in this map.
 	TemplateVars(cfg *config.Config) map[string]string
 
 	// Pivoter returns the destination kubeconfig + namespaces for
-	// the kind → managed-mgmt cluster move (Phase E / §12). Only
-	// providers that ship a working management-cluster bootstrap
-	// (today: Proxmox; future: anything with a K3s template + a
-	// strategy for hosting the mgmt cluster) return a real target.
-	// Everyone else returns ErrNotApplicable.
+	// the kind → managed-mgmt cluster move. Only providers that ship
+	// a working management-cluster bootstrap (Proxmox, plus anything
+	// else with a K3s template + a strategy for hosting the mgmt
+	// cluster) return a real target. Everyone else returns
+	// ErrNotApplicable.
 	Pivoter
 }
 
 // Pivoter is composed into Provider so the pivot path can depend
-// on just the pivot capability. See §12.
+// on just the pivot capability.
 type Pivoter interface {
 	// PivotTarget returns the destination kubeconfig path +
 	// namespace list + readiness timeout for clusterctl move.
@@ -185,13 +182,13 @@ type Pivoter interface {
 	//
 	// The KubeconfigPath field reads cfg.MgmtKubeconfigPath when
 	// the orchestrator has populated it (after
-	// EnsureManagementCluster). Per §12 + §13.4, the orchestrator
-	// is responsible for setting that field; the provider is
-	// stateless and only packages what it sees.
+	// EnsureManagementCluster). The orchestrator is responsible for
+	// setting that field; the provider is stateless and only
+	// packages what it sees.
 	PivotTarget(cfg *config.Config) (PivotTarget, error)
 }
 
-// PivotTarget is the destination for clusterctl move (Phase E / §12).
+// PivotTarget is the destination for clusterctl move.
 // Zero-value + ErrNotApplicable means "no pivot target — kind
 // remains the management cluster forever."
 type PivotTarget struct {
@@ -211,8 +208,8 @@ type PivotTarget struct {
 }
 
 // KindSyncer is composed into Provider for callers that only need
-// the kind-Secret handoff capability (e.g. the kindsync rewrite
-// that iterates over the provider's returned map). See §11.
+// the kind-Secret handoff capability (e.g. the kindsync layer that
+// iterates over the provider's returned map). See §11.
 type KindSyncer interface {
 	// KindSyncFields returns the provider's bare-key map of fields
 	// to persist (forward direction: cfg → Secret). The orchestrator
@@ -232,13 +229,11 @@ type KindSyncer interface {
 	// any empty cfg fields it recognizes. Returns true when at
 	// least one assignment happened.
 	//
-	// Today's Proxmox impl handles the legacy PROXMOX_* uppercase
-	// key set written by historical config.yaml / creds.json /
-	// csi.json / admin.json envelopes. Providers added since
-	// Phase D follow the new lowercase bare-key convention
-	// (matches KindSyncFields output) once the orchestrator's
-	// generic Secret-as-source-of-truth path lands in §16
-	// commit 2.
+	// The Proxmox impl handles both the uppercase PROXMOX_* key
+	// set written by config.yaml / creds.json / csi.json /
+	// admin.json envelopes and the lowercase bare-key convention
+	// (matches KindSyncFields output) used by the generic
+	// Secret-as-source-of-truth path.
 	AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bool
 }
 

@@ -3612,7 +3612,7 @@ planning rather than the current state.
 | §15 (reorg) | 30 flat packages → 11 bucketed; `internal/pveapi/` → `internal/provider/proxmox/pveapi/` | tree layout |
 | §16 (cost creds Secret) | `cfg.Cost.Credentials/Currency`, kindsync round-trip, pricing.SetCredentials wired in main | `internal/config/config.go`, `cmd/yage/main.go` |
 | §17 (airgapped — base) | `--airgapped` flag, ErrAirgapped on cloud providers, pricing.SetAirgapped | `internal/config`, `internal/provider/provider.go`, `internal/pricing` |
-| §17 (airgapped — completion) | `--internal-ca-bundle`, `--helm-repo-mirror`, `--node-image` | **in flight (Agent C)** |
+| §17 (airgapped — completion) | `--internal-ca-bundle`, `--helm-repo-mirror`, `--node-image`; CA on `DefaultTransport` + `SSL_CERT_FILE`; Helm URL sweep + kind `--image` via `shell` | `internal/platform/airgap`, `internal/platform/shell`, `internal/ui/cli`, `cmd/yage/main.go`, `internal/capi/caaph`, `internal/capi/pivot` |
 | §18 (no Proxmox default) | hard-error in main when InfraProvider is empty; --xapiri / --print-pricing-setup escape hatches preserved | `cmd/yage/main.go`, `internal/config/config.go` |
 | §19 (license) | Apache 2.0 LICENSE, SPDX-License-Identifier header on every .go file (161 files) | repo root, every `*.go` |
 | §20 (CSI registry — Phase F scoped) | Driver interface + 4 drivers (aws-ebs, azure-disk, gcp-pd, proxmox-csi); Provider.EnsureCSISecret removed | `internal/csi/`, `internal/csi/proxmoxcsi/` |
@@ -3622,15 +3622,14 @@ planning rather than the current state.
 | §21.2 (Phase G — universal OpenTofu identity) | per-provider HCL templates for AWS/Azure/GCP/OpenStack/OCI/IBMCloud/Linode | **in flight (Agent A)** |
 | §22 (xapiri) | budget-first / product-shape-first 8-step state machine, on-prem/cloud fork | `internal/ui/xapiri/` |
 | §23 (feasibility gate) | Check(cfg) + CheckOnPrem(cfg, host); 5 scrooge-bug tests; xapiri integration via `feasibility_shim.go` | `internal/feasibility/` |
-| Tests | feasibility/templates pure-helper tests, xapiri pure-helper tests | `*_test.go` files |
+| Tests | feasibility/templates + xapiri pure-helper tests; airgap + shell + pricing transport tests | `*_test.go` under `internal/feasibility`, `internal/ui/xapiri`, `internal/platform/airgap`, `internal/platform/shell`, `internal/pricing` |
 
 ### 24.2 In flight (background agents)
 
-Five worktree-isolated agents running as of this writing:
+Four worktree-isolated agents running as of this writing:
 
 - **Agent A** — Phase G OpenTofu identity HCL templates (§21.2)
 - **Agent B** — 10 remaining CSI drivers (§20.1)
-- **Agent C** — airgap completion flags (§17 / §21.4)
 - **Agent D1** — orchestrator → §20 CSI registry wiring
 - **Agent D4** — CAPD smoke E2E test (§13 / §14.E goal)
 
@@ -3642,9 +3641,10 @@ When each returns, integrate its worktree branch into `main`.
   AWS/Azure/GCP/Hetzner. Same provider files as Agent A, so
   dispatched after A integrates.
 - **D3 — Tests for new packages.** Pure-helper tests for
-  feasibility/templates + xapiri are already in main; the
-  remaining D3 surface is tests for the airgap helpers Agent C
-  ships, dispatched after C integrates.
+  feasibility/templates + xapiri are already in main; airgap
+  (`internal/platform/airgap`), shell kind-image argv injection, and
+  pricing↔`DefaultTransport` TLS coverage are in main. Remaining D3 is
+  broader integration / golden coverage as new packages land.
 
 ### 24.4 Not yet planned (genuinely later)
 

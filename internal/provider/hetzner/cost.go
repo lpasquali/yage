@@ -78,8 +78,8 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	region := orDefault(cfg.Providers.Hetzner.Location, "fsn1")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
-	cpType := orDefault(cfg.Providers.Hetzner.ControlPlaneMachineType, "cx22")
-	wkType := orDefault(cfg.Providers.Hetzner.NodeMachineType, "cx22")
+	cpType := orDefault(cfg.Providers.Hetzner.ControlPlaneMachineType, "cx23")
+	wkType := orDefault(cfg.Providers.Hetzner.NodeMachineType, "cx23")
 
 	items := []provider.CostItem{}
 
@@ -114,7 +114,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	// Optional management cluster (pivot retains it).
 	if cfg.PivotEnabled {
 		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
-		mgmtType := "cx22"
+		mgmtType := "cx23"
 		mgmtPrice, err := liveServerMonthly(mgmtType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: hetzner: %v", provider.ErrNotApplicable, err)
@@ -142,11 +142,17 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	}
 
 	tierLabel := orDefault(cfg.Providers.Hetzner.OverheadTier, "prod")
+	totalServers := cp + wk
+	if cfg.PivotEnabled {
+		totalServers += atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
+	}
 	note := fmt.Sprintf(
-		"Hetzner Cloud monthly caps (live api.hetzner.cloud, EUR→USD via YAGE_EUR_USD), "+
-			"region %s, %s overhead tier (LB + floating IPs + volume budget). "+
-			"Boot disk + 20 TB egress bundled per server. Backups (+20%%) not enabled by default.",
-		region, tierLabel,
+		"Hetzner Cloud monthly caps (live api.hetzner.cloud, EUR-native; "+
+			"FX-converted only when taller != EUR), region %s, %s overhead tier "+
+			"(LB + floating IPs + volume budget). Boot disk + 20 TB egress bundled "+
+			"per server (%d total). Hetzner is genuinely cheap — sanity-check the "+
+			"line items via the bill split, not the headline total.",
+		region, tierLabel, totalServers,
 	)
 	return provider.CostEstimate{
 		TotalUSDMonthly: total,

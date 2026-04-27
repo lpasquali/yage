@@ -1,0 +1,46 @@
+yage — bootstrap a Cluster API management plane and provision a workload cluster
+
+USAGE
+    yage [OPTIONS]
+    yage --xapiri                       interactive walkthrough (recommended)
+    yage --dry-run [--cost-compare]     plan; no state changes
+    yage --help [TOPIC]                 drill into a topic
+    yage --completion {bash|zsh|fish}   emit a shell completion script
+    yage --print-command [env|raw|masked] reproduce the resolved cfg as `yage <flags>`
+
+QUICK START
+    yage --xapiri                       guided setup, persists into kind
+    yage --dry-run --cost-compare       compare monthly cost across every cloud
+    yage --infra-provider proxmox       deploy to Proxmox VE
+    yage --kind-backup ./snap.tar.gz    snapshot kind state before a risky run
+
+TOPICS
+    general       common flags: --force, --dry-run, --xapiri, --airgapped
+    cost          cost compare, budget, currency, on-prem TCO
+    kind          kind cluster name, config, backup/restore
+    pivot         move CAPI to a managed mgmt cluster
+    airgap        --airgapped + the mirror flags
+    providers     supported infrastructure providers (one-line each)
+    aws           AWS / CAPA flags
+    azure         Azure / CAPZ flags
+    gcp           GCP / CAPG flags
+    hetzner       Hetzner / CAPHV flags
+    digitalocean  DigitalOcean / CAPDO flags
+    linode        Linode / CAPL flags
+    oci           Oracle Cloud / CAPOCI flags
+    ibmcloud      IBM Cloud / CAPI-IBM flags
+    proxmox       Proxmox / CAPMOX flags (most-mature path)
+    vsphere       vSphere / CAPV flags
+    openstack     OpenStack / CAPO flags
+    examples      common command-line recipes
+    all           every flag in one stream (the long form)
+
+ENVIRONMENT
+    Most flags have a matching upper-snake env var (--proxmox-url ↔ PROXMOX_URL).
+    On a re-run against an existing kind cluster, Secret yage-system/bootstrap-config
+    fills empty cfg fields. Explicit env / flag values always win.
+
+SEE ALSO
+    docs/architectures.md      one diagram per cloud + on-prem architecture
+    docs/cost-and-pricing.md   the taller / native-currency model
+    docs/ARCHITECTURE.md       Go implementation overview

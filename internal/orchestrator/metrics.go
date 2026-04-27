@@ -24,8 +24,8 @@ import (
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
-// InstallMetricsServerOnKindManagement ports
-// install_metrics_server_on_kind_management_cluster (L4205-L4233).
+// InstallMetricsServerOnKindManagement installs metrics-server on
+// the kind management cluster.
 func InstallMetricsServerOnKindManagement(cfg *config.Config) {
 	if !cfg.EnableMetricsServer {
 		return
@@ -71,8 +71,8 @@ func InstallMetricsServerOnKindManagement(cfg *config.Config) {
 	logx.Log("metrics-server configured on %s (e.g. kubectl --context %s top nodes).", ctxName, ctxName)
 }
 
-// InstallMetricsServerOnWorkload ports install_metrics_server_on_workload_cluster
-// (L4236-L4275).
+// InstallMetricsServerOnWorkload installs metrics-server on the
+// workload cluster.
 func InstallMetricsServerOnWorkload(cfg *config.Config) {
 	if !cfg.EnableWorkloadMetricsServer {
 		return

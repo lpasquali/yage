@@ -76,9 +76,9 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 	env := proxmoxEnvMap(cfg)
 	lookup := func(k string) string { return env[k] }
 
-	// --- Legacy single-Secret branch ---
+	// --- Single-Secret branch (PROXMOX_BOOTSTRAP_SECRET_NAME set) ---
 	if cfg.Providers.Proxmox.BootstrapSecretName != "" {
-		legacyKeys := []string{
+		singleSecretKeys := []string{
 			"PROXMOX_URL", "PROXMOX_TOKEN", "PROXMOX_SECRET",
 			"PROXMOX_CSI_URL", "PROXMOX_CSI_TOKEN_ID", "PROXMOX_CSI_TOKEN_SECRET",
 			"PROXMOX_REGION", "PROXMOX_NODE",
@@ -87,10 +87,10 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 			Context:     ctx,
 			Namespace:   ns,
 			Name:        cfg.Providers.Proxmox.BootstrapSecretName,
-			AllowedKeys: legacyKeys,
+			AllowedKeys: singleSecretKeys,
 			LookupValue: lookup,
 		}).apply()
-		logx.Log("Updated %s/%s (legacy CAPI/CSI from current environment).", ns, cfg.Providers.Proxmox.BootstrapSecretName)
+		logx.Log("Updated %s/%s (combined CAPI/CSI from current environment).", ns, cfg.Providers.Proxmox.BootstrapSecretName)
 
 		adminTarget := cfg.Providers.Proxmox.BootstrapSecretName
 		if cfg.Providers.Proxmox.BootstrapAdminSecretName != "" &&
@@ -116,7 +116,7 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 	}).apply()
 	logx.Log("Updated %s/%s (CAPI / clusterctl keys from current environment).", ns, cfg.Providers.Proxmox.BootstrapCAPMOXSecretName)
 
-	// Derive PROXMOX_CSI_URL from PROXMOX_URL when not set — bash L979-L982.
+	// Derive PROXMOX_CSI_URL from PROXMOX_URL when not set.
 	if cfg.Providers.Proxmox.URL != "" && cfg.Providers.Proxmox.CSIURL == "" {
 		cfg.Providers.Proxmox.CSIURL = pveapi.APIJSONURL(cfg)
 		env["PROXMOX_CSI_URL"] = cfg.Providers.Proxmox.CSIURL

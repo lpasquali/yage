@@ -1,6 +1,6 @@
 # yage — Agent System Prompt
 
-You are an expert assistant for the **yage** project — a Go tool that bootstraps Kubernetes Cluster API (CAPI) environments on any of twelve registered infrastructure providers (Proxmox VE, AWS, Azure, GCP, Hetzner, OpenStack, vSphere, CAPD, DigitalOcean, Linode, OCI, IBM Cloud).
+You are an expert assistant for the **yage** project — a Go tool that bootstraps Kubernetes Cluster API (CAPI) environments on any of twelve registered infrastructure providers (Proxmox VE, AWS, Azure, GCP, Hetzner, OpenStack, vSphere, Docker/CAPD, DigitalOcean, Linode, OCI, IBM Cloud). The CAPD provider's registry key is `docker` (the Go package directory is `internal/provider/capd/`).
 
 ---
 
@@ -13,7 +13,7 @@ You are an expert assistant for the **yage** project — a Go tool that bootstra
 - **Entry point:** `cmd/yage/main.go`
 - **Binary:** `bin/yage` (built via `make build`)
 
-yage started life as a Go port of a monolithic bash script; the bash source is no longer tracked in this repo. Go is now the canonical implementation. The code is modular — one `internal/` package per concern.
+The code is modular — one `internal/` package per concern.
 
 ---
 
@@ -27,7 +27,7 @@ yage/
 ├── scripts/                 # Operator helpers (e.g. migrate-to-yage.sh)
 ├── docs/                    # Documentation (you are here)
 └── internal/
-    ├── orchestrator/        # Top-level driver: phases 1-10, standalone modes (rollout, backup, argocd)
+    ├── orchestrator/        # Top-level driver: bootstrap phases, standalone modes (rollout, backup, argocd)
     ├── provider/            # Pluggable CAPI infrastructure-provider abstraction (centerpiece)
     │   ├── proxmox/, aws/, azure/, gcp/, hetzner/, openstack/, vsphere/,
     │   ├── digitalocean/, linode/, oci/, ibmcloud/, capd/
@@ -76,14 +76,15 @@ The orchestrator in `internal/orchestrator/bootstrap.go` runs these phases:
 |-------|-------------|
 | **Standalone** | `--kind-backup`, `--kind-restore`, `--workload-rollout`, `--argocd-print-access`, `--argocd-port-forward` — exit early |
 | **Pre-phase** | Resolve CAPI manifest path, optional `--purge`, derive CLUSTER_SET_ID + identity suffix |
-| **Phase 1** | Install all dependencies (system pkgs, Docker, kubectl, kind, clusterctl, cilium, argocd, cmctl, OpenTofu, BPG provider) |
-| **Phase 2.0** | Proxmox identity bootstrap via OpenTofu (create CAPI + CSI users/tokens if needed) |
-| **Phase 2.1** | Ensure clusterctl credentials (from env, kind Secrets, interactive prompt, or explicit file) |
-| **Phase 2.4** | Create or reuse kind management cluster; merge kubeconfig; load arm64 images if needed |
-| **Phase 2.5** | Resolve CAPMOX image tag (clone repo or use pinned version) |
-| **Phase 2.8** | `clusterctl init` — initialize CAPI with Proxmox infra provider, in-cluster IPAM, CAAPH addon |
-| **Phase 2.9** | Apply workload cluster manifest with retry; Cilium HCP; wait for cluster ready; CSI Secret; redis Secret |
-| **Phase 2.10** | Argo CD Operator + ArgoCD CR on workload; CAAPH argocd-apps HelmChartProxy; wait for argocd-server |
+| **Dependency install** | Install all dependencies (system pkgs, Docker, kubectl, kind, clusterctl, cilium, argocd, cmctl, OpenTofu, BPG provider) |
+| **Identity bootstrap** | Proxmox identity bootstrap via OpenTofu (create CAPI + CSI users/tokens if needed) |
+| **clusterctl creds** | Ensure clusterctl credentials (from env, kind Secrets, interactive prompt, or explicit file) |
+| **Kind management cluster** | Create or reuse kind management cluster; merge kubeconfig; load arm64 images if needed |
+| **CAPMOX image tag** | Resolve CAPMOX image tag (clone repo or use pinned version) |
+| **clusterctl init** | `clusterctl init` — initialize CAPI with Proxmox infra provider, in-cluster IPAM, CAAPH addon |
+| **Workload manifest apply** | Apply workload cluster manifest with retry; Cilium HCP; wait for cluster ready; CSI Secret; redis Secret |
+| **Pivot phase** | Optional `clusterctl move` from kind to a Proxmox-hosted management cluster |
+| **Argo CD on workload** | Argo CD Operator + ArgoCD CR on workload; CAAPH argocd-apps HelmChartProxy; wait for argocd-server |
 
 ---
 
@@ -106,20 +107,6 @@ All fields have env-var equivalents (e.g., `PROXMOX_URL`, `CILIUM_INGRESS`, `ARG
 
 ---
 
-## Historical bash provenance
-
-Most Go files carry a comment block citing the original bash line ranges they ported, e.g.:
-
-```go
-// Package argocdx ports the Argo CD helpers:
-//   - argocd_read_initial_admin_password    ~L5854-5862
-//   - argocd_run_port_forwards              ~L5967-6007
-```
-
-These are historical breadcrumbs only — the bash script is no longer in the repo. They document scale and origin (which bash function each Go function descended from), not a file you can grep.
-
----
-
 ## Build and test
 
 ```bash
@@ -137,7 +124,7 @@ The Go binary at `/usr/local/go/bin/go` may not be on PATH — use the full path
 ## Key patterns and conventions
 
 ### Logging
-Use `logx.Log`, `logx.Warn`, `logx.Die` — they produce emoji-prefixed output matching the bash log format:
+Use `logx.Log`, `logx.Warn`, `logx.Die` — they produce emoji-prefixed output:
 - `✅ 🎉` for success
 - `⚠️ 🙈` for warnings
 - `❌ 💩` for fatal errors

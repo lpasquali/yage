@@ -217,8 +217,8 @@ func hetznerCfg() *config.Config {
 
 	h := &c.Providers.Hetzner
 	h.Location = "fsn1"
-	h.ControlPlaneMachineType = "cx22"
-	h.NodeMachineType = "cx22"
+	h.ControlPlaneMachineType = "cx23"
+	h.NodeMachineType = "cx23"
 	h.OverheadTier = "prod"
 
 	return c

@@ -12,18 +12,34 @@ import (
 )
 
 // Oracle Cloud price list — auth-free.
-//   GET https://apexapps.oracle.com/pls/apex/cetools/api/v1/products/?currencyCode=USD
+//   GET https://apexapps.oracle.com/pls/apex/cetools/api/v1/products/?currencyCode=<X>
 // Returns every SKU with currencyCodeLocalizations[].prices[].value
-// in USD/hour. Compute SKUs key by partNumber and have a displayName
-// like "Compute - VM Standard - E4 - OCPU Per Hour" — we match by
-// substring of the shape name (E4, A1, etc.) instead of exact equality.
+// in the requested currency. Compute SKUs key by partNumber and have
+// a displayName like "Compute - VM Standard - E4 - OCPU Per Hour" —
+// we match by substring of the shape name (E4, A1, etc.) instead
+// of exact equality.
+//
+// We call with the active taller currency when OCI supports it
+// (ociSupportedCurrencies) so EU/UK/etc. operators see Oracle's
+// published list price directly. Otherwise we fall back to USD and
+// FX-convert at display.
 //
 // For Flex shapes we get a per-OCPU price + a per-GB price and need
 // to multiply by the user's OCPU count + GB count. To keep this in
 // the same Item shape as other vendors we model at "1 OCPU, 16 GB"
 // (the CAPOCI default) — operators with bigger flex shapes scale
 // the line item externally. Future: parameterize via cfg.
-const ociPriceURL = "https://apexapps.oracle.com/pls/apex/cetools/api/v1/products/?currencyCode=USD"
+const ociPriceBaseURL = "https://apexapps.oracle.com/pls/apex/cetools/api/v1/products/"
+
+// ociSupportedCurrencies are the ISO codes the cetools API answers
+// to. The published list rotates occasionally; this is the
+// well-supported subset (verified empirically). Anything outside
+// this set falls back to USD.
+var ociSupportedCurrencies = map[string]bool{
+	"USD": true, "EUR": true, "GBP": true, "JPY": true, "AUD": true,
+	"CAD": true, "BRL": true, "INR": true, "MXN": true, "CHF": true,
+	"SEK": true, "NOK": true, "DKK": true, "ZAR": true, "SGD": true,
+}
 
 type ociFetcher struct{ httpClient *http.Client }
 
@@ -53,9 +69,12 @@ type ociResp struct {
 	Items []ociProduct `json:"items"`
 }
 
-func ociPayAsYouGo(p ociProduct) float64 {
+// ociPayAsYouGoIn returns the OCI "PAY_AS_YOU_GO" rate in the named
+// currency (uppercase ISO-4217). Returns 0 when not present so the
+// caller can fall back to USD.
+func ociPayAsYouGoIn(p ociProduct, currency string) float64 {
 	for _, c := range p.CurrencyCodeLocalizations {
-		if c.CurrencyCode != "USD" {
+		if !strings.EqualFold(c.CurrencyCode, currency) {
 			continue
 		}
 		for _, pe := range c.Prices {
@@ -68,7 +87,9 @@ func ociPayAsYouGo(p ociProduct) float64 {
 }
 
 func (o *ociFetcher) Fetch(shape, region string) (Item, error) {
-	req, _ := http.NewRequest("GET", ociPriceURL, nil)
+	currency := preferredVendorCurrency(ociSupportedCurrencies)
+	url := ociPriceBaseURL + "?currencyCode=" + currency
+	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "yage/pricing")
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
@@ -85,14 +106,21 @@ func (o *ociFetcher) Fetch(shape, region string) (Item, error) {
 
 	// Shape lookup heuristic: split shape "VM.Standard.E4.Flex" into
 	// tokens, look for a Compute SKU whose displayName contains the
-	// distinctive token (E4 / A1 / E5 etc.) AND a relevant metric
-	// (OCPU Per Hour for flex, Per Hour for fixed).
+	// distinctive family token (E4 / A1 / E5 etc.) AND the chassis
+	// hint (Standard vs Dense I/O). The OCI catalog uses
+	// serviceCategory like "Compute - Virtual Machine" / "Compute - GPU"
+	// / "Compute - VMware" — we accept anything starting with
+	// "compute" but exclude GPU and VMware lines for ordinary VMs.
 	upper := strings.ToUpper(shape)
 	isFlex := strings.HasSuffix(upper, ".FLEX")
+	chassisHint := "STANDARD"
+	if strings.Contains(upper, ".DENSEIO") || strings.Contains(upper, ".DENSE IO") {
+		chassisHint = "DENSE I/O"
+	}
 	tokens := strings.Split(upper, ".")
 	var family string
 	for _, t := range tokens {
-		if t == "VM" || t == "STANDARD" || t == "DENSEIO" || t == "FLEX" {
+		if t == "VM" || t == "BM" || t == "STANDARD" || t == "DENSEIO" || t == "FLEX" {
 			continue
 		}
 		family = t
@@ -104,25 +132,44 @@ func (o *ociFetcher) Fetch(shape, region string) (Item, error) {
 
 	var ocpuPrice, memPrice, fixedPrice float64
 	for _, p := range or.Items {
-		if !strings.EqualFold(p.ServiceCategory, "Compute") {
+		cat := strings.ToLower(p.ServiceCategory)
+		if !strings.HasPrefix(cat, "compute") {
+			continue
+		}
+		// Exclude unrelated compute lines (GPU, VMware, bare-metal
+		// commitments) when looking for ordinary VM pricing.
+		if strings.Contains(cat, "gpu") || strings.Contains(cat, "vmware") {
 			continue
 		}
 		dn := strings.ToUpper(p.DisplayName)
 		if !strings.Contains(dn, family) {
 			continue
 		}
+		// Restrict to the chassis (Standard vs Dense I/O) so we don't
+		// mix prices across families that share the same generation.
+		if !strings.Contains(dn, chassisHint) {
+			continue
+		}
 		mn := strings.ToUpper(p.MetricName)
+		// Try the requested currency first; fall back to USD per row
+		// when the vendor only published USD for this SKU.
+		fetch := func() float64 {
+			if v := ociPayAsYouGoIn(p, currency); v > 0 {
+				return v
+			}
+			return ociPayAsYouGoIn(p, "USD")
+		}
 		switch {
 		case strings.Contains(dn, "OCPU") || strings.Contains(mn, "OCPU"):
-			if v := ociPayAsYouGo(p); v > 0 && (ocpuPrice == 0 || v < ocpuPrice) {
+			if v := fetch(); v > 0 && (ocpuPrice == 0 || v < ocpuPrice) {
 				ocpuPrice = v
 			}
-		case strings.Contains(dn, "MEMORY") || strings.Contains(mn, "GB"):
-			if v := ociPayAsYouGo(p); v > 0 && (memPrice == 0 || v < memPrice) {
+		case strings.Contains(dn, "MEMORY") || strings.Contains(mn, "GIGABYTE") || strings.Contains(mn, "GB"):
+			if v := fetch(); v > 0 && (memPrice == 0 || v < memPrice) {
 				memPrice = v
 			}
 		case strings.Contains(mn, "PER HOUR"):
-			if v := ociPayAsYouGo(p); v > 0 && (fixedPrice == 0 || v < fixedPrice) {
+			if v := fetch(); v > 0 && (fixedPrice == 0 || v < fixedPrice) {
 				fixedPrice = v
 			}
 		}
@@ -140,9 +187,5 @@ func (o *ociFetcher) Fetch(shape, region string) (Item, error) {
 	if hourly <= 0 {
 		return Item{}, fmt.Errorf("oci: no price for shape %q (family %s)", shape, family)
 	}
-	return Item{
-		USDPerHour:  hourly,
-		USDPerMonth: hourly * MonthlyHours,
-		FetchedAt:   time.Now(),
-	}, nil
+	return buildVendorItem(hourly, currency)
 }

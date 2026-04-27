@@ -21,8 +21,7 @@ import (
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
-// EnsureCAPIManifestPath ports bootstrap_ensure_capi_manifest_path
-// (L4450-L4464). Two modes:
+// EnsureCAPIManifestPath has two modes:
 //
 //   - cfg.CAPIManifest already set: caller-managed file on disk; no
 //     Secret round-trip, no ephemeral file.
@@ -50,10 +49,10 @@ func EnsureCAPIManifestPath(cfg *config.Config) {
 		cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, cfg.CAPIManifestSecretKey)
 }
 
-// RefreshDefaultCAPIManifestPath ports
-// bootstrap_refresh_default_capi_manifest_path (L4467-L4475). Called after
-// the interactive cluster picker chose a different cluster — clears the
-// stale ephemeral file and logs which Secret the next load/gen will touch.
+// RefreshDefaultCAPIManifestPath is called after the interactive
+// cluster picker chose a different cluster — clears the stale
+// ephemeral file and logs which Secret the next load/gen will
+// touch.
 func RefreshDefaultCAPIManifestPath(cfg *config.Config) {
 	if cfg.BootstrapCAPIManifestUserSet {
 		return
@@ -75,9 +74,9 @@ func RefreshDefaultCAPIManifestPath(cfg *config.Config) {
 	logx.Die("yage: internal error — CAPI manifest path refresh with neither user file nor Secret mode.")
 }
 
-// TryLoadCAPIManifestFromSecret ports capi_manifest_try_load_from_secret
-// (L4325-L4347). No-op unless BootstrapCAPIUseSecret=true and the
-// kind-context exists and the Secret exists.
+// TryLoadCAPIManifestFromSecret loads the CAPI manifest from the
+// kind-side Secret when BootstrapCAPIUseSecret=true and both the
+// kind-context and the Secret exist. No-op otherwise.
 func TryLoadCAPIManifestFromSecret(cfg *config.Config) {
 	if !cfg.BootstrapCAPIUseSecret || cfg.CAPIManifest == "" {
 		return
@@ -110,10 +109,10 @@ func TryLoadCAPIManifestFromSecret(cfg *config.Config) {
 		cfg.CAPIManifestSecretNamespace, cfg.CAPIManifestSecretName, cfg.CAPIManifestSecretKey, ctxName)
 }
 
-// PushCAPIManifestToSecret ports capi_manifest_push_to_secret
-// (L4412-L4437). No-op when BootstrapCAPIUseSecret is false or the local
-// CAPI manifest is empty. Dies when the manifest exceeds the ~1 MiB
-// Secret data limit.
+// PushCAPIManifestToSecret pushes the local CAPI manifest into the
+// kind-side Secret. No-op when BootstrapCAPIUseSecret is false or
+// the local CAPI manifest is empty. Dies when the manifest
+// exceeds the ~1 MiB Secret data limit.
 func PushCAPIManifestToSecret(cfg *config.Config) {
 	if !cfg.BootstrapCAPIUseSecret {
 		return
@@ -176,7 +175,9 @@ func PushCAPIManifestToSecret(cfg *config.Config) {
 // import cycle with the foundation when both are in the same module.
 func boolPtrLocal(b bool) *bool { return &b }
 
-// DeleteCAPIManifestSecret ports capi_manifest_delete_secret (L4439-L4448).
+// DeleteCAPIManifestSecret deletes the kind-side CAPI manifest
+// Secret. No-op when BootstrapCAPIUseSecret is false or the kind
+// context is not reachable.
 func DeleteCAPIManifestSecret(cfg *config.Config) {
 	if !cfg.BootstrapCAPIUseSecret {
 		return
@@ -196,9 +197,8 @@ func DeleteCAPIManifestSecret(cfg *config.Config) {
 	}
 }
 
-// ResolvedLocalConfigYAMLPath ports bootstrap_resolved_local_config_yaml_path
-// (L4350-L4360). Returns the explicit override when it exists on disk,
-// ./config.yaml when it exists, or "".
+// ResolvedLocalConfigYAMLPath returns the explicit override when
+// it exists on disk, ./config.yaml when it exists, or "".
 func ResolvedLocalConfigYAMLPath(cfg *config.Config) string {
 	if cfg.Providers.Proxmox.BootstrapConfigFile != "" {
 		if _, err := os.Stat(cfg.Providers.Proxmox.BootstrapConfigFile); err == nil {
@@ -216,8 +216,8 @@ func ResolvedLocalConfigYAMLPath(cfg *config.Config) string {
 	return ""
 }
 
-// WorkloadGencodeStampPath ports capi_bootstrap_workload_gencode_stamp_path
-// (L4363-L4367). Uses XDG_STATE_HOME when set, else $HOME/.local/state.
+// WorkloadGencodeStampPath returns the on-disk stamp path. Uses
+// XDG_STATE_HOME when set, else $HOME/.local/state.
 func WorkloadGencodeStampPath(cfg *config.Config) string {
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {
@@ -231,8 +231,8 @@ func WorkloadGencodeStampPath(cfg *config.Config) string {
 	return filepath.Join(base, "yage", "gencode", name, "workload.last-clusterctl")
 }
 
-// TouchWorkloadGencodeStamp ports capi_bootstrap_touch_workload_gencode_stamp
-// (L4369-L4383). Best-effort: bail quietly on mkdir / open failures.
+// TouchWorkloadGencodeStamp updates (or creates) the stamp file's
+// mtime. Best-effort: bail quietly on mkdir / open failures.
 func TouchWorkloadGencodeStamp(cfg *config.Config) {
 	s := WorkloadGencodeStampPath(cfg)
 	if s == "" {
@@ -252,8 +252,8 @@ func TouchWorkloadGencodeStamp(cfg *config.Config) {
 	_ = os.Chtimes(s, timeNow(), timeNow())
 }
 
-// WorkloadClusterctlIsStale ports capi_bootstrap_workload_clusterctl_is_stale
-// (L4386-L4410). Returns true when the caller should re-run clusterctl.
+// WorkloadClusterctlIsStale returns true when the caller should
+// re-run clusterctl.
 func WorkloadClusterctlIsStale(cfg *config.Config) bool {
 	if cfg.BootstrapRegenerateCAPIManifest {
 		return true
@@ -293,11 +293,19 @@ func WorkloadClusterctlIsStale(cfg *config.Config) bool {
 	return ci.ModTime().After(mi.ModTime())
 }
 
-// SyncClusterctlConfigFile ports bootstrap_sync_clusterctl_config_file
-// (L4650-L4676). Uses an explicit CLUSTERCTL_CFG file when present, else
-// creates a minimal ephemeral YAML with just the three Proxmox env keys.
-// Returns the path the caller should hand to clusterctl.
+// SyncClusterctlConfigFile uses an explicit CLUSTERCTL_CFG file
+// when present. For Proxmox, creates a minimal ephemeral YAML with
+// the three Proxmox env keys when no file is set. For other
+// infrastructure providers (AWS, Azure, …) CAP* credentials come
+// from the process environment; clusterctl's --config is optional —
+// returns "" so init/generate omit it.
 func SyncClusterctlConfigFile(cfg *config.Config) string {
+	if cfg.ClusterctlCfgFilePresent() {
+		return cfg.ClusterctlCfg
+	}
+	if cfg.InfraProvider != "proxmox" {
+		return ""
+	}
 	var missing []string
 	if cfg.Providers.Proxmox.URL == "" {
 		missing = append(missing, "PROXMOX_URL")
@@ -309,10 +317,7 @@ func SyncClusterctlConfigFile(cfg *config.Config) string {
 		missing = append(missing, "PROXMOX_SECRET")
 	}
 	if len(missing) > 0 {
-		logx.Die("bootstrap_sync_clusterctl_config_file: Proxmox credentials are not set. Missing: %s", strings.Join(missing, " "))
-	}
-	if cfg.ClusterctlCfgFilePresent() {
-		return cfg.ClusterctlCfg
+		logx.Die("SyncClusterctlConfigFile: Proxmox credentials are not set. Missing: %s", strings.Join(missing, " "))
 	}
 	RegisterExitTrap()
 	f, err := os.CreateTemp("", "yage-clusterctl.*.yaml")

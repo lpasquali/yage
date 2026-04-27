@@ -63,7 +63,7 @@ func PrintPlanTo(w io.Writer, cfg *config.Config) {
 	describeIdentity(pw, cfg, prov, perr)
 	planPhase2Clusterctl(w, cfg)
 	planPhase2Kind(w, cfg)
-	planPhase2CAPI(w, cfg)
+	planPhase2CAPI(pw, w, cfg, prov, perr)
 	describeWorkload(pw, cfg, prov, perr)
 	describePivot(pw, cfg, prov, perr)
 	planPhase210ArgoCD(w, cfg)
@@ -126,10 +126,7 @@ func planPrePhase(w io.Writer, cfg *config.Config) {
 	if cfg.Purge {
 		bullet(w, "PURGE: delete generated files + Terraform state, kind workload Cluster, capi-manifest Secret")
 	}
-	if cfg.Providers.Proxmox.RecreateIdentities {
-		bullet(w, "RECREATE_PROXMOX_IDENTITIES: tear down + reapply CAPI/CSI identity Terraform")
-	}
-	bullet(w, "ClusterSetID = %s (identity suffix: %s)", firstNonEmptyStr(cfg.ClusterSetID, "<generated>"), firstNonEmptyStr(cfg.Providers.Proxmox.IdentitySuffix, "<derived>"))
+	bullet(w, "ClusterSetID = %s", firstNonEmptyStr(cfg.ClusterSetID, "<generated>"))
 }
 
 func planPhase1(w io.Writer, cfg *config.Config) {
@@ -172,7 +169,7 @@ func planPhase2Clusterctl(w io.Writer, cfg *config.Config) {
 	if cfg.ClusterctlCfg != "" {
 		bullet(w, "use explicit clusterctl config: %s", cfg.ClusterctlCfg)
 	} else {
-		bullet(w, "synthesize ephemeral clusterctl config from Proxmox env (URL/TOKEN/SECRET)")
+		bullet(w, "synthesize ephemeral clusterctl config from provider env vars")
 	}
 }
 
@@ -190,10 +187,13 @@ func planPhase2Kind(w io.Writer, cfg *config.Config) {
 	}
 }
 
-func planPhase2CAPI(w io.Writer, cfg *config.Config) {
+func planPhase2CAPI(pw plan.Writer, w io.Writer, cfg *config.Config, prov provider.Provider, perr error) {
 	section(w, "clusterctl init on kind")
 	bullet(w, "providers: infrastructure=%s, ipam=%s, addon=helm", cfg.InfraProvider, cfg.IPAMProvider)
-	bullet(w, "CAPMOX image: %s (build arm64 if needed)", firstNonEmptyStr(cfg.CAPMOXVersion, "<resolve from CAPMOX_REPO>"))
+	bullet(w, "infra provider image pinned/built if needed")
+	if perr == nil {
+		prov.DescribeClusterctlInit(pw, cfg)
+	}
 }
 
 // describeWorkload delegates to the provider's
@@ -351,13 +351,12 @@ func planCapacity(w io.Writer, cfg *config.Config) {
 func planAllocations(w io.Writer, cfg *config.Config) {
 	section(w, "Workload allocations (per-bucket budget on workers)")
 	a := capacity.AllocationsFor(cfg)
-	bullet(w, "total worker capacity:    %d millicores, %d MiB (workers=%s × %s sockets × %s cores × %s MiB)",
-		a.TotalCPUMillicores, a.TotalMemoryMiB,
-		cfg.WorkerMachineCount, cfg.Providers.Proxmox.WorkerNumSockets, cfg.Providers.Proxmox.WorkerNumCores, cfg.Providers.Proxmox.WorkerMemoryMiB)
+	bullet(w, "total worker capacity:    %d millicores, %d MiB (workers=%s)",
+		a.TotalCPUMillicores, a.TotalMemoryMiB, cfg.WorkerMachineCount)
 	bullet(w, "system-apps reserve:      %d millicores, %d MiB",
 		a.SystemAppsCPUMillicores, a.SystemAppsMemoryMiB)
 	bullet(w, "  ├─ argocd (operator + server + repo + redis), kyverno, cert-manager,")
-	bullet(w, "  ├─ proxmox-csi (controller), keycloak (SSO), external-secrets, infisical")
+	bullet(w, "  ├─ CSI controller (provider-specific), keycloak (SSO), external-secrets, infisical")
 	bullet(w, "  └─ tune via SYSTEM_APPS_CPU_MILLICORES / SYSTEM_APPS_MEMORY_MIB")
 	if a.IsOverReserved() {
 		bullet(w, "❌ system reserve (%d mCPU / %d MiB) exceeds total worker capacity (%d / %d)",

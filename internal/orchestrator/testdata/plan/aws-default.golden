@@ -3,7 +3,7 @@
 ────────────────────────────────────────────────────────────────────────────
 
 ▸ Pre-phase
-    • ClusterSetID = test-clusterset (identity suffix: <derived>)
+    • ClusterSetID = test-clusterset
 
 ▸ Dependency install — host CLIs for the operator
     • system packages: git, curl, python3 (apt/dnf/yum/apk)
@@ -23,14 +23,14 @@
     ◦ skip: CAPA bootstrap stack created out-of-band — `clusterawsadm bootstrap iam create-cloudformation-stack`
 
 ▸ clusterctl credentials
-    • synthesize ephemeral clusterctl config from Proxmox env (URL/TOKEN/SECRET)
+    • synthesize ephemeral clusterctl config from provider env vars
 
 ▸ kind cluster
     • create kind cluster 'capi-test' (config: <ephemeral default>)
 
 ▸ clusterctl init on kind
     • providers: infrastructure=aws, ipam=in-cluster, addon=helm
-    • CAPMOX image: v0.7.0 (build arm64 if needed)
+    • infra provider image pinned/built if needed
 
 ▸ Workload Cluster — AWS (mode: unmanaged)
     • Cluster: default/capi-quickstart, k8s v1.32.0, region us-east-1
@@ -58,10 +58,10 @@
     ◦ skip: provider "aws" has no flat-pool inventory model — preflight skipped (§13.4 #1)
 
 ▸ Workload allocations (per-bucket budget on workers)
-    • total worker capacity:    2000 millicores, 0 MiB (workers=2 ×  sockets ×  cores ×  MiB)
+    • total worker capacity:    2000 millicores, 0 MiB (workers=2)
     • system-apps reserve:      2000 millicores, 4096 MiB
     •   ├─ argocd (operator + server + repo + redis), kyverno, cert-manager,
-    •   ├─ proxmox-csi (controller), keycloak (SSO), external-secrets, infisical
+    •   ├─ CSI controller (provider-specific), keycloak (SSO), external-secrets, infisical
     •   └─ tune via SYSTEM_APPS_CPU_MILLICORES / SYSTEM_APPS_MEMORY_MIB
     • ❌ system reserve (2000 mCPU / 4096 MiB) exceeds total worker capacity (2000 / 0)
     •    grow worker count / sizing, OR untaint the control-plane node and let it host system pods

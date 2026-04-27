@@ -38,9 +38,10 @@ func (MinStub) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool)
 // providers leave them as no-ops and the dry-run plan simply omits
 // their sections (acceptable per §8 — section absence == not
 // applicable to this provider).
-func (MinStub) DescribeIdentity(w PlanWriter, cfg *config.Config) {}
-func (MinStub) DescribeWorkload(w PlanWriter, cfg *config.Config) {}
-func (MinStub) DescribePivot(w PlanWriter, cfg *config.Config)    {}
+func (MinStub) DescribeIdentity(w PlanWriter, cfg *config.Config)      {}
+func (MinStub) DescribeWorkload(w PlanWriter, cfg *config.Config)      {}
+func (MinStub) DescribePivot(w PlanWriter, cfg *config.Config)         {}
+func (MinStub) DescribeClusterctlInit(w PlanWriter, cfg *config.Config) {}
 
 // KindSyncer default: no fields to persist. Most cost-only and
 // not-yet-implemented providers have nothing to round-trip through

@@ -275,13 +275,19 @@ type Purger interface {
 //     by every provider — this is the headline section.
 //   - DescribePivot prints the pivot section. For providers without
 //     a pivot story today, call w.Skip("...") with a reason.
+//   - DescribeClusterctlInit emits provider-specific bullets inside
+//     the "clusterctl init on kind" section — the orchestrator has
+//     already written the section header, so only w.Bullet / w.Skip
+//     calls are appropriate here (no w.Section). Providers that have
+//     nothing extra to say leave this as a no-op.
 //
-// All three return nothing: rendering errors are not actionable
+// All four return nothing: rendering errors are not actionable
 // from inside a Describe* hook.
 type PlanDescriber interface {
 	DescribeIdentity(w PlanWriter, cfg *config.Config)
 	DescribeWorkload(w PlanWriter, cfg *config.Config)
 	DescribePivot(w PlanWriter, cfg *config.Config)
+	DescribeClusterctlInit(w PlanWriter, cfg *config.Config)
 }
 
 // PlanWriter is provider's view of the plan-output seam. It's the

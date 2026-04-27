@@ -4,84 +4,44 @@
 package api
 
 import (
+	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
+	proxmoxsdk "github.com/luthermonson/go-proxmox"
+
 	"github.com/lpasquali/yage/internal/config"
-	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
+	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
-// httpClient returns a client honouring PROXMOX_ADMIN_INSECURE: when
-// insecure, TLS verification is skipped.
-func httpClient(insecure bool) *http.Client {
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure},
+// newSDKClient constructs a go-proxmox SDK client for baseURL (must
+// include the /api2/json suffix). tokenID and secret are used as the
+// PVEAPIToken credential. When insecure is true, TLS verification is
+// skipped.
+func newSDKClient(baseURL, tokenID, secret string, insecure bool) *proxmoxsdk.Client {
+	opts := []proxmoxsdk.Option{
+		proxmoxsdk.WithAPIToken(tokenID, secret),
 	}
-	return &http.Client{Timeout: 20 * time.Second, Transport: tr}
-}
-
-// fetchJSON issues a GET with the PVEAPIToken auth header. The authValue
-// must be the full header value (including the "PVEAPIToken=" prefix);
-// when the prefix is missing, fetchJSON adds it.
-func fetchJSON(u, authValue string, insecure bool, out any) error {
-	if !strings.HasPrefix(strings.ToLower(authValue), "pveapitoken=") {
-		authValue = "PVEAPIToken=" + authValue
+	if insecure {
+		tlsCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // user-controlled flag
+		opts = append(opts, proxmoxsdk.WithHTTPClient(&http.Client{
+			Timeout:   20 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		}))
 	}
-	req, err := http.NewRequest(http.MethodGet, u, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", authValue)
-	resp, err := httpClient(insecure).Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d for %s", resp.StatusCode, u)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(body, out)
-}
-
-// statusCode returns the HTTP status for a GET on u, or 0 on network
-// failure. Matches `curl -sk -o /dev/null -w "%{http_code}"` with the
-// "000" sentinel collapsed to 0.
-func statusCode(u, authValue string, insecure bool) int {
-	if !strings.HasPrefix(strings.ToLower(authValue), "pveapitoken=") {
-		authValue = "PVEAPIToken=" + authValue
-	}
-	req, err := http.NewRequest(http.MethodGet, u, nil)
-	if err != nil {
-		return 0
-	}
-	req.Header.Set("Authorization", authValue)
-	resp, err := httpClient(insecure).Do(req)
-	if err != nil {
-		return 0
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode
+	return proxmoxsdk.NewClient(baseURL, opts...)
 }
 
 // ResolveRegionAndNodeFromPVEAuth fills empty
-// cfg.Providers.Proxmox.Node and cfg.Providers.Proxmox.Region by calling
+// cfg.Providers.Proxmox.Node and cfg.Providers.Proxmox.Region by
+// querying the Proxmox cluster status endpoint.
 //
-//	GET /api2/json/nodes           (for local/all nodes)
-//	GET /api2/json/cluster/status  (for cluster name)
-//
-// authValue is the full PVEAPIToken header value (the function also
-// accepts one without the prefix and adds it). Silent no-op when already
+// authValue is the full PVEAPIToken header value ("user!token=secret"
+// or "PVEAPIToken=user!token=secret"). Silent no-op when already
 // populated, URL is empty, or auth is empty.
 func ResolveRegionAndNodeFromPVEAuth(cfg *config.Config, authValue string) error {
 	if cfg.Providers.Proxmox.URL == "" || authValue == "" {
@@ -90,57 +50,55 @@ func ResolveRegionAndNodeFromPVEAuth(cfg *config.Config, authValue string) error
 	if cfg.Providers.Proxmox.Region != "" && cfg.Providers.Proxmox.Node != "" {
 		return nil
 	}
-	base := strings.TrimRight(APIJSONURL(cfg), "/")
-	insecure := sysinfo.IsTrue(cfg.Providers.Proxmox.AdminInsecure)
 
-	if cfg.Providers.Proxmox.Node == "" {
-		var np struct {
-			Data []struct {
-				Node  string `json:"node"`
-				Local any    `json:"local"`
-			} `json:"data"`
+	// Strip the "PVEAPIToken=" prefix to get "tokenID=secret".
+	raw := authValue
+	if strings.HasPrefix(strings.ToLower(raw), "pveapitoken=") {
+		raw = raw[len("PVEAPIToken="):]
+	}
+
+	// Split "tokenID=secret" — last '=' separates tokenID from secret.
+	tokenID, secret := splitTokenAuth(raw)
+
+	insecure := sysinfo.IsTrue(cfg.Providers.Proxmox.AdminInsecure)
+	c := newSDKClient(APIJSONURL(cfg), tokenID, secret, insecure)
+	ctx := context.Background()
+
+	// c.Cluster() calls /cluster/status and populates Cluster.Name +
+	// Cluster.Nodes (each NodeStatus carries Local and Name fields).
+	cluster, err := c.Cluster(ctx)
+	if err != nil {
+		// Non-fatal: fall through with whatever was resolved.
+		return nil
+	}
+
+	if cfg.Providers.Proxmox.Node == "" && cluster != nil {
+		// Prefer the node marked as local; fall back to lexically first.
+		var locals, all []string
+		for _, ns := range cluster.Nodes {
+			n := ns.Name
+			if n == "" {
+				continue
+			}
+			all = append(all, n)
+			if ns.Local == 1 {
+				locals = append(locals, n)
+			}
 		}
-		if err := fetchJSON(base+"/nodes", authValue, insecure, &np); err == nil {
-			var locals, all []string
-			for _, n := range np.Data {
-				if n.Node == "" {
-					continue
-				}
-				all = append(all, n.Node)
-				// "local" is often 1/true; coerce to a stable string.
-				s := fmt.Sprint(n.Local)
-				if s == "1" || s == "true" {
-					locals = append(locals, n.Node)
-				}
-			}
-			switch {
-			case len(locals) > 0:
-				cfg.Providers.Proxmox.Node = locals[0]
-			case len(all) > 0:
-				// Sort for deterministic pick.
-				cfg.Providers.Proxmox.Node = minString(all)
-			}
+		switch {
+		case len(locals) > 0:
+			cfg.Providers.Proxmox.Node = locals[0]
+		case len(all) > 0:
+			cfg.Providers.Proxmox.Node = minString(all)
 		}
 	}
 
-	if cfg.Providers.Proxmox.Region == "" {
-		var cp struct {
-			Data []struct {
-				Type string `json:"type"`
-				Name string `json:"name"`
-			} `json:"data"`
-		}
-		if err := fetchJSON(base+"/cluster/status", authValue, insecure, &cp); err == nil {
-			for _, it := range cp.Data {
-				if it.Type == "cluster" && it.Name != "" {
-					cfg.Providers.Proxmox.Region = it.Name
-					break
-				}
-			}
-		}
-		if cfg.Providers.Proxmox.Region == "" && cfg.Providers.Proxmox.Node != "" {
-			cfg.Providers.Proxmox.Region = cfg.Providers.Proxmox.Node
-		}
+	if cfg.Providers.Proxmox.Region == "" && cluster != nil && cluster.Name != "" {
+		cfg.Providers.Proxmox.Region = cluster.Name
+	}
+	// Final fallback: use the resolved node name as region.
+	if cfg.Providers.Proxmox.Region == "" && cfg.Providers.Proxmox.Node != "" {
+		cfg.Providers.Proxmox.Region = cfg.Providers.Proxmox.Node
 	}
 
 	if cfg.Providers.Proxmox.Region != "" {
@@ -179,7 +137,7 @@ func ResolveRegionAndNodeFromClusterctlAPI(cfg *config.Config) error {
 //  2. GET /api2/json/access/roles returns 200 (admin has required
 //     privileges for OpenTofu role bootstrap)
 //
-// Dies on any non-200.
+// Dies on any failure.
 func CheckAdminAPIConnectivity(cfg *config.Config) {
 	if cfg.Providers.Proxmox.URL == "" {
 		logx.Die("PROXMOX_URL is required for OpenTofu identity orchestrator.")
@@ -191,30 +149,30 @@ func CheckAdminAPIConnectivity(cfg *config.Config) {
 		logx.Die("PROXMOX_ADMIN_TOKEN is required for OpenTofu identity orchestrator.")
 	}
 
-	base := HostBaseURL(cfg)
-	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.Providers.Proxmox.AdminUsername, cfg.Providers.Proxmox.AdminToken)
 	insecure := sysinfo.IsTrue(cfg.Providers.Proxmox.AdminInsecure)
+	c := newSDKClient(APIJSONURL(cfg),
+		cfg.Providers.Proxmox.AdminUsername,
+		cfg.Providers.Proxmox.AdminToken,
+		insecure)
+	ctx := context.Background()
 
-	logx.Log("Validating Proxmox admin API credentials at %s...", base)
-	switch code := statusCode(base+"/api2/json/version", auth, insecure); code {
-	case 200:
-		logx.Log("Proxmox admin API token validated (HTTP 200 on /version).")
-	case 401:
-		logx.Die("Proxmox admin API token unauthorized (401). Check PROXMOX_ADMIN_USERNAME token ID and PROXMOX_ADMIN_TOKEN secret.")
-	case 0:
-		logx.Die("Could not reach Proxmox API at %s. Check PROXMOX_URL and network connectivity.", base)
-	default:
-		logx.Die("Unexpected HTTP %d while validating admin token at %s.", code, base)
-	}
+	logx.Log("Validating Proxmox admin API credentials at %s...", HostBaseURL(cfg))
 
-	switch code := statusCode(base+"/api2/json/access/roles", auth, insecure); code {
-	case 200:
-		logx.Log("Proxmox admin token can access /access/roles (required for role bootstrap).")
-	case 401:
-		logx.Die("Proxmox admin token cannot access /access/roles (401). Token lacks required privileges for OpenTofu role creation.")
-	default:
-		logx.Die("Unexpected HTTP %d while checking /access/roles permissions for OpenTofu orchestrator.", code)
+	if _, err := c.Version(ctx); err != nil {
+		if proxmoxsdk.IsNotAuthorized(err) {
+			logx.Die("Proxmox admin API token unauthorized (401). Check PROXMOX_ADMIN_USERNAME token ID and PROXMOX_ADMIN_TOKEN secret.")
+		}
+		logx.Die("Could not reach Proxmox API at %s. Check PROXMOX_URL and network connectivity.", HostBaseURL(cfg))
 	}
+	logx.Log("Proxmox admin API token validated (HTTP 200 on /version).")
+
+	if _, err := c.Roles(ctx); err != nil {
+		if proxmoxsdk.IsNotAuthorized(err) {
+			logx.Die("Proxmox admin token cannot access /access/roles (401). Token lacks required privileges for OpenTofu role creation.")
+		}
+		logx.Die("Unexpected error while checking /access/roles permissions for OpenTofu orchestrator.")
+	}
+	logx.Log("Proxmox admin token can access /access/roles (required for role bootstrap).")
 }
 
 // ResolveAvailableClusterSetIDForRoles only applies to numeric
@@ -228,60 +186,55 @@ func ResolveAvailableClusterSetIDForRoles(cfg *config.Config) error {
 	if !numericRE.MatchString(cfg.ClusterSetID) {
 		return nil
 	}
-	base := strings.TrimRight(APIJSONURL(cfg), "/")
-	auth := fmt.Sprintf("PVEAPIToken=%s=%s", cfg.Providers.Proxmox.AdminUsername, cfg.Providers.Proxmox.AdminToken)
+
 	insecure := sysinfo.IsTrue(cfg.Providers.Proxmox.AdminInsecure)
+	c := newSDKClient(APIJSONURL(cfg),
+		cfg.Providers.Proxmox.AdminUsername,
+		cfg.Providers.Proxmox.AdminToken,
+		insecure)
+	ctx := context.Background()
 
-	type rolesResp struct {
-		Data []struct {
-			RoleID string `json:"roleid"`
-		} `json:"data"`
-	}
-	type usersResp struct {
-		Data []struct {
-			UserID string `json:"userid"`
-		} `json:"data"`
-	}
-	type tokenResp struct {
-		Data []struct {
-			TokenID string `json:"tokenid"`
-		} `json:"data"`
-	}
-
-	var roles rolesResp
-	var users usersResp
-	if err := fetchJSON(base+"/access/roles", auth, insecure, &roles); err != nil {
+	roles, err := c.Roles(ctx)
+	if err != nil {
 		logx.Warn("Failed to compute an available CLUSTER_SET_ID from Proxmox identity inventory; using explicit CLUSTER_SET_ID=%s.", cfg.ClusterSetID)
 		return err
 	}
-	if err := fetchJSON(base+"/access/users", auth, insecure, &users); err != nil {
+	users, err := c.Users(ctx)
+	if err != nil {
 		logx.Warn("Failed to compute an available CLUSTER_SET_ID from Proxmox identity inventory; using explicit CLUSTER_SET_ID=%s.", cfg.ClusterSetID)
 		return err
 	}
+
 	roleSet := map[string]bool{}
-	for _, r := range roles.Data {
+	for _, r := range roles {
 		roleSet[r.RoleID] = true
 	}
 	userSet := map[string]bool{}
-	for _, u := range users.Data {
+	for _, u := range users {
 		userSet[u.UserID] = true
 	}
 
+	// tokenNameExists checks whether the given tokenName exists for a
+	// given userID. Uses the SDK's User.GetAPITokens method.
 	tokenNameExists := func(userID, name string) bool {
 		if !userSet[userID] {
 			return false
 		}
-		var t tokenResp
-		u := base + "/access/users/" + url.PathEscape(userID) + "/token"
-		if err := fetchJSON(u, auth, insecure, &t); err != nil {
+		user, err := c.User(ctx, userID)
+		if err != nil {
+			return false
+		}
+		tokens, err := user.GetAPITokens(ctx)
+		if err != nil {
 			return false
 		}
 		full := userID + "!" + name
-		for _, it := range t.Data {
-			if it.TokenID == full {
+		for _, t := range tokens {
+			if t.TokenID == full {
 				return true
 			}
-			if i := strings.IndexByte(it.TokenID, '!'); i >= 0 && it.TokenID[i+1:] == name {
+			// The SDK may return only the bare name portion.
+			if i := strings.IndexByte(t.TokenID, '!'); i >= 0 && t.TokenID[i+1:] == name {
 				return true
 			}
 		}
@@ -364,8 +317,7 @@ func ResolveAvailableClusterSetIDForRoles(cfg *config.Config) error {
 
 // EnsurePool creates a Proxmox pool with the given name if it doesn't
 // already exist. Idempotent: returns nil when the pool is already
-// present (Proxmox returns 500 with "already exists" on duplicate
-// POST). Uses the admin token (the clusterctl token usually doesn't
+// present. Uses the admin token (the clusterctl token usually doesn't
 // have Pool.Allocate). Caller skips when name is empty.
 //
 // Equivalent to `pveum pool add <name>` against the Proxmox REST API
@@ -377,49 +329,35 @@ func EnsurePool(cfg *config.Config, name string) error {
 	if cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 		return fmt.Errorf("EnsurePool %s: admin credentials missing (PROXMOX_ADMIN_USERNAME / PROXMOX_ADMIN_TOKEN)", name)
 	}
-	base := strings.TrimRight(HostBaseURL(cfg), "/")
-	if base == "" {
+	if cfg.Providers.Proxmox.URL == "" {
 		return fmt.Errorf("EnsurePool %s: PROXMOX_URL is empty", name)
 	}
-	auth := "PVEAPIToken=" + cfg.Providers.Proxmox.AdminUsername + "=" + cfg.Providers.Proxmox.AdminToken
 
-	// Idempotency probe: GET /pools/<name> — 200 means it exists.
-	if statusCode(base+"/api2/json/pools/"+name, auth, isInsecure(cfg.Providers.Proxmox.AdminInsecure)) == 200 {
-		return nil
+	insecure := sysinfo.IsTrue(cfg.Providers.Proxmox.AdminInsecure)
+	c := newSDKClient(APIJSONURL(cfg),
+		cfg.Providers.Proxmox.AdminUsername,
+		cfg.Providers.Proxmox.AdminToken,
+		insecure)
+	ctx := context.Background()
+
+	// Idempotency probe: fetching the pool returns an error when it
+	// doesn't exist (Proxmox returns 500 with "does not exist").
+	if _, err := c.Pool(ctx, name); err == nil {
+		return nil // pool already exists
 	}
 
-	// Create. Use POST /api2/json/pools with form body poolid=<name>.
-	body := strings.NewReader("poolid=" + name)
-	req, err := http.NewRequest(http.MethodPost, base+"/api2/json/pools", body)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", auth)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	c := httpClient(isInsecure(cfg.Providers.Proxmox.AdminInsecure))
-	resp, err := c.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == 200 {
-		return nil
-	}
-	// Some Proxmox versions return 500 with text body containing
-	// "already exists" on duplicate poolid — treat as success.
-	bb, _ := io.ReadAll(resp.Body)
-	if strings.Contains(strings.ToLower(string(bb)), "already exists") {
-		return nil
-	}
-	return fmt.Errorf("create pool %s: HTTP %d: %s", name, resp.StatusCode, string(bb))
+	return c.NewPool(ctx, name, "yage managed pool")
 }
 
-func isInsecure(s string) bool {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "true", "1", "yes", "y", "on":
-		return true
+// splitTokenAuth splits a "tokenID=secret" string on the last '='.
+// The tokenID may itself contain '=' characters so we split from the
+// right. Returns ("", rawSecret) when no '=' is found.
+func splitTokenAuth(raw string) (tokenID, secret string) {
+	i := strings.LastIndex(raw, "=")
+	if i < 0 {
+		return "", raw
 	}
-	return false
+	return raw[:i], raw[i+1:]
 }
 
 // minString returns the smallest string in s (stable equivalent of

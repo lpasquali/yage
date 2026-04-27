@@ -96,12 +96,61 @@ func gcpManagedPostgres(region string, tier PostgresTier, dbGB int) (ManagedPost
 	return ManagedPostgres{}, errNotImplemented("gcp")
 }
 
+// doManagedPostgres picks the smallest single-node DO Managed Postgres
+// SKU that fits the requested DB size. DO doesn't expose a separate
+// "prod" tier, so the prod path simply jumps one size class — the
+// next-up VM is the closest thing to a multi-AZ-flavored upgrade DO's
+// catalog offers (DO bills HA with per-standby surcharges that aren't
+// modeled here). Falls back to the published list price when the
+// /v2/databases/options endpoint isn't reachable.
 func doManagedPostgres(region string, tier PostgresTier, dbGB int) (ManagedPostgres, error) {
-	return ManagedPostgres{}, errNotImplemented("digitalocean")
+	size := doPostgresSize(tier, dbGB)
+	usd, err := pricing.DOManagedPostgresUSDPerMonth(size)
+	if err != nil {
+		return ManagedPostgres{}, fmt.Errorf("%w: digitalocean: %v",
+			provider.ErrNotApplicable, err)
+	}
+	return ManagedPostgres{
+		SKU:        fmt.Sprintf("DO Managed Postgres %s", size),
+		MonthlyUSD: usd,
+	}, nil
 }
 
+// doPostgresSize maps tier + dbGB onto the DO node-size slug. The
+// dev/staging path picks the cheapest single-vCPU shape; prod jumps
+// to the 2-vCPU/4-GB shape, which is the smallest instance DO bills
+// at the production-grade price tier.
+func doPostgresSize(tier PostgresTier, dbGB int) string {
+	if tier.IsProd() || dbGB > 25 {
+		return "db-s-2vcpu-4gb"
+	}
+	return "db-s-1vcpu-1gb"
+}
+
+// linodeManagedPostgres picks the Linode/Akamai DBaaS node size that
+// fits the workload tier + storage. Linode also has no dedicated prod
+// upgrade path beyond instance-size — prod and large-DB requests roll
+// up to the standard-2 shape; everything else stays on nanode-1. The
+// pricing helper falls back to the public list when the catalog
+// endpoint is unavailable.
 func linodeManagedPostgres(region string, tier PostgresTier, dbGB int) (ManagedPostgres, error) {
-	return ManagedPostgres{}, errNotImplemented("linode")
+	size := linodePostgresSize(tier, dbGB)
+	usd, err := pricing.LinodeManagedPostgresUSDPerMonth(size)
+	if err != nil {
+		return ManagedPostgres{}, fmt.Errorf("%w: linode: %v",
+			provider.ErrNotApplicable, err)
+	}
+	return ManagedPostgres{
+		SKU:        fmt.Sprintf("Linode Managed Postgres %s", size),
+		MonthlyUSD: usd,
+	}, nil
+}
+
+func linodePostgresSize(tier PostgresTier, dbGB int) string {
+	if tier.IsProd() || dbGB > 25 {
+		return "g6-standard-2"
+	}
+	return "g6-nanode-1"
 }
 
 func ociManagedPostgres(region string, tier PostgresTier, dbGB int) (ManagedPostgres, error) {
@@ -117,6 +166,3 @@ func errNotImplemented(vendor string) error {
 		provider.ErrNotApplicable, vendor)
 }
 
-// Compile-time guard so unused imports aren't dropped while the
-// stubs are in place. Removed once helpers go live.
-var _ = pricing.MonthlyHours

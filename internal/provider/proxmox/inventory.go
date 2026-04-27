@@ -20,7 +20,7 @@ import (
 
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/provider"
-	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/api"
 )
 
 // Inventory returns the cloud-correct picture of "what's there +
@@ -294,7 +294,7 @@ func authForCfg(cfg *config.Config) (auth string, insecure bool, base string, er
 	case "true", "1", "yes", "y", "on":
 		insecure = true
 	}
-	base = strings.TrimRight(pveapi.HostBaseURL(cfg), "/")
+	base = strings.TrimRight(api.HostBaseURL(cfg), "/")
 	if base == "" {
 		return "", false, "", fmt.Errorf("PROXMOX_URL is empty")
 	}

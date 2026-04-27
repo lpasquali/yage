@@ -35,8 +35,9 @@ import (
 	"github.com/lpasquali/yage/internal/capi/pivot"
 	"github.com/lpasquali/yage/internal/ui/promptx"
 	"github.com/lpasquali/yage/internal/provider"
-	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/api"
 	"github.com/lpasquali/yage/internal/platform/shell"
+	"github.com/lpasquali/yage/internal/util/idgen"
 	"github.com/lpasquali/yage/internal/util/yamlx"
 )
 
@@ -241,23 +242,23 @@ func Run(cfg *config.Config) int {
 	if cfg.Providers.Proxmox.RecreateIdentities {
 		logx.Log("Re-creation mode: identity parameters are resolved later (Terraform state or CAPI/CSI token IDs in kind / env).")
 		if cfg.ClusterSetID != "" && cfg.Providers.Proxmox.IdentitySuffix == "" {
-			cfg.Providers.Proxmox.IdentitySuffix = pveapi.DeriveIdentitySuffix(cfg.ClusterSetID)
+			cfg.Providers.Proxmox.IdentitySuffix = api.DeriveIdentitySuffix(cfg.ClusterSetID)
 		}
 		if cfg.ClusterSetID != "" {
-			pveapi.ValidateClusterSetIDFormat(cfg)
+			api.ValidateClusterSetIDFormat(cfg)
 		}
 		if cfg.Providers.Proxmox.IdentitySuffix != "" {
 			logx.Log("Using Proxmox identity suffix: %s", cfg.Providers.Proxmox.IdentitySuffix)
 		}
 	} else {
 		if cfg.ClusterSetID == "" {
-			cfg.ClusterSetID = pveapi.GenerateUUIDv4()
+			cfg.ClusterSetID = idgen.GenerateUUIDv4()
 			logx.Log("Generated CLUSTER_SET_ID: %s", cfg.ClusterSetID)
 		}
 		if cfg.Providers.Proxmox.IdentitySuffix == "" {
-			cfg.Providers.Proxmox.IdentitySuffix = pveapi.DeriveIdentitySuffix(cfg.ClusterSetID)
+			cfg.Providers.Proxmox.IdentitySuffix = api.DeriveIdentitySuffix(cfg.ClusterSetID)
 		}
-		pveapi.ValidateClusterSetIDFormat(cfg)
+		api.ValidateClusterSetIDFormat(cfg)
 		logx.Log("Using Proxmox identity suffix: %s", cfg.Providers.Proxmox.IdentitySuffix)
 	}
 
@@ -395,7 +396,7 @@ func Run(cfg *config.Config) int {
 
 	if phase0IdentityBootstrap {
 		logx.Warn("Clusterctl API identity and/or CSI credentials are not satisfied from env or an explicit local clusterctl file — checking further.")
-		pveapi.RefreshDerivedIdentityTokenIDs(cfg)
+		api.RefreshDerivedIdentityTokenIDs(cfg)
 		opentofux.WriteClusterctlConfigIfMissing(cfg)
 		opentofux.WriteCSIConfigIfMissing(cfg)
 
@@ -434,11 +435,11 @@ func Run(cfg *config.Config) int {
 			if len(missingAdmin) > 0 {
 				logx.Die("Missing admin Proxmox configuration: %v. Cannot run Terraform bootstrap without admin credentials.", missingAdmin)
 			}
-			if err := pveapi.ResolveRegionAndNodeFromAdminAPI(cfg); err != nil {
+			if err := api.ResolveRegionAndNodeFromAdminAPI(cfg); err != nil {
 				logx.Warn("resolve_proxmox_region_and_node_from_admin_api: %v", err)
 			}
-			_ = pveapi.ResolveAvailableClusterSetIDForRoles(cfg)
-			pveapi.CheckAdminAPIConnectivity(cfg)
+			_ = api.ResolveAvailableClusterSetIDForRoles(cfg)
+			api.CheckAdminAPIConnectivity(cfg)
 			if cfg.Providers.Proxmox.RecreateIdentities {
 				if err := opentofux.RecreateIdentities(cfg); err != nil {
 					logx.Die("recreate_proxmox_identities_terraform failed: %v", err)
@@ -460,11 +461,11 @@ func Run(cfg *config.Config) int {
 				func() { _ = kindsync.SyncBootstrapConfigToKind(cfg) },
 				func() { _ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg) })
 		}
-		if err := pveapi.ResolveRegionAndNodeFromAdminAPI(cfg); err != nil {
+		if err := api.ResolveRegionAndNodeFromAdminAPI(cfg); err != nil {
 			logx.Warn("%v", err)
 		}
-		_ = pveapi.ResolveAvailableClusterSetIDForRoles(cfg)
-		pveapi.CheckAdminAPIConnectivity(cfg)
+		_ = api.ResolveAvailableClusterSetIDForRoles(cfg)
+		api.CheckAdminAPIConnectivity(cfg)
 		if err := opentofux.RecreateIdentities(cfg); err != nil {
 			logx.Die("%v", err)
 		}
@@ -517,9 +518,9 @@ func Run(cfg *config.Config) int {
 				cfg.Providers.Proxmox.CAPISecret = yamlx.GetValue(cfg.ClusterctlCfg, "PROXMOX_SECRET")
 			}
 		}
-		cfg.Providers.Proxmox.CAPISecret = pveapi.NormalizeTokenSecret(cfg.Providers.Proxmox.CAPISecret, cfg.Providers.Proxmox.CAPIToken)
-		pveapi.ValidateTokenSecret("PROXMOX_CAPI_SECRET", cfg.Providers.Proxmox.CAPISecret)
-		pveapi.RefreshDerivedIdentityTokenIDs(cfg)
+		cfg.Providers.Proxmox.CAPISecret = api.NormalizeTokenSecret(cfg.Providers.Proxmox.CAPISecret, cfg.Providers.Proxmox.CAPIToken)
+		api.ValidateTokenSecret("PROXMOX_CAPI_SECRET", cfg.Providers.Proxmox.CAPISecret)
+		api.RefreshDerivedIdentityTokenIDs(cfg)
 		if cfg.Providers.Proxmox.TemplateID == "" {
 			cfg.Providers.Proxmox.TemplateID = "104"
 		}
@@ -543,8 +544,8 @@ func Run(cfg *config.Config) int {
 		}
 
 		// Test Proxmox API connectivity with the clusterctl token.
-		logx.Log("Testing Proxmox API connectivity at %s (clusterctl token)...", pveapi.HostBaseURL(cfg))
-		if err := pveapi.ResolveRegionAndNodeFromClusterctlAPI(cfg); err != nil {
+		logx.Log("Testing Proxmox API connectivity at %s (clusterctl token)...", api.HostBaseURL(cfg))
+		if err := api.ResolveRegionAndNodeFromClusterctlAPI(cfg); err != nil {
 			logx.Die("Proxmox API connectivity check failed: %v. Verify PROXMOX_URL, PROXMOX_CAPI_TOKEN, and PROXMOX_CAPI_SECRET.", err)
 		}
 		logx.Log("Proxmox API reachable.")
@@ -763,14 +764,14 @@ func Run(cfg *config.Config) int {
 	// create the workload pool here and (when --pivot is enabled) the
 	// mgmt pool too. Idempotent: existing pools are silently kept.
 	if cfg.InfraProvider == "proxmox" && cfg.Providers.Proxmox.Pool != "" {
-		if err := pveapi.EnsurePool(cfg, cfg.Providers.Proxmox.Pool); err != nil {
+		if err := api.EnsurePool(cfg, cfg.Providers.Proxmox.Pool); err != nil {
 			logx.Warn("Proxmox pool %s: %v — VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Pool, err)
 		} else {
 			logx.Log("Proxmox pool '%s' ensured (workload).", cfg.Providers.Proxmox.Pool)
 		}
 	}
 	if cfg.InfraProvider == "proxmox" && cfg.Pivot.Enabled && cfg.Providers.Proxmox.Mgmt.Pool != "" {
-		if err := pveapi.EnsurePool(cfg, cfg.Providers.Proxmox.Mgmt.Pool); err != nil {
+		if err := api.EnsurePool(cfg, cfg.Providers.Proxmox.Mgmt.Pool); err != nil {
 			logx.Warn("Proxmox pool %s: %v — mgmt VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Mgmt.Pool, err)
 		} else {
 			logx.Log("Proxmox pool '%s' ensured (management).", cfg.Providers.Proxmox.Mgmt.Pool)
@@ -876,7 +877,7 @@ func Run(cfg *config.Config) int {
 	_, _ = capimanifest.PatchProxmoxMachineTemplateSpecRevisions(cfg)
 	capimanifest.DiscoverWorkloadClusterIdentity(cfg, cfg.CAPIManifest)
 	_ = capimanifest.EnsureWorkloadClusterLabel(cfg, cfg.CAPIManifest, cfg.WorkloadClusterName)
-	pveapi.RefreshDerivedCiliumClusterID(cfg)
+	api.RefreshDerivedCiliumClusterID(cfg)
 	_ = caaph.PatchClusterCAAPHHelmLabels(cfg, cfg.CAPIManifest)
 	PushCAPIManifestToSecret(cfg)
 
@@ -918,7 +919,7 @@ func Run(cfg *config.Config) int {
 	if cfg.Providers.Proxmox.CSIEnabled && cfg.ArgoCD.Enabled && cfg.ArgoCD.WorkloadEnabled {
 		csi.LoadVarsFromConfig(cfg)
 		if cfg.Providers.Proxmox.CSIURL == "" {
-			cfg.Providers.Proxmox.CSIURL = pveapi.APIJSONURL(cfg)
+			cfg.Providers.Proxmox.CSIURL = api.APIJSONURL(cfg)
 		}
 		if cfg.Providers.Proxmox.CSIURL != "" && cfg.Providers.Proxmox.CSITokenID != "" &&
 			cfg.Providers.Proxmox.CSITokenSecret != "" && cfg.Providers.Proxmox.Region != "" {

@@ -20,7 +20,7 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/logx"
-	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/api"
 )
 
 // TryFillWorkloadInputsFromManagement is a best-effort fill from
@@ -304,7 +304,7 @@ func GenerateWorkloadManifestIfMissing(
 	}
 
 	if cfg.InfraProvider == "proxmox" && cfg.Providers.Proxmox.CSIURL == "" {
-		cfg.Providers.Proxmox.CSIURL = pveapi.APIJSONURL(cfg)
+		cfg.Providers.Proxmox.CSIURL = api.APIJSONURL(cfg)
 	}
 
 	// K3s mode renders an embedded template (k3s_template.yaml). Upstream

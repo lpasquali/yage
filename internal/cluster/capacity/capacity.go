@@ -301,15 +301,24 @@ func CheckCombined(plan Plan, host *HostCapacity, existing *ExistingUsage, thres
 		usedDisk, plan.StorageGB, totalDisk, host.StorageGB, diskFrac*100,
 	)
 
+	// Hard abort ceiling applies to memory only. CPU overcommit is normal
+	// in Proxmox — VMs share physical cores and rarely all run at 100%
+	// simultaneously. Memory is the dangerous dimension: overcommit beyond
+	// physical RAM causes OOMs under load.
+	memDiskMaxFrac := memFrac
+	if diskFrac > memDiskMaxFrac {
+		memDiskMaxFrac = diskFrac
+	}
+
 	switch {
 	case maxFrac <= threshold:
 		return VerdictFits, msg + fmt.Sprintf(" — within soft budget %.0f%%", threshold*100)
-	case maxFrac <= hardCeiling:
+	case memDiskMaxFrac <= hardCeiling:
 		return VerdictTight, msg + fmt.Sprintf(" — exceeds soft budget %.0f%% but within %.0f%% overcommit tolerance",
 			threshold*100, tolerancePct)
 	default:
-		return VerdictAbort, msg + fmt.Sprintf(" — exceeds %.0f%% overcommit ceiling (%.0f%% > %.0f%%)",
-			tolerancePct, maxFrac*100, hardCeiling*100)
+		return VerdictAbort, msg + fmt.Sprintf(" — memory/disk exceeds %.0f%% overcommit ceiling (%.0f%% > %.0f%%)",
+			tolerancePct, memDiskMaxFrac*100, hardCeiling*100)
 	}
 }
 

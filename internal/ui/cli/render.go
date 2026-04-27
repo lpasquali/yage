@@ -56,6 +56,7 @@ func RenderCommand(cfg *config.Config, mode SensitiveMode) string {
 	r.line("yage")
 
 	r.universal(cfg)
+	r.network(cfg)
 	r.cost(cfg)
 	r.tco(cfg)
 	r.workload(cfg)
@@ -205,6 +206,17 @@ func (r *renderer) universal(cfg *config.Config) {
 	r.flag("--bootstrap-mode", cfg.BootstrapMode)
 }
 
+func (r *renderer) network(cfg *config.Config) {
+	r.flag("--control-plane-endpoint-ip", cfg.ControlPlaneEndpointIP)
+	r.flag("--control-plane-endpoint-port", cfg.ControlPlaneEndpointPort)
+	r.flag("--node-ip-ranges", cfg.NodeIPRanges)
+	r.flag("--gateway", cfg.Gateway)
+	r.flag("--ip-prefix", cfg.IPPrefix)
+	r.flag("--dns-servers", cfg.DNSServers)
+	r.flag("--allowed-nodes", cfg.AllowedNodes)
+	r.flag("--vm-ssh-keys", cfg.VMSSHKeys)
+}
+
 func (r *renderer) cost(cfg *config.Config) {
 	r.flag("--data-center-location", cfg.Cost.Currency.DataCenterLocation)
 	r.flagBool("--cost-compare", cfg.CostCompare)
@@ -267,12 +279,25 @@ func (r *renderer) proxmox(cfg *config.Config) {
 	r.flag("--proxmox-url", p.URL)
 	r.flag("--admin-username", p.AdminUsername)
 	r.secret("--admin-token", p.AdminToken, "PROXMOX_ADMIN_TOKEN")
+	r.secret("--proxmox-capi-token", p.CAPIToken, "PROXMOX_CAPI_TOKEN")
+	r.secret("--proxmox-capi-secret", p.CAPISecret, "PROXMOX_CAPI_SECRET")
 	r.flag("--region", p.Region)
 	r.flag("--node", p.Node)
 	r.flag("--bridge", p.Bridge)
 	r.flag("--template-id", p.TemplateID)
-	r.secret("--proxmox-token", p.Token, "PROXMOX_TOKEN")
-	r.secret("--proxmox-secret", p.Secret, "PROXMOX_SECRET")
+	r.flag("--proxmox-pool", p.Pool)
+	r.flag("--cloudinit-storage", p.CloudinitStorage)
+	r.secret("--csi-token-id", p.CSITokenID, "PROXMOX_CSI_TOKEN_ID")
+	r.secret("--csi-token-secret", p.CSITokenSecret, "PROXMOX_CSI_TOKEN_SECRET")
+	// VM sizing — only emit when non-empty (non-default).
+	r.flag("--control-plane-num-sockets", p.ControlPlaneNumSockets)
+	r.flag("--control-plane-num-cores", p.ControlPlaneNumCores)
+	r.flag("--control-plane-memory-mib", p.ControlPlaneMemoryMiB)
+	r.flag("--control-plane-boot-volume-size", p.ControlPlaneBootVolumeSize)
+	r.flag("--worker-num-sockets", p.WorkerNumSockets)
+	r.flag("--worker-num-cores", p.WorkerNumCores)
+	r.flag("--worker-memory-mib", p.WorkerMemoryMiB)
+	r.flag("--worker-boot-volume-size", p.WorkerBootVolumeSize)
 }
 
 func (r *renderer) aws(cfg *config.Config) {

@@ -80,9 +80,19 @@ func (c *Config) yamlExtras() map[string]func(string) {
 		// Operational
 		"INFRA_PROVIDER":  func(v string) { c.InfraProvider = v },
 		"BOOTSTRAP_MODE":  func(v string) { c.BootstrapMode = v },
-		// Proxmox credentials
-		"PROXMOX_TOKEN":            func(v string) { c.Providers.Proxmox.Token = v },
-		"PROXMOX_SECRET":           func(v string) { c.Providers.Proxmox.Secret = v },
+		// Proxmox CAPI credentials (new names); old names aliased for compat
+		"PROXMOX_CAPI_TOKEN":       func(v string) { c.Providers.Proxmox.CAPIToken = v },
+		"PROXMOX_CAPI_SECRET":      func(v string) { c.Providers.Proxmox.CAPISecret = v },
+		"PROXMOX_TOKEN":            func(v string) {
+			if c.Providers.Proxmox.CAPIToken == "" {
+				c.Providers.Proxmox.CAPIToken = v
+			}
+		},
+		"PROXMOX_SECRET":           func(v string) {
+			if c.Providers.Proxmox.CAPISecret == "" {
+				c.Providers.Proxmox.CAPISecret = v
+			}
+		},
 		"PROXMOX_ADMIN_TOKEN":      func(v string) { c.Providers.Proxmox.AdminToken = v },
 		"PROXMOX_ADMIN_USERNAME":   func(v string) { c.Providers.Proxmox.AdminUsername = v },
 		"PROXMOX_CSI_TOKEN_ID":     func(v string) { c.Providers.Proxmox.CSITokenID = v },

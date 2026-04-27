@@ -45,8 +45,8 @@ func proxmoxEnvMap(cfg *config.Config) map[string]string {
 	}
 	m := map[string]string{}
 	put(m, "PROXMOX_URL", cfg.Providers.Proxmox.URL)
-	put(m, "PROXMOX_TOKEN", cfg.Providers.Proxmox.Token)
-	put(m, "PROXMOX_SECRET", cfg.Providers.Proxmox.Secret)
+	put(m, "PROXMOX_CAPI_TOKEN", cfg.Providers.Proxmox.CAPIToken)
+	put(m, "PROXMOX_CAPI_SECRET", cfg.Providers.Proxmox.CAPISecret)
 	put(m, "PROXMOX_REGION", cfg.Providers.Proxmox.Region)
 	put(m, "PROXMOX_NODE", cfg.Providers.Proxmox.Node)
 	put(m, "PROXMOX_ADMIN_USERNAME", cfg.Providers.Proxmox.AdminUsername)

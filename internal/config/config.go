@@ -63,6 +63,13 @@ type WorkloadShape struct {
 	//   - "prod"    → Argo CD HA + full monitoring + backups
 	// Empty string treated as "dev" (default).
 	Environment string
+	// HasQueue / HasObjStore / HasCache record whether the operator
+	// opted into each add-on in the xapiri walkthrough. Used to
+	// pre-populate the add-on prompts on subsequent runs (so the
+	// [y/N] default reflects the saved choice).
+	HasQueue    bool
+	HasObjStore bool
+	HasCache    bool
 }
 
 // AppGroup is one entry in WorkloadShape.Apps. The combination
@@ -90,9 +97,12 @@ type AppGroup struct {
 // VM sizing, template IDs, pool, CSI) live in ProxmoxMgmtConfig under
 // cfg.Providers.Proxmox.Mgmt.
 type MgmtConfig struct {
-	ClusterName              string
-	ClusterNamespace         string
-	KubernetesVersion        string
+	ClusterName                string
+	ClusterNameExplicit        bool
+	ClusterNamespace           string
+	ClusterNamespaceExplicit   bool
+	KubernetesVersion          string
+	KubernetesVersionExplicit  bool
 	CiliumClusterID          string
 	ControlPlaneMachineCount string // "1" by default (single-node mgmt)
 	WorkerMachineCount       string // "0" by default (CP-only)
@@ -124,7 +134,8 @@ type ProxmoxMgmtConfig struct {
 	WorkerTemplateID             string
 	// Pool is the Proxmox VE pool name the management cluster's VMs are
 	// tagged with. See ProxmoxConfig.Pool for the workload counterpart.
-	Pool string
+	Pool       string
+	PoolExplicit bool
 	// CSIEnabled — when true, install Proxmox CSI on the management
 	// cluster too. Default false: management is stateless (CAPI
 	// controllers + bootstrap state Secrets only — no PVCs).
@@ -415,10 +426,10 @@ type ProxmoxConfig struct {
 	RecreateIdentities      bool
 
 	// ---- Core API / target ----
-	URL            string
-	Token          string
-	Secret         string
-	Region         string
+	URL        string
+	CAPIToken  string
+	CAPISecret string
+	Region     string
 	Node           string
 	SourceNode     string
 	TopologyRegion string
@@ -432,7 +443,8 @@ type ProxmoxConfig struct {
 	// "no pool"; when set, yage pre-creates the pool via the admin API
 	// before applying the CAPI manifest, so CAPMOX won't fail on a missing
 	// pool reference.
-	Pool string
+	Pool         string
+	PoolExplicit bool
 
 	// ---- CSI ----
 	CSIEnabled          bool
@@ -663,6 +675,10 @@ type Config struct {
 	// (--xapiri) and exits. Mutually exclusive with the orchestrator
 	// run; setting it short-circuits main() before orchestrator.Run.
 	Xapiri                      bool
+	// XapiriDeployNow is set by the xapiri walkthrough when the user
+	// answers "deploy now? y" at step 8. main() reads it to decide
+	// whether to fall through to orchestrator.Run after the walkthrough.
+	XapiriDeployNow             bool
 	// PrintCommand, when non-empty, makes the program render the
 	// equivalent `yage <flags>` invocation that reproduces the
 	// resolved cfg, then exits. Useful for pipelines (capture the
@@ -1033,8 +1049,9 @@ type Config struct {
 	WorkloadClusterNamespace        string
 	WorkloadClusterNameExplicit     bool
 	WorkloadClusterNamespaceExplicit bool
-	WorkloadKubernetesVersion       string
-	ControlPlaneMachineCount        string
+	WorkloadKubernetesVersion         string
+	WorkloadKubernetesVersionExplicit bool
+	ControlPlaneMachineCount          string
 	WorkerMachineCount              string
 
 }
@@ -1469,8 +1486,8 @@ func Load() *Config {
 
 	// --- Proxmox core ---
 	c.Providers.Proxmox.URL = getenv("PROXMOX_URL", "")
-	c.Providers.Proxmox.Token = getenv("PROXMOX_TOKEN", "")
-	c.Providers.Proxmox.Secret = getenv("PROXMOX_SECRET", "")
+	c.Providers.Proxmox.CAPIToken = getenv("PROXMOX_CAPI_TOKEN", getenv("PROXMOX_TOKEN", ""))
+	c.Providers.Proxmox.CAPISecret = getenv("PROXMOX_CAPI_SECRET", getenv("PROXMOX_SECRET", ""))
 	c.Providers.Proxmox.AdminUsername = getenv("PROXMOX_ADMIN_USERNAME", "root@pam!capi-bootstrap")
 	c.Providers.Proxmox.AdminToken = getenv("PROXMOX_ADMIN_TOKEN", "")
 	c.Providers.Proxmox.Region = getenv("PROXMOX_REGION", "")
@@ -1542,9 +1559,10 @@ func Load() *Config {
 	c.WorkloadClusterName = getenv("WORKLOAD_CLUSTER_NAME", "capi-quickstart")
 	c.WorkloadCiliumClusterID = getenv("WORKLOAD_CILIUM_CLUSTER_ID", "")
 	c.WorkloadClusterNamespace = getenv("WORKLOAD_CLUSTER_NAMESPACE", "default")
-	c.WorkloadClusterNameExplicit = envBoolLoose("WORKLOAD_CLUSTER_NAME_EXPLICIT", false)
-	c.WorkloadClusterNamespaceExplicit = envBoolLoose("WORKLOAD_CLUSTER_NAMESPACE_EXPLICIT", false)
+	c.WorkloadClusterNameExplicit = envBoolLoose("WORKLOAD_CLUSTER_NAME_EXPLICIT", false) || os.Getenv("WORKLOAD_CLUSTER_NAME") != ""
+	c.WorkloadClusterNamespaceExplicit = envBoolLoose("WORKLOAD_CLUSTER_NAMESPACE_EXPLICIT", false) || os.Getenv("WORKLOAD_CLUSTER_NAMESPACE") != ""
 	c.WorkloadKubernetesVersion = getenv("WORKLOAD_KUBERNETES_VERSION", "v1.35.0")
+	c.WorkloadKubernetesVersionExplicit = os.Getenv("WORKLOAD_KUBERNETES_VERSION") != ""
 	c.ControlPlaneMachineCount = getenv("CONTROL_PLANE_MACHINE_COUNT", "1")
 	c.WorkerMachineCount = getenv("WORKER_MACHINE_COUNT", "2")
 
@@ -1576,8 +1594,11 @@ func Load() *Config {
 
 	// --- Management cluster shape (universal) ---
 	c.Mgmt.ClusterName = getenv("MGMT_CLUSTER_NAME", "capi-management")
+	c.Mgmt.ClusterNameExplicit = envBoolLoose("MGMT_CLUSTER_NAME_EXPLICIT", false) || os.Getenv("MGMT_CLUSTER_NAME") != ""
 	c.Mgmt.ClusterNamespace = getenv("MGMT_CLUSTER_NAMESPACE", "default")
+	c.Mgmt.ClusterNamespaceExplicit = envBoolLoose("MGMT_CLUSTER_NAMESPACE_EXPLICIT", false) || os.Getenv("MGMT_CLUSTER_NAMESPACE") != ""
 	c.Mgmt.KubernetesVersion = getenv("MGMT_KUBERNETES_VERSION", c.WorkloadKubernetesVersion)
+	c.Mgmt.KubernetesVersionExplicit = os.Getenv("MGMT_KUBERNETES_VERSION") != ""
 	c.Mgmt.CiliumClusterID = getenv("MGMT_CILIUM_CLUSTER_ID", "")
 	c.Mgmt.ControlPlaneMachineCount = getenv("MGMT_CONTROL_PLANE_MACHINE_COUNT", "1")
 	c.Mgmt.WorkerMachineCount = getenv("MGMT_WORKER_MACHINE_COUNT", "0")
@@ -1604,7 +1625,9 @@ func Load() *Config {
 	// Pool defaults to the matching cluster name so each cluster
 	// gets its own organizational bucket. User can override or set empty.
 	c.Providers.Proxmox.Pool = getenv("PROXMOX_POOL", c.WorkloadClusterName)
+	c.Providers.Proxmox.PoolExplicit = envBoolLoose("PROXMOX_POOL_EXPLICIT", false) || os.Getenv("PROXMOX_POOL") != ""
 	c.Providers.Proxmox.Mgmt.Pool = getenv("MGMT_PROXMOX_POOL", c.Mgmt.ClusterName)
+	c.Providers.Proxmox.Mgmt.PoolExplicit = envBoolLoose("MGMT_PROXMOX_POOL_EXPLICIT", false) || os.Getenv("MGMT_PROXMOX_POOL") != ""
 
 	return c
 }

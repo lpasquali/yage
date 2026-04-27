@@ -148,12 +148,14 @@ type state struct {
 // write to the io.Writer Run() was given. Tests can drive the
 // state machine by injecting both.
 func newState(w io.Writer, cfg *config.Config) *state {
-	return &state{
+	s := &state{
 		w:           w,
 		cfg:         cfg,
 		r:           newReader(os.Stdin, w),
 		headroomPct: 0.20,
 	}
+	s.initFromConfig(cfg)
+	return s
 }
 
 // newStateWithReader is the seam tests would use to drive the
@@ -161,11 +163,46 @@ func newState(w io.Writer, cfg *config.Config) *state {
 // non-os.Stdin source. Currently unused; kept here so a future
 // test pass can plug in without touching the interactive path.
 func newStateWithReader(w io.Writer, cfg *config.Config, in io.Reader) *state {
-	return &state{
+	s := &state{
 		w:           w,
 		cfg:         cfg,
 		r:           newReader(in, w),
 		headroomPct: 0.20,
+	}
+	s.initFromConfig(cfg)
+	return s
+}
+
+// initFromConfig seeds walkthrough-local state from a previously
+// persisted cfg.Workload so that second-run prompts show the saved
+// values as defaults rather than zero/empty.
+func (s *state) initFromConfig(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	switch cfg.Workload.Environment {
+	case "staging":
+		s.env = envStaging
+	case "prod":
+		s.env = envProd
+	case "dev":
+		s.env = envDev
+	}
+	switch cfg.Workload.Resilience {
+	case "ha":
+		s.resil = resilienceHA
+	case "ha-mr":
+		s.resil = resilienceHAMulti
+	case "single":
+		s.resil = resilienceSingle
+	}
+	s.workload.DBGB = cfg.Workload.DatabaseGB
+	s.workload.EgressGBMo = cfg.Workload.EgressGBMonth
+	s.workload.HasQueue = cfg.Workload.HasQueue
+	s.workload.HasObjStore = cfg.Workload.HasObjStore
+	s.workload.HasCache = cfg.Workload.HasCache
+	for _, ag := range cfg.Workload.Apps {
+		s.workload.Apps = append(s.workload.Apps, appBucket{Count: ag.Count, Template: ag.Template})
 	}
 }
 

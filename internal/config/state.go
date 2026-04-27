@@ -38,7 +38,7 @@ func (c *Config) ProxmoxAdminCfgFilePresent() bool {
 // trio that the CAPI/CAPMOX provider needs before it will initialize is
 // present.
 func (c *Config) HaveClusterctlCredsInEnv() bool {
-	return c.Providers.Proxmox.URL != "" && c.Providers.Proxmox.Token != "" && c.Providers.Proxmox.Secret != ""
+	return c.Providers.Proxmox.URL != "" && c.Providers.Proxmox.CAPIToken != "" && c.Providers.Proxmox.CAPISecret != ""
 }
 
 // HaveAWSCloudCreds reports whether static IAM user keys are present in

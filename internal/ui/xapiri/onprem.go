@@ -19,6 +19,9 @@ import (
 // runOnPremFork is the on-prem-fork driver. Steps 1-3 are shared;
 // 4 and 5 are local; 6-8 fall into runSharedTail.
 func (s *state) runOnPremFork() int {
+	if err := s.step4_onprem_providerPick(); err != nil {
+		return s.exit(err)
+	}
 	if err := s.step1_environment(); err != nil {
 		return s.exit(err)
 	}
@@ -26,9 +29,6 @@ func (s *state) runOnPremFork() int {
 		return s.exit(err)
 	}
 	if err := s.step3_workloadShape(); err != nil {
-		return s.exit(err)
-	}
-	if err := s.step4_onprem_providerPick(); err != nil {
 		return s.exit(err)
 	}
 	for {
@@ -106,7 +106,6 @@ func (s *state) step4_onprem_providerPick() error {
 // step 3.
 func (s *state) step5_onprem_capacity() error {
 	s.r.section("capacity")
-	s.stampGeoRegions("filled blank Region/Location where geo tables exist (e.g. OpenStack on-prem)")
 	verdict, err := runFeasibilityCheckOnPrem(s.cfg)
 	switch verdict {
 	case FeasibilityUnchecked:
@@ -146,8 +145,7 @@ func (s *state) step5_5_onprem_tco() error {
 	s.r.section("on-prem cost estimator (optional)")
 	curHas := s.cfg.HardwareCostUSD > 0 || s.cfg.HardwareWatts > 0 ||
 		s.cfg.HardwareSupportUSDMonth > 0
-	defWant := !curHas
-	if !s.r.promptYesNo("estimate monthly TCO?", defWant) {
+	if !s.r.promptYesNo("estimate monthly TCO?", curHas) {
 		s.r.info("skipped — review and persist will show 'TCO not configured'.")
 		return nil
 	}

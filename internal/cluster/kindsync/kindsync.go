@@ -77,7 +77,7 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 	// --- Single-Secret branch (PROXMOX_BOOTSTRAP_SECRET_NAME set) ---
 	if cfg.Providers.Proxmox.BootstrapSecretName != "" {
 		singleSecretKeys := []string{
-			"PROXMOX_URL", "PROXMOX_TOKEN", "PROXMOX_SECRET",
+			"PROXMOX_URL", "PROXMOX_CAPI_TOKEN", "PROXMOX_CAPI_SECRET",
 			"PROXMOX_CSI_URL", "PROXMOX_CSI_TOKEN_ID", "PROXMOX_CSI_TOKEN_SECRET",
 			"PROXMOX_REGION", "PROXMOX_NODE",
 		}
@@ -102,7 +102,7 @@ func SyncProxmoxBootstrapLiteralCredentialsToKind(cfg *config.Config) error {
 
 	// --- Default split: CAPMOX (clusterctl) Secret ---
 	capmoxKeys := []string{
-		"PROXMOX_URL", "PROXMOX_TOKEN", "PROXMOX_SECRET",
+		"PROXMOX_URL", "PROXMOX_CAPI_TOKEN", "PROXMOX_CAPI_SECRET",
 		"PROXMOX_REGION", "PROXMOX_NODE",
 	}
 	_ = (kindSecret{
@@ -237,7 +237,7 @@ func applyAdminYAMLToKind(cfg *config.Config, kctx, targetSecret string) error {
 // in-cluster capmox credential is restored on the next sync without
 // waiting for the full Argo / CAAPH loop.
 func UpdateCapmoxManagerSecretOnKind(cfg *config.Config) error {
-	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.Token == "" || cfg.Providers.Proxmox.Secret == "" {
+	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.CAPIToken == "" || cfg.Providers.Proxmox.CAPISecret == "" {
 		return nil
 	}
 	kctx := "kind-" + cfg.KindClusterName
@@ -253,8 +253,8 @@ func UpdateCapmoxManagerSecretOnKind(cfg *config.Config) error {
 	}
 	data := map[string][]byte{
 		"url":    []byte(cfg.Providers.Proxmox.URL),
-		"token":  []byte(cfg.Providers.Proxmox.Token),
-		"secret": []byte(cfg.Providers.Proxmox.Secret),
+		"token":  []byte(cfg.Providers.Proxmox.CAPIToken),
+		"secret": []byte(cfg.Providers.Proxmox.CAPISecret),
 	}
 	if err := applySecret(bg, cli, "capmox-system", "capmox-manager-credentials", data, nil); err != nil {
 		logx.Die("Failed to update capmox-system/capmox-manager-credentials on %s: %v", kctx, err)

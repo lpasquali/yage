@@ -158,11 +158,9 @@ var reSchedulerHints = regexp.MustCompile(`(?m)^  schedulerHints:`)
 var reSpecBlock = regexp.MustCompile(`(?m)^(spec:\n(?:  .*\n)+)`)
 
 func injectMemoryAdjustment(text, mem string) string {
-	// Doc-by-doc: find the ProxmoxCluster document (by top-level kind +
-	// apiVersion at line start) with a spec block that doesn't already
-	// contain `^  schedulerHints:`. Append the two lines to the spec.
-	// Using strings.Contains would false-positive on the CAPI Cluster
-	// document whose infrastructureRef contains "kind: ProxmoxCluster".
+	if mem == "" {
+		return text
+	}
 	parts := strings.Split(text, "\n---\n")
 	for i, doc := range parts {
 		if !reKindProxmoxCluster.MatchString(doc) {
@@ -173,6 +171,12 @@ func injectMemoryAdjustment(text, mem string) string {
 		}
 		if reSchedulerHints.MatchString(doc) {
 			break
+		}
+		// \n---\n splitting strips the trailing \n from the last line of each
+		// doc, so reSpecBlock's (?:  .*\n)+ misses it and leaves it dangling
+		// after schedulerHints at the wrong indentation. Add it back.
+		if !strings.HasSuffix(doc, "\n") {
+			doc += "\n"
 		}
 		loc := reSpecBlock.FindStringIndex(doc)
 		if loc == nil {

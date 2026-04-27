@@ -161,8 +161,5 @@ func collectOnPremBlockingReasons(sh shape, cfg *config.Config) []string {
 				fmt.Sprintf("HA resilience requires ≥3 control-plane nodes; cfg.ControlPlaneMachineCount=%d", got))
 		}
 	}
-	if cfg.HardwareCostUSD == 0 && cfg.HardwareWatts == 0 && cfg.HardwareSupportUSDMonth == 0 {
-		out = append(out, "TCO not configured: set --hardware-cost-usd / --hardware-watts / --hardware-support-usd-month for an amortized monthly figure")
-	}
 	return out
 }

@@ -80,10 +80,10 @@ func Parse(c *config.Config, argv []string) {
 			c.Providers.Proxmox.AdminToken = shiftVal(a)
 		case "--proxmox-url":
 			c.Providers.Proxmox.URL = shiftVal(a)
-		case "--proxmox-token":
-			c.Providers.Proxmox.Token = shiftVal(a)
-		case "--proxmox-secret":
-			c.Providers.Proxmox.Secret = shiftVal(a)
+		case "--proxmox-capi-token":
+			c.Providers.Proxmox.CAPIToken = shiftVal(a)
+		case "--proxmox-capi-secret":
+			c.Providers.Proxmox.CAPISecret = shiftVal(a)
 		case "-r", "--region":
 			c.Providers.Proxmox.Region = shiftVal(a)
 		case "-n", "--node":
@@ -123,6 +123,8 @@ func Parse(c *config.Config, argv []string) {
 		case "--allowed-nodes":
 			c.AllowedNodesExplicit = true
 			c.AllowedNodes = shiftVal(a)
+		case "--vm-ssh-keys":
+			c.VMSSHKeys = shiftVal(a)
 		case "--csi-url":
 			c.Providers.Proxmox.CSIURL = shiftVal(a)
 		case "--csi-token-id":

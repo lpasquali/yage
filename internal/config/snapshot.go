@@ -128,8 +128,8 @@ func (c *Config) Snapshot() []SnapshotField {
 		sp("PROXMOX_CLOUDINIT_STORAGE", &c.Providers.Proxmox.CloudinitStorage),
 		sp("PROXMOX_TEMPLATE_ID", &c.Providers.Proxmox.TemplateID),
 		sp("PROXMOX_BRIDGE", &c.Providers.Proxmox.Bridge),
-		sp("PROXMOX_POOL", &c.Providers.Proxmox.Pool),
-		sp("MGMT_PROXMOX_POOL", &c.Providers.Proxmox.Mgmt.Pool),
+		spEx("PROXMOX_POOL", "PROXMOX_POOL_EXPLICIT", &c.Providers.Proxmox.Pool),
+		spEx("MGMT_PROXMOX_POOL", "MGMT_PROXMOX_POOL_EXPLICIT", &c.Providers.Proxmox.Mgmt.Pool),
 		// --- Network (EXPLICIT-guarded) ---
 		sp("CONTROL_PLANE_ENDPOINT_IP", &c.ControlPlaneEndpointIP),
 		sp("CONTROL_PLANE_ENDPOINT_PORT", &c.ControlPlaneEndpointPort),
@@ -164,12 +164,24 @@ func (c *Config) Snapshot() []SnapshotField {
 		spEx("WORKLOAD_CLUSTER_NAME", "WORKLOAD_CLUSTER_NAME_EXPLICIT", &c.WorkloadClusterName),
 		spEx("WORKLOAD_CLUSTER_NAMESPACE", "WORKLOAD_CLUSTER_NAMESPACE_EXPLICIT", &c.WorkloadClusterNamespace),
 		sp("WORKLOAD_CILIUM_CLUSTER_ID", &c.WorkloadCiliumClusterID),
-		sp("WORKLOAD_KUBERNETES_VERSION", &c.WorkloadKubernetesVersion),
+		// Use explicit guard + always-overwrite so snapshot restores the
+		// user's chosen version over the hardcoded v1.35.0 default.
+		{
+			EnvName:      "WORKLOAD_KUBERNETES_VERSION",
+			ExplicitName: "WORKLOAD_KUBERNETES_VERSION_EXPLICIT",
+			Get:          func() string { return c.WorkloadKubernetesVersion },
+			Set:          func(v string) { c.WorkloadKubernetesVersion = v },
+		},
 		// --- Pivot (management cluster on Proxmox) ---
 		bp("PIVOT_ENABLED", &c.Pivot.Enabled),
-		sp("MGMT_CLUSTER_NAME", &c.Mgmt.ClusterName),
-		sp("MGMT_CLUSTER_NAMESPACE", &c.Mgmt.ClusterNamespace),
-		sp("MGMT_KUBERNETES_VERSION", &c.Mgmt.KubernetesVersion),
+		spEx("MGMT_CLUSTER_NAME", "MGMT_CLUSTER_NAME_EXPLICIT", &c.Mgmt.ClusterName),
+		spEx("MGMT_CLUSTER_NAMESPACE", "MGMT_CLUSTER_NAMESPACE_EXPLICIT", &c.Mgmt.ClusterNamespace),
+		{
+			EnvName:      "MGMT_KUBERNETES_VERSION",
+			ExplicitName: "MGMT_KUBERNETES_VERSION_EXPLICIT",
+			Get:          func() string { return c.Mgmt.KubernetesVersion },
+			Set:          func(v string) { c.Mgmt.KubernetesVersion = v },
+		},
 		sp("MGMT_CILIUM_CLUSTER_ID", &c.Mgmt.CiliumClusterID),
 		sp("MGMT_CONTROL_PLANE_MACHINE_COUNT", &c.Mgmt.ControlPlaneMachineCount),
 		sp("MGMT_WORKER_MACHINE_COUNT", &c.Mgmt.WorkerMachineCount),
@@ -229,6 +241,92 @@ func (c *Config) Snapshot() []SnapshotField {
 		// --- Identity ---
 		sp("CLUSTER_SET_ID", &c.ClusterSetID),
 		sp("PROXMOX_IDENTITY_SUFFIX", &c.Providers.Proxmox.IdentitySuffix),
+		// --- xapiri walkthrough shape (restored on second run) ---
+		sp("XAPIRI_WORKLOAD_ENVIRONMENT", &c.Workload.Environment),
+		sp("XAPIRI_WORKLOAD_RESILIENCE", &c.Workload.Resilience),
+		{
+			EnvName: "XAPIRI_WORKLOAD_DB_GB",
+			Get: func() string {
+				if c.Workload.DatabaseGB <= 0 {
+					return ""
+				}
+				return strconv.Itoa(c.Workload.DatabaseGB)
+			},
+			Set: func(v string) {
+				if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+					c.Workload.DatabaseGB = n
+				}
+			},
+		},
+		{
+			EnvName: "XAPIRI_WORKLOAD_EGRESS_GB_MONTH",
+			Get: func() string {
+				if c.Workload.EgressGBMonth <= 0 {
+					return ""
+				}
+				return strconv.Itoa(c.Workload.EgressGBMonth)
+			},
+			Set: func(v string) {
+				if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+					c.Workload.EgressGBMonth = n
+				}
+			},
+		},
+		{
+			EnvName: "XAPIRI_WORKLOAD_APPS",
+			Get: func() string {
+				if len(c.Workload.Apps) == 0 {
+					return ""
+				}
+				parts := make([]string, 0, len(c.Workload.Apps))
+				for _, a := range c.Workload.Apps {
+					if a.Count > 0 && a.Template != "" {
+						parts = append(parts, strconv.Itoa(a.Count)+" "+a.Template)
+					}
+				}
+				return strings.Join(parts, " ")
+			},
+			Set: func(v string) {
+				if v == "" {
+					return
+				}
+				r := strings.NewReplacer(",", " ", "x", " ", "×", " ")
+				tokens := strings.Fields(r.Replace(v))
+				var apps []AppGroup
+				for i := 0; i+1 < len(tokens); i += 2 {
+					n, err := strconv.Atoi(tokens[i])
+					if err != nil || n <= 0 {
+						continue
+					}
+					tpl := strings.ToLower(tokens[i+1])
+					if tpl != "light" && tpl != "medium" && tpl != "heavy" {
+						continue
+					}
+					apps = append(apps, AppGroup{Count: n, Template: tpl})
+				}
+				// Fallback: old Secrets store JSON [{"Count":N,"Template":"..."}]
+				if len(apps) == 0 && strings.HasPrefix(strings.TrimSpace(v), "[") {
+					var legacy []struct {
+						Count    int    `json:"Count"`
+						Template string `json:"Template"`
+					}
+					if err := json.Unmarshal([]byte(v), &legacy); err == nil {
+						for _, a := range legacy {
+							tpl := strings.ToLower(a.Template)
+							if a.Count > 0 && (tpl == "light" || tpl == "medium" || tpl == "heavy") {
+								apps = append(apps, AppGroup{Count: a.Count, Template: tpl})
+							}
+						}
+					}
+				}
+				if len(apps) > 0 {
+					c.Workload.Apps = apps
+				}
+			},
+		},
+		bp("XAPIRI_WORKLOAD_HAS_QUEUE", &c.Workload.HasQueue),
+		bp("XAPIRI_WORKLOAD_HAS_OBJ_STORE", &c.Workload.HasObjStore),
+		bp("XAPIRI_WORKLOAD_HAS_CACHE", &c.Workload.HasCache),
 	}
 }
 
@@ -293,7 +391,13 @@ func (c *Config) explicitSet() map[string]bool {
 		"IP_PREFIX_EXPLICIT":                  c.IPPrefixExplicit,
 		"DNS_SERVERS_EXPLICIT":                c.DNSServersExplicit,
 		"ALLOWED_NODES_EXPLICIT":              c.AllowedNodesExplicit,
-		"WORKLOAD_CLUSTER_NAME_EXPLICIT":      c.WorkloadClusterNameExplicit,
-		"WORKLOAD_CLUSTER_NAMESPACE_EXPLICIT": c.WorkloadClusterNamespaceExplicit,
+		"WORKLOAD_CLUSTER_NAME_EXPLICIT":       c.WorkloadClusterNameExplicit,
+		"WORKLOAD_CLUSTER_NAMESPACE_EXPLICIT":  c.WorkloadClusterNamespaceExplicit,
+		"WORKLOAD_KUBERNETES_VERSION_EXPLICIT": c.WorkloadKubernetesVersionExplicit,
+		"MGMT_CLUSTER_NAME_EXPLICIT":          c.Mgmt.ClusterNameExplicit,
+		"MGMT_CLUSTER_NAMESPACE_EXPLICIT":     c.Mgmt.ClusterNamespaceExplicit,
+		"MGMT_KUBERNETES_VERSION_EXPLICIT":    c.Mgmt.KubernetesVersionExplicit,
+		"PROXMOX_POOL_EXPLICIT":               c.Providers.Proxmox.PoolExplicit,
+		"MGMT_PROXMOX_POOL_EXPLICIT":          c.Providers.Proxmox.Mgmt.PoolExplicit,
 	}
 }

@@ -98,7 +98,7 @@ func Run(cfg *config.Config) int {
 	// -------------------------------------------------------------------------
 	if cfg.WorkloadRolloutStandalone {
 		shell.RequireCmd("kubectl")
-		kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
+		kindsync.MergeBootstrapSecretsFromKind(cfg)
 		_ = kindsync.SyncBootstrapConfigToKind(cfg)
 		_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 		if ctx, ok := kubectl.ResolveBootstrapContext(cfg); ok {
@@ -141,7 +141,7 @@ func Run(cfg *config.Config) int {
 		if cfg.WorkloadRolloutMode == "capi" || cfg.WorkloadRolloutMode == "all" {
 			EnsureCAPIManifestPath(cfg)
 			capimanifest.TryFillWorkloadInputsFromManagement(cfg)
-			kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
+			kindsync.MergeBootstrapSecretsFromKind(cfg)
 			if cfg.Providers.Proxmox.TemplateID == "" {
 				cfg.Providers.Proxmox.TemplateID = "104"
 			}
@@ -193,7 +193,7 @@ func Run(cfg *config.Config) int {
 	// -------------------------------------------------------------------------
 	if cfg.ArgoCD.PrintAccessStandalone || cfg.ArgoCD.PortForwardStandalone {
 		shell.RequireCmd("kubectl")
-		kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
+		kindsync.MergeBootstrapSecretsFromKind(cfg)
 		_ = kindsync.SyncBootstrapConfigToKind(cfg)
 		_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 		if ctx, ok := kubectl.ResolveBootstrapContext(cfg); ok {
@@ -281,7 +281,7 @@ func Run(cfg *config.Config) int {
 	if err := installer.Kubectl(cfg); err != nil {
 		logx.Die("ensure_kubectl failed: %v", err)
 	}
-	kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
+	kindsync.MergeBootstrapSecretsFromKind(cfg)
 	if err := installer.Kubectl(cfg); err != nil {
 		logx.Die("ensure_kubectl (2nd pass) failed: %v", err)
 	}
@@ -332,7 +332,7 @@ func Run(cfg *config.Config) int {
 		RefreshDefaultCAPIManifestPath(cfg)
 	}
 
-	kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
+	kindsync.MergeBootstrapSecretsFromKind(cfg)
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
 	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 
@@ -417,7 +417,7 @@ func Run(cfg *config.Config) int {
 			logx.Warn("CLI/env values are insufficient — running Terraform bootstrap for CAPI/CSI identities.")
 			if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 				EnsureProxmoxAdminConfig(cfg,
-					func() { kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg) },
+					func() { kindsync.MergeBootstrapSecretsFromKind(cfg) },
 					func() { _ = kindsync.SyncBootstrapConfigToKind(cfg) },
 					func() { _ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg) })
 			}
@@ -456,7 +456,7 @@ func Run(cfg *config.Config) int {
 	if cfg.InfraProvider == "proxmox" && cfg.Providers.Proxmox.RecreateIdentities && !recreateOpenTofuDone {
 		if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 			EnsureProxmoxAdminConfig(cfg,
-				func() { kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg) },
+				func() { kindsync.MergeBootstrapSecretsFromKind(cfg) },
 				func() { _ = kindsync.SyncBootstrapConfigToKind(cfg) },
 				func() { _ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg) })
 		}
@@ -496,7 +496,7 @@ func Run(cfg *config.Config) int {
 				fmt.Fprintln(os.Stderr)
 				fmt.Fprint(os.Stderr, "\033[1;33m[?]\033[0m Press ENTER once you have set env vars or kind Secrets, or a CLUSTERCTL_CFG file...")
 				_ = promptx.ReadLine()
-				kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
+				kindsync.MergeBootstrapSecretsFromKind(cfg)
 				if !cfg.ClusterctlCfgFilePresent() && !cfg.HaveClusterctlCredsInEnv() {
 					logx.Die("Proxmox API identity still unset: not in kind Secrets, not in the environment, and no usable CLUSTERCTL_CFG. Aborting.")
 				}
@@ -854,7 +854,7 @@ func Run(cfg *config.Config) int {
 	MaybeInteractiveSelectWorkloadCluster(cfg)
 	capimanifest.TryFillWorkloadInputsFromManagement(cfg)
 	// Re-apply proxmox-bootstrap-config so snapshot keys beat live backfill.
-	kindsync.MergeProxmoxBootstrapSecretsFromKind(cfg)
+	kindsync.MergeBootstrapSecretsFromKind(cfg)
 	if cfg.Providers.Proxmox.TemplateID == "" {
 		cfg.Providers.Proxmox.TemplateID = "104"
 	}

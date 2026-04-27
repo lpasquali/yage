@@ -44,7 +44,7 @@ func configYAMLHeader(cfg *config.Config) string {
 	)
 }
 
-// MergeProxmoxBootstrapSecretsFromKind overlays kind Secret state
+// MergeBootstrapSecretsFromKind overlays kind Secret state
 // onto cfg in order:
 //
 //  1. the config.yaml Secret — snapshot keys subject to *_EXPLICIT
@@ -61,7 +61,7 @@ func configYAMLHeader(cfg *config.Config) string {
 // Sets Providers.Proxmox.BootstrapKindSecretUsed=true when any Secret contributed
 // data, and Providers.Proxmox.KindCAPMOXActive=true when the capmox-system
 // Secret was the one that filled URL/token/secret.
-func MergeProxmoxBootstrapSecretsFromKind(cfg *config.Config) {
+func MergeBootstrapSecretsFromKind(cfg *config.Config) {
 	ctx, ok := kubectl.ResolveBootstrapContext(cfg)
 	if !ok {
 		return

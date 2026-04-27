@@ -16,7 +16,7 @@ import (
 // EnsureProxmoxAdminConfig populates
 // cfg.Providers.Proxmox.URL / Username / Token from:
 //
-//  1. MergeProxmoxBootstrapSecretsFromKind (already run at top of
+//  1. MergeBootstrapSecretsFromKind (already run at top of
 //     the bootstrap flow).
 //  2. The PROXMOX_ADMIN_CONFIG YAML file when set and present.
 //  3. Interactive prompts (only if stdin is a TTY).

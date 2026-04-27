@@ -125,7 +125,11 @@ func MergeBootstrapConfigFromKind(cfg *config.Config) error {
 	bg := context.Background()
 	sec, err := cli.Typed.CoreV1().Secrets(BootstrapConfigNamespace).Get(bg, BootstrapConfigSecretName, metav1.GetOptions{})
 	if err != nil {
-		return nil // not present yet → first-run case
+		// back-compat: old name from before Phase D
+		sec, err = cli.Typed.CoreV1().Secrets("proxmox-bootstrap-system").Get(bg, BootstrapConfigSecretName, metav1.GetOptions{})
+		if err != nil {
+			return nil // not present yet → first-run case
+		}
 	}
 
 	assign := func(cur *string, v string) {

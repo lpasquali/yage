@@ -11,10 +11,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
+	"github.com/lpasquali/yage/internal/obs"
 	"github.com/lpasquali/yage/internal/orchestrator"
 	"github.com/lpasquali/yage/internal/platform/airgap"
 	"github.com/lpasquali/yage/internal/platform/shell"
@@ -182,5 +184,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	os.Exit(orchestrator.Run(cfg))
+	runID := obs.NewRunID()
+	ctx := obs.WithRunID(context.Background(), runID)
+	os.Exit(orchestrator.Run(ctx, cfg))
 }

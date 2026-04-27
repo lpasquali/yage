@@ -446,6 +446,11 @@ func Parse(c *config.Config, argv []string) {
 			// kind worker base-image override (kindest/node:vX.Y.Z).
 			// §17 / §21.4.
 			c.NodeImage = strings.TrimSpace(shiftVal(a))
+		case "--trace-endpoint":
+			// gRPC endpoint for OTEL span export (e.g. "localhost:4317").
+			// When absent the global tracer is the zero-overhead NoopTracer.
+			// Env: YAGE_TRACE_ENDPOINT.
+			c.TraceEndpoint = strings.TrimSpace(shiftVal(a))
 		case "--allow-resource-overcommit":
 			c.Capacity.AllowOvercommit = true
 		case "--overcommit-tolerance-pct":

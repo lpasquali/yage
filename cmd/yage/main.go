@@ -16,13 +16,13 @@ import (
 	"os"
 
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
+	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/obs"
 	"github.com/lpasquali/yage/internal/orchestrator"
 	"github.com/lpasquali/yage/internal/platform/airgap"
 	"github.com/lpasquali/yage/internal/platform/shell"
-	"github.com/lpasquali/yage/internal/ui/cli"
-	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/pricing"
+	"github.com/lpasquali/yage/internal/ui/cli"
 	"github.com/lpasquali/yage/internal/ui/xapiri"
 
 	// Provider registrations: importing each provider package runs
@@ -171,6 +171,25 @@ func main() {
 		}
 		fmt.Fprintln(os.Stdout, cli.RenderCommand(cfg, mode))
 		return
+	}
+
+	// Wire the optional OTEL gRPC tracing backend (§24).
+	// When --trace-endpoint is set, spans are exported to any OTEL-compatible
+	// collector (Jaeger, Zipkin, Datadog, …). Without it the global tracer
+	// is the zero-overhead NoopTracer and no OTEL code runs at runtime.
+	if cfg.TraceEndpoint != "" {
+		ctx := context.Background()
+		tp, shutdown := obs.NewGRPCTracerProvider(
+			ctx,
+			cfg.TraceEndpoint,
+			"yage",
+			"dev",
+			cfg.WorkloadClusterName,
+		)
+		if tp != nil {
+			obs.SetTracer(obs.NewOTELTracer(tp, "yage"))
+			defer shutdown(ctx)
+		}
 	}
 
 	// The user must opt into a provider explicitly — or run --xapiri

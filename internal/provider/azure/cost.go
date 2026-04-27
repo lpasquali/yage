@@ -4,10 +4,12 @@
 package azure
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/cost"
 	"github.com/lpasquali/yage/internal/pricing"
 	"github.com/lpasquali/yage/internal/provider"
 )
@@ -134,6 +136,14 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		})
 	}
 
+	// Managed Postgres substitution — Azure doesn't currently model
+	// cnpg as an explicit cost line, so suppression is implicit.
+	if mPG, fired, err := managedPostgresItem(cfg, "azure", region); err != nil {
+		return provider.CostEstimate{}, fmt.Errorf("%w: azure managed postgres: %v", provider.ErrNotApplicable, err)
+	} else if fired {
+		items = append(items, mPG)
+	}
+
 	// Service overhead — counts are shape, $/unit comes live.
 	items, err = addAzureServiceOverhead(items, cfg, region)
 	if err != nil {
@@ -159,6 +169,44 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		Items:           items,
 		Note:            note,
 	}, nil
+}
+
+// managedPostgresItem dispatches to the per-vendor managed-PG
+// helper when the operator hasn't opted out and the vendor offers
+// the SaaS. ErrNotApplicable from the dispatcher is the explicit
+// "not wired yet" signal — fall through to in-cluster cnpg silently.
+func managedPostgresItem(cfg *config.Config, vendor, region string) (provider.CostItem, bool, error) {
+	if !cfg.UseManagedPostgres {
+		return provider.CostItem{}, false, nil
+	}
+	if !cost.VendorOffersManaged(vendor, cost.MSPostgres) {
+		return provider.CostItem{}, false, nil
+	}
+	tier := pgTierFromEnv(cfg.Workload.Environment)
+	mp, err := cost.ManagedPostgresUSDPerMonth(vendor, region, tier, cfg.Workload.DatabaseGB)
+	if err != nil {
+		if errors.Is(err, provider.ErrNotApplicable) {
+			return provider.CostItem{}, false, nil
+		}
+		return provider.CostItem{}, false, err
+	}
+	return provider.CostItem{
+		Name:           fmt.Sprintf("Managed Postgres (%s, %s)", mp.SKU, tier),
+		UnitUSDMonthly: mp.MonthlyUSD,
+		Qty:            1,
+		SubtotalUSD:    mp.MonthlyUSD,
+	}, true, nil
+}
+
+func pgTierFromEnv(env string) cost.PostgresTier {
+	switch strings.ToLower(strings.TrimSpace(env)) {
+	case "prod":
+		return cost.PostgresProd
+	case "staging":
+		return cost.PostgresStaging
+	default:
+		return cost.PostgresDev
+	}
 }
 
 func liveVMMonthly(sku, region string) (float64, error) {

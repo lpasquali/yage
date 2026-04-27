@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package pveapi is the low-level Proxmox VE HTTP client and helper
+// Package api is the low-level Proxmox VE HTTP client and helper
 // suite (URL parsing, token shape, region/node decoding, identity
 // hashing). It is the implementation layer that the Provider
 // abstraction (internal/provider/proxmox) sits on top of.
@@ -13,19 +13,17 @@
 //     `cluster/kindsync`, `capi/caaph`, `capi/manifest`,
 //     `platform/opentofux`): use the helpers directly during phases
 //     that don't go through the Provider interface.
-package pveapi
+package api
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"hash/crc32"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/lpasquali/yage/internal/capi/cilium"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
@@ -36,26 +34,10 @@ const (
 	DefaultCAPIUserBase = "capmox@pve"
 )
 
-// GenerateUUIDv4 returns an RFC 4122 v4 UUID. Uses crypto/rand
-// (Go's rand package reads from getrandom(2) on Linux).
-func GenerateUUIDv4() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// Deterministic fallback so tests / offline runs don't panic; in
-		// practice crypto/rand on Linux reads from getrandom(2) and never
-		// fails.
-		seed := make([]byte, 16)
-		binary.BigEndian.PutUint64(seed, uint64(42))
-		copy(b[:], seed)
-	}
-	// Set version v4 and variant bits.
-	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
-	h := hex.EncodeToString(b[:])
-	return fmt.Sprintf("%s-%s-%s-%s-%s", h[0:8], h[8:12], h[12:16], h[16:20], h[20:32])
-}
-
-var nonIdentityRE = regexp.MustCompile(`[^a-z0-9]+`)
+var (
+	nonIdentityRE = regexp.MustCompile(`[^a-z0-9]+`)
+	numericRE     = regexp.MustCompile(`^[0-9]+$`)
+)
 
 // DeriveIdentitySuffix derives a 12-char Proxmox identity suffix from
 // the source ID: lowercases, strips non-[a-z0-9] characters, truncates
@@ -133,23 +115,10 @@ func RefreshDerivedIdentityTokenIDs(cfg *config.Config) {
 	}
 }
 
-var numericRE = regexp.MustCompile(`^[0-9]+$`)
-
 // DeriveCiliumClusterID derives a Cilium cluster id (1..255) from a
-// CLUSTER_SET_ID. For numeric IDs returns id mod 255 + 1; otherwise
-// uses CRC32/IEEE of the id string folded into [1, 255].
+// CLUSTER_SET_ID. Delegates to cilium.DeriveClusterID.
 func DeriveCiliumClusterID(sourceID string) string {
-	var derived uint64
-	if numericRE.MatchString(sourceID) {
-		// derived = source_id; big numbers fold through the modulo.
-		n, err := strconv.ParseUint(sourceID, 10, 64)
-		if err == nil {
-			derived = n
-		}
-	} else {
-		derived = uint64(crc32.ChecksumIEEE([]byte(sourceID)))
-	}
-	return strconv.FormatUint((derived%255)+1, 10)
+	return cilium.DeriveClusterID(sourceID)
 }
 
 // RefreshDerivedCiliumClusterID fills WorkloadCiliumClusterID from

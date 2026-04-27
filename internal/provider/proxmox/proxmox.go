@@ -16,7 +16,7 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/opentofux"
 	"github.com/lpasquali/yage/internal/provider"
-	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/api"
 )
 
 func init() {
@@ -45,7 +45,7 @@ func (p *Provider) EnsureIdentity(cfg *config.Config) error {
 // VMs in the named pool (organizational + ACL only — pools don't
 // enforce CPU/memory quotas).
 func (p *Provider) EnsureGroup(cfg *config.Config, name string) error {
-	return pveapi.EnsurePool(cfg, name)
+	return api.EnsurePool(cfg, name)
 }
 
 // ClusterctlInitArgs returns "--infrastructure proxmox". Bootstrap

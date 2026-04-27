@@ -10,7 +10,7 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/ui/logx"
-	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/api"
 )
 
 // GenerateConfigsFromOutputs reads the four token outputs from
@@ -19,16 +19,16 @@ import (
 // refreshes derived identity token IDs, and syncs the state to
 // kind + local files.
 func GenerateConfigsFromOutputs(cfg *config.Config) {
-	csiAPIURL := pveapi.APIJSONURL(cfg)
+	csiAPIURL := api.APIJSONURL(cfg)
 	capiTokenID := GetOutput("capi_token_id")
 	capiTokenSec := GetOutput("capi_token_secret")
 	csiTokenID := GetOutput("csi_token_id")
 	csiTokenSec := GetOutput("csi_token_secret")
 
-	capiTokenSec = pveapi.NormalizeTokenSecret(capiTokenSec, capiTokenID)
-	csiTokenSec = pveapi.NormalizeTokenSecret(csiTokenSec, csiTokenID)
-	pveapi.ValidateTokenSecret("OpenTofu capi_token_secret", capiTokenSec)
-	pveapi.ValidateTokenSecret("OpenTofu csi_token_secret", csiTokenSec)
+	capiTokenSec = api.NormalizeTokenSecret(capiTokenSec, capiTokenID)
+	csiTokenSec = api.NormalizeTokenSecret(csiTokenSec, csiTokenID)
+	api.ValidateTokenSecret("OpenTofu capi_token_secret", capiTokenSec)
+	api.ValidateTokenSecret("OpenTofu csi_token_secret", csiTokenSec)
 
 	cfg.Providers.Proxmox.CAPIToken = capiTokenID
 	cfg.Providers.Proxmox.CAPISecret = capiTokenSec
@@ -37,7 +37,7 @@ func GenerateConfigsFromOutputs(cfg *config.Config) {
 	if cfg.Providers.Proxmox.CSIURL == "" {
 		cfg.Providers.Proxmox.CSIURL = csiAPIURL
 	}
-	pveapi.RefreshDerivedIdentityTokenIDs(cfg)
+	api.RefreshDerivedIdentityTokenIDs(cfg)
 
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
 	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
@@ -53,7 +53,7 @@ func GenerateConfigsFromOutputs(cfg *config.Config) {
 // YAML. It refreshes derived identity token IDs and syncs bootstrap
 // state to kind, plus logs a summary of which Secrets hold what.
 func WriteClusterctlConfigIfMissing(cfg *config.Config) {
-	pveapi.RefreshDerivedIdentityTokenIDs(cfg)
+	api.RefreshDerivedIdentityTokenIDs(cfg)
 	if cfg.ClusterctlCfgFilePresent() {
 		return
 	}
@@ -83,7 +83,7 @@ func WriteClusterctlConfigIfMissing(cfg *config.Config) {
 // cfg.Providers.Proxmox.CSIConfig is set AND does not yet exist
 // AND PersistLocalSecrets is true.
 func WriteCSIConfigIfMissing(cfg *config.Config) {
-	pveapi.RefreshDerivedIdentityTokenIDs(cfg)
+	api.RefreshDerivedIdentityTokenIDs(cfg)
 	if cfg.Providers.Proxmox.CSIConfig == "" {
 		return
 	}
@@ -94,7 +94,7 @@ func WriteCSIConfigIfMissing(cfg *config.Config) {
 		return
 	}
 	if cfg.Providers.Proxmox.CSIURL == "" {
-		cfg.Providers.Proxmox.CSIURL = pveapi.APIJSONURL(cfg)
+		cfg.Providers.Proxmox.CSIURL = api.APIJSONURL(cfg)
 	}
 	if cfg.Providers.Proxmox.CSITokenID == "" || cfg.Providers.Proxmox.CSITokenSecret == "" || cfg.Providers.Proxmox.Region == "" {
 		return

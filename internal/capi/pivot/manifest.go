@@ -4,14 +4,13 @@
 package pivot
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/lpasquali/yage/internal/capi/cilium"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/airgap"
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
@@ -232,8 +231,7 @@ func patchMgmtClusterCAAPHLabels(cfg *config.Config, manifestPath string) error 
 
 // deriveMgmtClusterID derives a stable Cilium cluster-id value for the
 // mgmt cluster from its name (so workload + mgmt clusters never share
-// the same ClusterMesh ID). 1..255 range, same shape as
-// proxmox.DeriveCiliumClusterID.
+// the same ClusterMesh ID). 1..255 range, delegated to cilium.DeriveClusterID.
 func deriveMgmtClusterID(cfg *config.Config) string {
 	if cfg.Mgmt.CiliumClusterID != "" {
 		return cfg.Mgmt.CiliumClusterID
@@ -242,26 +240,7 @@ func deriveMgmtClusterID(cfg *config.Config) string {
 	if src == "" {
 		src = "capi-management"
 	}
-	sum := sha256.Sum256([]byte(src))
-	hexStr := hex.EncodeToString(sum[:8])
-	// Map to [1, 255].
-	var n uint64
-	for _, ch := range hexStr {
-		n = n*16 + uint64(hexDigit(ch))
-	}
-	return fmt.Sprintf("%d", (n%255)+1)
-}
-
-func hexDigit(r rune) int {
-	switch {
-	case r >= '0' && r <= '9':
-		return int(r - '0')
-	case r >= 'a' && r <= 'f':
-		return int(r-'a') + 10
-	case r >= 'A' && r <= 'F':
-		return int(r-'A') + 10
-	}
-	return 0
+	return cilium.DeriveClusterID(src)
 }
 
 func sliceHasLine(s []string, want string) bool {

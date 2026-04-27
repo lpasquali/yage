@@ -34,7 +34,7 @@ import (
 	"github.com/lpasquali/yage/internal/platform/airgap"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/logx"
-	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/api"
 	"github.com/lpasquali/yage/internal/platform/shell"
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
 )
@@ -60,7 +60,7 @@ func PatchClusterCAAPHHelmLabels(cfg *config.Config, manifestPath string) error 
 	if err != nil || len(raw) == 0 {
 		return nil
 	}
-	pveapi.RefreshDerivedCiliumClusterID(cfg)
+	api.RefreshDerivedCiliumClusterID(cfg)
 	text := string(raw)
 	docs := strings.Split(text, "\n---\n")
 	port := cfg.ControlPlaneEndpointPort

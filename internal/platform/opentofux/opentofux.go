@@ -23,7 +23,7 @@ import (
 	"github.com/lpasquali/yage/internal/capi/csi"
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/ui/logx"
-	"github.com/lpasquali/yage/internal/provider/proxmox/pveapi"
+	"github.com/lpasquali/yage/internal/provider/proxmox/api"
 	"github.com/lpasquali/yage/internal/platform/shell"
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
 )
@@ -242,13 +242,13 @@ func ResolveRecreateContext(cfg *config.Config) {
 		cfg.Providers.Proxmox.CAPIUserID = capiUser
 		cfg.Providers.Proxmox.CAPITokenPrefix = capiPfx
 		if cfg.Providers.Proxmox.IdentitySuffix == "" {
-			cfg.Providers.Proxmox.IdentitySuffix = pveapi.DeriveIdentitySuffix(cfg.ClusterSetID)
+			cfg.Providers.Proxmox.IdentitySuffix = api.DeriveIdentitySuffix(cfg.ClusterSetID)
 		}
 		logx.Log("Re-creation: identity from OpenTofu state (%s): cluster_set_id var=%s.", StateDir(), csID)
 		return
 	}
 	logx.Warn("No OpenTofu state at %s — inferring from PROXMOX_CSI_TOKEN_ID and PROXMOX_TOKEN (CAPI) in env/kind.", stateFile())
-	if !pveapi.InferIdentityFromTokenIDs(cfg) {
+	if !api.InferIdentityFromTokenIDs(cfg) {
 		logx.Die("Cannot resolve identity: restore %s or set PROXMOX_CSI_TOKEN_ID + PROXMOX_TOKEN to existing token *names* (user@pve!prefix-suffix) from Kubernetes Secrets.", stateFile())
 	}
 	if cfg.Providers.Proxmox.IdentitySuffix == "" {
@@ -275,12 +275,12 @@ func RecreateIdentities(cfg *config.Config) error {
 			cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName)
 	}
 	ResolveRecreateContext(cfg)
-	pveapi.ValidateClusterSetIDFormat(cfg)
+	api.ValidateClusterSetIDFormat(cfg)
 	if cfg.Providers.Proxmox.IdentitySuffix == "" {
-		cfg.Providers.Proxmox.IdentitySuffix = pveapi.DeriveIdentitySuffix(cfg.ClusterSetID)
+		cfg.Providers.Proxmox.IdentitySuffix = api.DeriveIdentitySuffix(cfg.ClusterSetID)
 	}
-	pveapi.RefreshDerivedIdentityUserIDs(cfg)
-	pveapi.CheckAdminAPIConnectivity(cfg)
+	api.RefreshDerivedIdentityUserIDs(cfg)
+	api.CheckAdminAPIConnectivity(cfg)
 	if err := WriteEmbeddedFiles(cfg); err != nil {
 		return err
 	}

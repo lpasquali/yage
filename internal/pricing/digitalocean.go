@@ -4,27 +4,28 @@
 package pricing
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/digitalocean/godo"
+	"golang.org/x/oauth2"
 )
 
 // DigitalOcean Cloud API — token-required.
-//   GET https://api.digitalocean.com/v2/sizes
-//
-// Returns every droplet size with price_monthly (USD) and a regions
-// list. We pick the size by slug ("s-2vcpu-4gb", "g-2vcpu-8gb", etc.)
-// and verify the region is supported.
+// Uses the official godo SDK; the underlying HTTP client is built
+// from &http.Client{} (nil Transport) so it inherits whatever
+// http.DefaultTransport is at call time — including the airgap shim
+// applied by defaulttransport_airgap_test.go.
 //
 // Token: DIGITALOCEAN_TOKEN (also accepted: YAGE_DO_TOKEN).
-const doSizesURL = "https://api.digitalocean.com/v2/sizes?per_page=200"
 
-type doFetcher struct{ httpClient *http.Client }
+type doFetcher struct{}
 
 func init() {
-	Register("digitalocean", &doFetcher{httpClient: &http.Client{Timeout: 15 * time.Second}})
+	Register("digitalocean", &doFetcher{})
 }
 
 // doToken returns the DigitalOcean API token used for pricing.
@@ -39,16 +40,17 @@ func doToken() string {
 	return os.Getenv("DIGITALOCEAN_TOKEN")
 }
 
-type doSize struct {
-	Slug         string   `json:"slug"`
-	PriceMonthly float64  `json:"price_monthly"`
-	PriceHourly  float64  `json:"price_hourly"`
-	Regions      []string `json:"regions"`
-	Available    bool     `json:"available"`
-}
-
-type doSizesResp struct {
-	Sizes []doSize `json:"sizes"`
+// newGodoClient creates a godo Client authenticated with token. The
+// base HTTP transport is &http.Client{} (nil Transport) so it
+// inherits http.DefaultTransport — keeping the airgap shim effective.
+// oauth2.Transport wraps this base client to inject the Bearer token.
+func newGodoClient(token string) *godo.Client {
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	// Inject our nil-Transport HTTP client as the oauth2 base client so
+	// that any request made by godo goes through http.DefaultTransport.
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, &http.Client{})
+	oauthClient := oauth2.NewClient(ctx, ts)
+	return godo.NewClient(oauthClient)
 }
 
 // doDatabaseOptionsResp models /v2/databases/options. The endpoint
@@ -56,6 +58,10 @@ type doSizesResp struct {
 // options.<engine>.layouts[]: each layout is a node-count/size
 // combination with its own price_monthly and price_hourly. Single-
 // node Postgres uses num_nodes=1.
+//
+// The godo SDK's DatabaseLayout only carries slug strings (no prices),
+// so we parse this response directly from the raw JSON body via the
+// godo client's authenticated HTTP transport.
 type doDatabaseOptionsResp struct {
 	Options map[string]struct {
 		Layouts []struct {
@@ -87,6 +93,10 @@ func doManagedPostgresFallbackUSDPerMonth(size string) float64 {
 // rate for a DO Managed Postgres node-size slug (single-node
 // layout). Falls back to the public list price when the API token
 // is missing or the request fails.
+//
+// /v2/databases/options returns richer pricing fields not modeled by
+// godo's DatabaseLayout struct; we parse the raw response body via
+// the godo-authenticated HTTP client to preserve the same JSON shape.
 func DOManagedPostgresUSDPerMonth(size string) (float64, error) {
 	token := doToken()
 	if token == "" {
@@ -95,11 +105,19 @@ func DOManagedPostgresUSDPerMonth(size string) (float64, error) {
 		}
 		return 0, fmt.Errorf("digitalocean db: no token and no fallback for %q", size)
 	}
-	c := &http.Client{Timeout: 15 * time.Second}
-	req, _ := http.NewRequest("GET", "https://api.digitalocean.com/v2/databases/options", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", "yage/pricing")
-	resp, err := c.Do(req)
+	client := newGodoClient(token)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	req, err := client.NewRequest(ctx, http.MethodGet, "v2/databases/options", nil)
+	if err != nil {
+		if v := doManagedPostgresFallbackUSDPerMonth(size); v > 0 {
+			return v, nil
+		}
+		return 0, fmt.Errorf("digitalocean db: %w", err)
+	}
+	var rawResp doDatabaseOptionsResp
+	resp, err := client.Do(ctx, req, &rawResp)
 	if err != nil {
 		if v := doManagedPostgresFallbackUSDPerMonth(size); v > 0 {
 			return v, nil
@@ -107,20 +125,10 @@ func DOManagedPostgresUSDPerMonth(size string) (float64, error) {
 		return 0, fmt.Errorf("digitalocean db: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		if v := doManagedPostgresFallbackUSDPerMonth(size); v > 0 {
-			return v, nil
-		}
-		return 0, fmt.Errorf("digitalocean db: HTTP %d", resp.StatusCode)
-	}
-	var dr doDatabaseOptionsResp
-	if err := json.NewDecoder(resp.Body).Decode(&dr); err != nil {
-		if v := doManagedPostgresFallbackUSDPerMonth(size); v > 0 {
-			return v, nil
-		}
-		return 0, fmt.Errorf("digitalocean db decode: %w", err)
-	}
-	pg, ok := dr.Options["pg"]
+
+	// godo's Do() already decoded the JSON body into rawResp.
+	// rawResp may be empty if the endpoint shape changed; check pg key.
+	pg, ok := rawResp.Options["pg"]
 	if !ok {
 		if v := doManagedPostgresFallbackUSDPerMonth(size); v > 0 {
 			return v, nil
@@ -148,22 +156,16 @@ func (d *doFetcher) Fetch(sku, region string) (Item, error) {
 	if token == "" {
 		return Item{}, fmt.Errorf("digitalocean: DIGITALOCEAN_TOKEN not set")
 	}
-	req, _ := http.NewRequest("GET", doSizesURL, nil)
-	req.Header.Set("User-Agent", "yage/pricing")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := d.httpClient.Do(req)
+	client := newGodoClient(token)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Fetch all sizes (godo handles pagination).
+	sizes, _, err := client.Sizes.List(ctx, &godo.ListOptions{PerPage: 200})
 	if err != nil {
 		return Item{}, fmt.Errorf("digitalocean: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return Item{}, fmt.Errorf("digitalocean: HTTP %d", resp.StatusCode)
-	}
-	var dr doSizesResp
-	if err := json.NewDecoder(resp.Body).Decode(&dr); err != nil {
-		return Item{}, fmt.Errorf("digitalocean decode: %w", err)
-	}
-	for _, s := range dr.Sizes {
+	for _, s := range sizes {
 		if s.Slug != sku {
 			continue
 		}

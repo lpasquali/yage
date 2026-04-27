@@ -4,84 +4,33 @@
 package pricing
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
+
+	"github.com/linode/linodego"
 )
 
 // Linode/Akamai catalog API — auth-free for type listing.
-//   GET https://api.linode.com/v4/linode/types
-// Returns every type with price.monthly + price.hourly (USD), plus
-// the per-region price overrides (region_prices[]). When the region
-// has an override we honor it; otherwise the global price applies.
-const linodeTypesURL = "https://api.linode.com/v4/linode/types?page_size=200"
+// Uses the official linodego SDK; the underlying HTTP client is
+// &http.Client{} (nil Transport) so it inherits whatever
+// http.DefaultTransport is at call time — including the airgap shim
+// applied by defaulttransport_airgap_test.go.
+//
+// SDK docs: https://pkg.go.dev/github.com/linode/linodego
 
-type linodeFetcher struct{ httpClient *http.Client }
+type linodeFetcher struct{}
 
 func init() {
-	Register("linode", &linodeFetcher{httpClient: &http.Client{Timeout: 15 * time.Second}})
+	Register("linode", &linodeFetcher{})
 }
 
-type linodePrice struct {
-	Hourly  float64 `json:"hourly"`
-	Monthly float64 `json:"monthly"`
-}
-
-type linodeRegionPrice struct {
-	ID      string      `json:"id"`
-	Hourly  float64     `json:"hourly"`
-	Monthly float64     `json:"monthly"`
-}
-
-type linodeType struct {
-	ID            string              `json:"id"`
-	Label         string              `json:"label"`
-	Price         linodePrice         `json:"price"`
-	RegionPrices  []linodeRegionPrice `json:"region_prices"`
-}
-
-type linodeTypesResp struct {
-	Data []linodeType `json:"data"`
-}
-
-func (l *linodeFetcher) Fetch(typeID, region string) (Item, error) {
-	req, _ := http.NewRequest("GET", linodeTypesURL, nil)
-	req.Header.Set("User-Agent", "yage/pricing")
-	resp, err := l.httpClient.Do(req)
-	if err != nil {
-		return Item{}, fmt.Errorf("linode: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return Item{}, fmt.Errorf("linode: HTTP %d", resp.StatusCode)
-	}
-	var lr linodeTypesResp
-	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
-		return Item{}, fmt.Errorf("linode decode: %w", err)
-	}
-	for _, t := range lr.Data {
-		if t.ID != typeID {
-			continue
-		}
-		hourly := t.Price.Hourly
-		monthly := t.Price.Monthly
-		// Honor per-region price overrides when the type has them.
-		for _, rp := range t.RegionPrices {
-			if rp.ID == region {
-				hourly = rp.Hourly
-				monthly = rp.Monthly
-				break
-			}
-		}
-		return Item{
-			USDPerHour:  hourly,
-			USDPerMonth: monthly,
-			FetchedAt:   time.Now(),
-		}, nil
-	}
-	return Item{}, fmt.Errorf("linode: unknown type %q", typeID)
+// newLinodeClient returns a linodego Client configured to use a
+// nil-Transport HTTP client (inherits http.DefaultTransport). Linode
+// type listing is anonymous (no auth token needed).
+func newLinodeClient() linodego.Client {
+	return linodego.NewClient(&http.Client{})
 }
 
 // linodeManagedPostgresFallbackUSDPerMonth returns Linode/Akamai's
@@ -97,20 +46,39 @@ func linodeManagedPostgresFallbackUSDPerMonth(typeClass string) float64 {
 	return 0
 }
 
-type linodeDBType struct {
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	Engines map[string][]struct {
-		Quantity int     `json:"quantity"`
-		Price    struct {
-			Monthly float64 `json:"monthly"`
-			Hourly  float64 `json:"hourly"`
-		} `json:"price"`
-	} `json:"engines"`
-}
+func (l *linodeFetcher) Fetch(typeID, region string) (Item, error) {
+	client := newLinodeClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-type linodeDBTypesResp struct {
-	Data []linodeDBType `json:"data"`
+	types, err := client.ListTypes(ctx, &linodego.ListOptions{PageSize: 200})
+	if err != nil {
+		return Item{}, fmt.Errorf("linode: %w", err)
+	}
+	for _, t := range types {
+		if t.ID != typeID {
+			continue
+		}
+		var hourly, monthly float64
+		if t.Price != nil {
+			hourly = float64(t.Price.Hourly)
+			monthly = float64(t.Price.Monthly)
+		}
+		// Honor per-region price overrides when the type has them.
+		for _, rp := range t.RegionPrices {
+			if rp.ID == region {
+				hourly = float64(rp.Hourly)
+				monthly = float64(rp.Monthly)
+				break
+			}
+		}
+		return Item{
+			USDPerHour:  hourly,
+			USDPerMonth: monthly,
+			FetchedAt:   time.Now(),
+		}, nil
+	}
+	return Item{}, fmt.Errorf("linode: unknown type %q", typeID)
 }
 
 // LinodeManagedPostgresUSDPerMonth returns the live monthly USD
@@ -119,55 +87,31 @@ type linodeDBTypesResp struct {
 // from /v4/databases/types. The endpoint is anonymous. Falls back
 // to public list prices when the API isn't reachable.
 func LinodeManagedPostgresUSDPerMonth(typeClass string) (float64, error) {
-	c := &http.Client{Timeout: 15 * time.Second}
-	req, _ := http.NewRequest("GET", "https://api.linode.com/v4/databases/types?page_size=200", nil)
-	req.Header.Set("User-Agent", "yage/pricing")
-	resp, err := c.Do(req)
+	client := newLinodeClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	dbTypes, err := client.ListDatabaseTypes(ctx, &linodego.ListOptions{PageSize: 200})
 	if err != nil {
 		if v := linodeManagedPostgresFallbackUSDPerMonth(typeClass); v > 0 {
 			return v, nil
 		}
 		return 0, fmt.Errorf("linode db: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		if v := linodeManagedPostgresFallbackUSDPerMonth(typeClass); v > 0 {
-			return v, nil
-		}
-		return 0, fmt.Errorf("linode db: HTTP %d", resp.StatusCode)
-	}
-	var lr linodeDBTypesResp
-	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
-		if v := linodeManagedPostgresFallbackUSDPerMonth(typeClass); v > 0 {
-			return v, nil
-		}
-		return 0, fmt.Errorf("linode db decode: %w", err)
-	}
-	for _, t := range lr.Data {
+	for _, t := range dbTypes {
 		if t.ID != typeClass {
 			continue
 		}
-		// Prefer the postgresql engine's single-node price; if that
-		// engine slot is missing fall back to whatever engine first
-		// reports a single-node price.
-		preferred := []string{"postgresql", "postgres"}
-		for _, engKey := range preferred {
-			for k, layouts := range t.Engines {
-				if !strings.EqualFold(k, engKey) {
-					continue
-				}
-				for _, l := range layouts {
-					if l.Quantity == 1 && l.Price.Monthly > 0 {
-						return l.Price.Monthly, nil
-					}
-				}
+		// Prefer the PostgreSQL engine's single-node price.
+		for _, eng := range t.Engines.PostgreSQL {
+			if eng.Quantity == 1 && eng.Price.Monthly > 0 {
+				return float64(eng.Price.Monthly), nil
 			}
 		}
-		for _, layouts := range t.Engines {
-			for _, l := range layouts {
-				if l.Quantity == 1 && l.Price.Monthly > 0 {
-					return l.Price.Monthly, nil
-				}
+		// Fall back to MySQL single-node if no PostgreSQL entry.
+		for _, eng := range t.Engines.MySQL {
+			if eng.Quantity == 1 && eng.Price.Monthly > 0 {
+				return float64(eng.Price.Monthly), nil
 			}
 		}
 	}

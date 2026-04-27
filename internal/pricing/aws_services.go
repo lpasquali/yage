@@ -4,38 +4,28 @@
 package pricing
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 // AWS service-specific pricing helpers — all read from the same
-// AWS Bulk Pricing JSON catalog as aws.go. Each service gets its
-// own offer file:
+// AWS Pricing API as aws.go. Each service uses its own service code
+// (AmazonEKS, AmazonECS, AmazonEC2, AmazonVPC, AWSELB,
+// AmazonCloudWatch, AmazonRoute53). Results are cached to disk for
+// 7 days (awsBulkCacheTTL, defined in aws.go).
 //
-//   AmazonEKS         — EKS control plane $/hour, region-specific
-//   AmazonECS         — Fargate $/vCPU-hour and $/GB-hour
-//   AmazonEC2         — NAT Gateway hourly + per-GB processed (SKUs
-//                       moved here from AmazonVPC in the bulk catalog)
-//   AmazonVPC         — Internet egress $/GB (and legacy paths)
-//   AWSELB            — ALB / NLB hourly + LCU/NLCU $/hour
-//   AmazonCloudWatch  — CloudWatch Logs ingestion + storage $/GB
-//   AmazonRoute53     — Hosted zone $/month (priced globally; the
-//                       hosted-zone SKUs live in the top-level
-//                       AmazonRoute53 bulk index with no region
-//                       segment in the URL)
+// Uses aws-sdk-go-v2/service/pricing (GetProducts) via
+// awsLoadOrFetch (defined in aws.go). All helpers share the same
+// disk-cache key structure: aws-bulk-<serviceCode>-<region>.json.
 //
 // All helpers take the workload region as input. Route53 is priced
 // globally — its helper ignores the input region and reads the
-// top-level (no-region) AmazonRoute53 offer file.
+// top-level (no-region) offer file by passing an empty region.
 
-const awsBulkServicesCacheTTL = 7 * 24 * time.Hour
+const awsBulkServicesCacheTTL = awsBulkCacheTTL
 
 // awsBulkProductFamily returns the lowercased product family from
 // AWS Price List bulk JSON. Modern catalogs put productFamily on the
@@ -54,12 +44,13 @@ func awsIsAWSRegionProduct(p awsBulkProduct) bool {
 	return lt == "" || lt == "AWS Region"
 }
 
+// awsServiceFetcher serializes service-bulk loads (one mutex per
+// process, no httpClient field — HTTP is handled by the AWS SDK).
 type awsServiceFetcher struct {
-	mu         sync.Mutex
-	httpClient *http.Client
+	mu sync.Mutex
 }
 
-var awsSvc = &awsServiceFetcher{httpClient: &http.Client{Timeout: 120 * time.Second}}
+var awsSvc = &awsServiceFetcher{}
 
 func awsBulkServiceCachePath(service, region string) string {
 	d := cacheDir()
@@ -71,66 +62,10 @@ func awsBulkServiceCachePath(service, region string) string {
 	return fmt.Sprintf("%s/aws-svc-%s-%s.json", d, service, tag)
 }
 
-// downloadServiceBulk fetches and caches the raw JSON for one
-// (service, region) pair. service is the offer code (e.g.
-// "AmazonEKS", "AmazonVPC"). region is either an AWS region
-// short code, "aws-global" for catalogues priced globally, or
-// "" to read the top-level (no-region) offer file — used by
-// services like AmazonRoute53 whose SKUs live only in the
-// service's root index.
-func (a *awsServiceFetcher) downloadServiceBulk(service, region string) (string, error) {
-	cache := awsBulkServiceCachePath(service, region)
-	if st, err := os.Stat(cache); err == nil && time.Since(st.ModTime()) < awsBulkServicesCacheTTL {
-		return cache, nil
-	}
-	var url string
-	if region == "" {
-		url = fmt.Sprintf("%s/offers/v1.0/aws/%s/current/index.json",
-			awsPricingHost, service)
-	} else {
-		url = fmt.Sprintf("%s/offers/v1.0/aws/%s/current/%s/index.json",
-			awsPricingHost, service, region)
-	}
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "yage/pricing")
-	resp, err := a.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("aws %s/%s: %w", service, region, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("aws %s/%s: HTTP %d", service, region, resp.StatusCode)
-	}
-	tmp := cache + ".tmp"
-	f, err := os.Create(tmp)
-	if err != nil {
-		return "", err
-	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return "", err
-	}
-	f.Close()
-	return cache, os.Rename(tmp, cache)
-}
-
 func (a *awsServiceFetcher) loadServiceBulk(service, region string) (*awsBulkPayload, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	path, err := a.downloadServiceBulk(service, region)
-	if err != nil {
-		return nil, err
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var pl awsBulkPayload
-	if err := json.Unmarshal(raw, &pl); err != nil {
-		return nil, err
-	}
-	return &pl, nil
+	return awsLoadOrFetch(service, region, nil)
 }
 
 // awsRegionLong returns the human-readable location for a region,
@@ -230,8 +165,8 @@ func AWSEKSControlPlaneUSDPerMonth(region string) (float64, error) {
 	loc := awsRegionLong(region)
 	// Match: location=<region>, productFamily=Compute, group like Standard.
 	usd, err := findCheapestPriceUSD(pl, map[string]string{
-		"location":     loc,
-		"tier":         "Standard",
+		"location": loc,
+		"tier":     "Standard",
 	})
 	if err != nil {
 		// Older catalog may key on different attributes — fall back

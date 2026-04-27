@@ -4,9 +4,9 @@
 package pricing
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,44 +14,40 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/config"
+	awspricingsdk "github.com/aws/aws-sdk-go-v2/service/pricing"
+	awspricingtypes "github.com/aws/aws-sdk-go-v2/service/pricing/types"
 )
 
-// AWS Bulk Pricing JSON — auth-free.
-// Files are hosted on the pricing.us-east-1.amazonaws.com bucket
-// regardless of the priced region; the path encodes the region:
+// AWS Pricing API — uses the official aws-sdk-go-v2/service/pricing SDK.
+// The Pricing API requires AWS credentials (IAM user, role, env vars,
+// or ~/.aws/credentials). Without credentials, Fetch returns an error.
 //
-//   https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/<region>/index.json
-//
-// EBS volume pricing lives INSIDE the AmazonEC2 offer (storage is
-// modeled as a productFamily="Storage" attribute on the EC2 catalog,
-// not as a separate AmazonEBS service file). One catalog covers
-// both compute and storage SKUs for the region.
-//
-// EC2 regional indexes are large (50–300 MB depending on region),
-// so we cache the *raw* JSON to disk and invalidate weekly. The
-// per-SKU lookup then reads from disk and parses just enough.
+// GetProducts is used to page all products for a given service code and
+// region. Results are cached to disk for 7 days (awsBulkCacheTTL) in
+// the same awsBulkPayload format used by the in-memory walkers, so all
+// existing fetchEC2/fetchEBS/findCheapestPriceUSD logic stays unchanged.
 //
 // SKU resolution: we walk products[] looking for a product whose
 // attributes match (instanceType=<sku>, location=<long region>,
 // operatingSystem=Linux, tenancy=Shared, capacityStatus=Used,
 // preInstalledSw=NA). We then take terms.OnDemand.<offerTerm>
 // .priceDimensions.<rateCode>.pricePerUnit.USD as USD/hour.
+//
+// HTTP transport: the AWS SDK config is loaded with config.WithHTTPClient
+// (&http.Client{}) — a nil-Transport client that inherits
+// http.DefaultTransport at request time, keeping the airgap shim effective.
 const (
-	awsPricingHost     = "https://pricing.us-east-1.amazonaws.com"
-	awsEC2PathTemplate = "/offers/v1.0/aws/AmazonEC2/current/%s/index.json"
-	// The bulk JSON files don't change often. Default catalog
-	// cache TTL is 7 days; the per-SKU price cache (parent's
-	// readCache/writeCache, 24h) sits on top.
 	awsBulkCacheTTL = 7 * 24 * time.Hour
 )
 
 type awsFetcher struct {
-	mu         sync.Mutex
-	httpClient *http.Client
+	mu sync.Mutex
 }
 
 func init() {
-	Register("aws", &awsFetcher{httpClient: &http.Client{Timeout: 120 * time.Second}})
+	Register("aws", &awsFetcher{})
 }
 
 // awsRegionLongName maps short region codes to the human-readable
@@ -95,9 +91,24 @@ type awsOnDemandTerm struct {
 }
 
 type awsBulkPayload struct {
-	Products map[string]awsBulkProduct                  `json:"products"`
+	Products map[string]awsBulkProduct                         `json:"products"`
 	Terms    map[string]map[string]map[string]awsOnDemandTerm `json:"terms"`
 	// Terms structure: terms[OnDemand][sku][offerCode] = term
+}
+
+// awsPriceListItem is the per-item shape returned by GetProducts.PriceList.
+// Each string in PriceList is a JSON object with this structure.
+type awsPriceListItem struct {
+	Product struct {
+		SKU           string            `json:"sku"`
+		ProductFamily string            `json:"productFamily"`
+		Attributes    map[string]string `json:"attributes"`
+	} `json:"product"`
+	Terms struct {
+		OnDemand map[string]struct {
+			PriceDimensions map[string]awsPriceDim `json:"priceDimensions"`
+		} `json:"OnDemand"`
+	} `json:"terms"`
 }
 
 func awsBulkCachePath(service, region string) string {
@@ -106,69 +117,116 @@ func awsBulkCachePath(service, region string) string {
 	return filepath.Join(d, fmt.Sprintf("aws-bulk-%s-%s.json", service, region))
 }
 
-// downloadBulk fetches and caches the raw bulk JSON for one
-// service+region pair.
-func (a *awsFetcher) downloadBulk(service, region string) (string, error) {
-	cache := awsBulkCachePath(service, region)
-	if st, err := os.Stat(cache); err == nil && time.Since(st.ModTime()) < awsBulkCacheTTL {
-		return cache, nil
-	}
-	var pathTpl string
-	switch service {
-	case "ec2", "ebs":
-		// EBS volumes are priced inside the EC2 catalog; both
-		// services share the same regional index.
-		pathTpl = awsEC2PathTemplate
-	default:
-		return "", fmt.Errorf("aws: unknown bulk service %q", service)
-	}
-	url := awsPricingHost + fmt.Sprintf(pathTpl, region)
-	req, err := http.NewRequest("GET", url, nil)
+// newAWSPricingClient creates a Pricing API client using the default
+// AWS credential chain. The HTTP client is set to &http.Client{} (nil
+// Transport) so requests inherit http.DefaultTransport at call time,
+// keeping the airgap shim effective.
+//
+// The AWS Pricing API endpoint is always in us-east-1 regardless of
+// the priced workload region.
+func newAWSPricingClient(ctx context.Context) (*awspricingsdk.Client, error) {
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion("us-east-1"),
+		config.WithHTTPClient(&http.Client{}),
+	)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("aws config: %w", err)
 	}
-	req.Header.Set("User-Agent", "yage/pricing")
-	resp, err := a.httpClient.Do(req)
+	return awspricingsdk.NewFromConfig(cfg), nil
+}
+
+// awsFetchAndBuildPayload calls GetProducts for the given service and
+// optional region filter, pages through all results, and builds an
+// awsBulkPayload from the per-item JSON strings. The result is written
+// to disk (7-day TTL cache). Service-specific filters (e.g. location=)
+// can be supplied via extraFilters.
+func awsFetchAndBuildPayload(ctx context.Context, client *awspricingsdk.Client, serviceCode, region string, extraFilters []awspricingtypes.Filter) (*awsBulkPayload, error) {
+	pl := &awsBulkPayload{
+		Products: make(map[string]awsBulkProduct),
+		Terms:    make(map[string]map[string]map[string]awsOnDemandTerm),
+	}
+	pl.Terms["OnDemand"] = make(map[string]map[string]awsOnDemandTerm)
+
+	paginator := awspricingsdk.NewGetProductsPaginator(client, &awspricingsdk.GetProductsInput{
+		ServiceCode:   &serviceCode,
+		Filters:       extraFilters,
+		FormatVersion: strPtr("aws_v1"),
+	})
+
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("aws pricing %s: %w", serviceCode, err)
+		}
+		for _, item := range page.PriceList {
+			var pli awsPriceListItem
+			if err := json.Unmarshal([]byte(item), &pli); err != nil {
+				continue
+			}
+			sku := pli.Product.SKU
+			if sku == "" {
+				continue
+			}
+			pl.Products[sku] = awsBulkProduct{
+				SKU:           sku,
+				ProductFamily: pli.Product.ProductFamily,
+				Attributes:    pli.Product.Attributes,
+			}
+			if len(pli.Terms.OnDemand) > 0 {
+				terms := make(map[string]awsOnDemandTerm)
+				for k, t := range pli.Terms.OnDemand {
+					terms[k] = awsOnDemandTerm{PriceDimensions: t.PriceDimensions}
+				}
+				pl.Terms["OnDemand"][sku] = terms
+			}
+		}
+	}
+	// Persist to disk for reuse within the 7-day TTL window.
+	_ = awsWriteBulkCache(awsBulkCachePath(serviceCode, region), pl)
+	return pl, nil
+}
+
+func strPtr(s string) *string { return &s }
+
+func awsWriteBulkCache(path string, pl *awsBulkPayload) error {
+	raw, err := json.Marshal(pl)
 	if err != nil {
-		return "", fmt.Errorf("aws bulk: %w", err)
+		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("aws bulk %s/%s: HTTP %d", service, region, resp.StatusCode)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+		return err
 	}
-	tmp := cache + ".tmp"
-	f, err := os.Create(tmp)
-	if err != nil {
-		return "", err
-	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return "", err
-	}
-	f.Close()
-	if err := os.Rename(tmp, cache); err != nil {
-		return "", err
-	}
-	return cache, nil
+	return os.Rename(tmp, path)
 }
 
 func (a *awsFetcher) loadBulk(service, region string) (*awsBulkPayload, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	path, err := a.downloadBulk(service, region)
+	return awsLoadOrFetch(service, region, nil)
+}
+
+// awsLoadOrFetch checks the disk cache, returning cached data if
+// fresh (< 7 days old). On a cache miss it calls the AWS Pricing SDK
+// to fetch and cache the payload.
+func awsLoadOrFetch(service, region string, extraFilters []awspricingtypes.Filter) (*awsBulkPayload, error) {
+	cache := awsBulkCachePath(service, region)
+	if st, err := os.Stat(cache); err == nil && time.Since(st.ModTime()) < awsBulkCacheTTL {
+		raw, err := os.ReadFile(cache)
+		if err == nil {
+			var pl awsBulkPayload
+			if err := json.Unmarshal(raw, &pl); err == nil {
+				return &pl, nil
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+	client, err := newAWSPricingClient(ctx)
 	if err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var pl awsBulkPayload
-	if err := json.Unmarshal(raw, &pl); err != nil {
-		return nil, fmt.Errorf("aws bulk parse: %w", err)
-	}
-	return &pl, nil
+	return awsFetchAndBuildPayload(ctx, client, service, region, extraFilters)
 }
 
 // Fetch routes by SKU shape:
@@ -188,7 +246,7 @@ func (a *awsFetcher) Fetch(sku, region string) (Item, error) {
 }
 
 func (a *awsFetcher) fetchEC2(instanceType, region, loc string) (Item, error) {
-	pl, err := a.loadBulk("ec2", region)
+	pl, err := a.loadBulk("AmazonEC2", region)
 	if err != nil {
 		return Item{}, err
 	}
@@ -234,7 +292,7 @@ func (a *awsFetcher) fetchEBS(volType, region, loc string) (Item, error) {
 	if len(parts) == 2 {
 		wantSub = parts[1] // "iops" | "throughput"
 	}
-	pl, err := a.loadBulk("ebs", region)
+	pl, err := a.loadBulk("AmazonEC2", region)
 	if err != nil {
 		return Item{}, err
 	}

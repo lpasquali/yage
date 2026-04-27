@@ -4,6 +4,7 @@
 package pricing
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,15 +12,19 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 )
 
 // Azure Retail Prices API — auth-free, region-aware.
 // GET https://prices.azure.com/api/retail/prices?$filter=...
 // Filter dimensions used here:
-//   serviceName eq 'Virtual Machines'    — VM compute SKUs
-//   armRegionName eq '<region>'          — eastus, westeurope, ...
-//   armSkuName eq '<sku>'                — Standard_D2s_v3, ...
-//   priceType eq 'Consumption'           — exclude reservations
+//
+//	serviceName eq 'Virtual Machines'    — VM compute SKUs
+//	armRegionName eq '<region>'          — eastus, westeurope, ...
+//	armSkuName eq '<sku>'                — Standard_D2s_v3, ...
+//	priceType eq 'Consumption'           — exclude reservations
 //
 // The endpoint returns Items[] with retailPrice (USD/hour for
 // VMs, USD/GB-month for managed disks). We pick the lowest
@@ -27,12 +32,58 @@ import (
 // the catalog returns multiple rows per sku (Linux, Windows,
 // Spot tiers). Linux on-demand is the conservative default
 // for a Linux-based CAPI workload.
+//
+// HTTP transport: the azcore runtime pipeline is initialized with
+// policy.ClientOptions{Transport: &http.Client{}} — a nil-Transport
+// client that inherits http.DefaultTransport at request time, keeping
+// the airgap shim effective.
 const azureRetailURL = "https://prices.azure.com/api/retail/prices"
 
-type azureFetcher struct{ httpClient *http.Client }
+// azurePipeline is the azcore SDK pipeline used for all Azure Retail
+// Prices API requests. The Transport is &http.Client{} with a 30s
+// timeout and a nil Transport field — the nil Transport inherits
+// http.DefaultTransport at request time, keeping the airgap shim
+// effective when airgap.Apply() has been called. The 30s Timeout
+// bounds slow Retail API responses without touching the Transport.
+var azurePipeline = runtime.NewPipeline(
+	"yage-pricing", "v0.0.0",
+	runtime.PipelineOptions{},
+	&policy.ClientOptions{Transport: &http.Client{Timeout: 30 * time.Second}},
+)
+
+type azureFetcher struct{}
 
 func init() {
-	Register("azure", &azureFetcher{httpClient: &http.Client{Timeout: 15 * time.Second}})
+	Register("azure", &azureFetcher{})
+}
+
+// azureDo executes an HTTP request through the azcore pipeline and
+// returns the HTTP response. The caller is responsible for closing
+// the response body. Wraps runtime.NewRequestFromRequest so the
+// standard *http.Request workflow is preserved.
+func azureDo(req *http.Request) (*http.Response, error) {
+	policyReq, err := runtime.NewRequestFromRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := azurePipeline.Do(policyReq)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// azureNewRequest creates a GET request for the Azure Retail Prices
+// API with the given query parameters and the standard User-Agent
+// header. It uses context.Background() since pricing calls are
+// best-effort and not part of a cancellable operation chain.
+func azureNewRequest(endpoint string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "yage/pricing")
+	return req, nil
 }
 
 type azureItem struct {
@@ -157,13 +208,11 @@ func azureRetailWithCurrency(filter, currency string) ([]azureItem, string, erro
 		q.Set("currencyCode", strings.ToUpper(currency))
 	}
 	endpoint := azureRetailURL + "?" + q.Encode()
-	req, err := http.NewRequest("GET", endpoint, nil)
+	req, err := azureNewRequest(endpoint)
 	if err != nil {
 		return nil, "USD", err
 	}
-	req.Header.Set("User-Agent", "yage/pricing")
-	c := &http.Client{Timeout: 15 * time.Second}
-	resp, err := c.Do(req)
+	resp, err := azureDo(req)
 	if err != nil {
 		return nil, "USD", fmt.Errorf("azure: %w", err)
 	}
@@ -192,13 +241,14 @@ func azureRetailWithCurrency(filter, currency string) ([]azureItem, string, erro
 // returns the matching items. Used by the AzureXxx() helpers
 // below to extract specific overhead SKUs.
 func azureRetail(filter string) ([]azureItem, error) {
-	c := &http.Client{Timeout: 15 * time.Second}
 	q := url.Values{}
 	q.Set("$filter", filter)
 	endpoint := azureRetailURL + "?" + q.Encode()
-	req, _ := http.NewRequest("GET", endpoint, nil)
-	req.Header.Set("User-Agent", "yage/pricing")
-	resp, err := c.Do(req)
+	req, err := azureNewRequest(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := azureDo(req)
 	if err != nil {
 		return nil, err
 	}
@@ -557,32 +607,18 @@ func AzureEgressUSDPerGB(region string) (float64, error) {
 // substring — there are multiple meters (LRS / ZRS / GRS) and we
 // pick the cheapest (LRS) as the conservative default.
 func AzureManagedDiskUSDPerGBMonth(region, productSubstr string) (float64, error) {
-	c := &http.Client{Timeout: 15 * time.Second}
 	filter := fmt.Sprintf(
 		"serviceName eq 'Storage' and priceType eq 'Consumption' and armRegionName eq '%s'",
 		region,
 	)
-	q := url.Values{}
-	q.Set("$filter", filter)
-	endpoint := azureRetailURL + "?" + q.Encode()
-	req, _ := http.NewRequest("GET", endpoint, nil)
-	req.Header.Set("User-Agent", "yage/pricing")
-	resp, err := c.Do(req)
+	items, err := azureRetail(filter)
 	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return 0, fmt.Errorf("azure storage: HTTP %d", resp.StatusCode)
-	}
-	var ar azureResp
-	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
 		return 0, err
 	}
 	want := strings.ToLower(productSubstr)
 	var best float64
 	found := false
-	for _, it := range ar.Items {
+	for _, it := range items {
 		// Only managed disks priced per GB-Month
 		if !strings.Contains(strings.ToLower(it.UnitOfMeasure), "gb") {
 			continue

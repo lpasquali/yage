@@ -11,9 +11,6 @@
 // Upcoming (Phase F steps 3-7): CostEstimate CRD, CapacityWebhook,
 // DriftController, Helm chart, --install-operator CLI flag.
 //
-// Note: controller-runtime will be added when a version compatible with
-// k8s.io/client-go v0.36 is released. The spike uses stdlib directly.
-//
 // Config (env vars for the spike — to be replaced by Secret-backed
 // config in step 3):
 //
@@ -25,19 +22,15 @@
 package main
 
 import (
-	"context"
 	"flag"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
-	"github.com/go-logr/logr"
-	"github.com/go-logr/stdr"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"log"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/lpasquali/yage/internal/config"
 	opcost "github.com/lpasquali/yage/internal/operator/cost"
@@ -70,57 +63,49 @@ func main() {
 		"Address to expose /healthz and /readyz probes on.")
 	flag.DurationVar(&pollInterval, "cost-poll-interval", 24*time.Hour,
 		"How often to poll pricing APIs (e.g. 24h, 6h).")
+
+	zapOpts := zap.Options{}
+	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	logger := stdr.New(log.New(os.Stdout, "", log.LstdFlags))
-	logger = logger.WithName("yage-operator")
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
+	log := ctrl.Log.WithName("yage-operator")
 
-	reg := prometheus.NewRegistry()
-	reg.MustRegister(opcost.Metrics()...)
-	reg.MustRegister(prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	ctrlmetrics.Registry.MustRegister(opcost.Metrics()...)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Metrics:                server.Options{BindAddress: metricsAddr},
+		HealthProbeBindAddress: probeAddr,
+		LeaderElection:         false,
+	})
+	if err != nil {
+		log.Error(err, "unable to create manager")
+		os.Exit(1)
+	}
 
-	go runMetricsServer(ctx, metricsAddr, reg, logger)
-	go runProbeServer(ctx, probeAddr, logger)
-
-	cfg := cfgFromEnv()
 	runner := &opcost.Runner{
-		Cfg:      cfg,
+		Cfg:      cfgFromEnv(),
 		Interval: pollInterval,
-		Log:      logger.WithName("cost-runner"),
+		Log:      log.WithName("cost-runner"),
 	}
-	runner.Start(ctx) //nolint:errcheck
-	logger.Info("shutdown complete")
-}
-
-func runMetricsServer(ctx context.Context, addr string, reg *prometheus.Registry, log logr.Logger) {
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
-	srv := &http.Server{Addr: addr, Handler: mux}
-	log.Info("metrics server listening", "addr", addr)
-	go func() {
-		<-ctx.Done()
-		srv.Close()
-	}()
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Error(err, "metrics server error")
+	if err := mgr.Add(runner); err != nil {
+		log.Error(err, "unable to register cost runner")
+		os.Exit(1)
 	}
-}
 
-func runProbeServer(ctx context.Context, addr string, log logr.Logger) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	srv := &http.Server{Addr: addr, Handler: mux}
-	log.Info("probe server listening", "addr", addr)
-	go func() {
-		<-ctx.Done()
-		srv.Close()
-	}()
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Error(err, "probe server error")
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		log.Error(err, "unable to set up health check")
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		log.Error(err, "unable to set up ready check")
+		os.Exit(1)
+	}
+
+	log.Info("starting yage-operator", "metricsAddr", metricsAddr, "pollInterval", pollInterval)
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+		log.Error(err, "manager exited with error")
+		os.Exit(1)
 	}
 }
 

@@ -224,9 +224,9 @@ var dashFields = []fieldMeta{
 	{fkText, tiKindName, "kind name", "Cluster", false},
 	{fkText, tiK8sVer, "k8s version", "", false},
 	{fkText, tiWorkloadName, "workload name", "", false},
-	{fkSelect, siProvider, "provider", "", true},
+	{fkSelect, siProvider, "provider", "", false},
 	// ── Mode ─────────────────────────────────────────────────────────────── fid 4
-	{fkSelect, siMode, "mode", "Mode", true},
+	{fkSelect, siMode, "mode", "Mode", false},
 	// ── Tier ─────────────────────────────────────────────────────────────── fid 5-6
 	{fkSelect, siEnv, "environment", "Tier", true},
 	{fkSelect, siResil, "resilience", "", true},
@@ -2143,6 +2143,12 @@ func (m dashModel) kickRefreshCmd() tea.Cmd {
 		return nil
 	}
 	snap := m.buildSnapshotCfg()
+	// Cost comparison always queries every credentialled provider, regardless
+	// of which provider the user has selected in the config tab. The provider
+	// select is a deployment choice, not a cost-filter. Clear InfraProvider
+	// so StreamWithFilter does not narrow to a single provider.
+	snap.InfraProvider = ""
+	snap.InfraProviderDefaulted = true
 	// Capture credentials at dispatch time: pricing.SetCredentials is a
 	// process-global set before kind is connected, so it may not include
 	// credentials loaded later from the cost-compare-config Secret.

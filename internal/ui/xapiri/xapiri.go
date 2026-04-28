@@ -200,12 +200,18 @@ func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
 		}
 	}
 	installLogTee()
-	if rc := runDashboard(w, cfg, s); rc != 0 {
-		return rc
+	res := runDashboard(w, cfg, s)
+	if !res.saved {
+		return 0
 	}
 	if s.fork == forkOnPrem {
-		// runHuhForm already delegated to runOnPremFork; the rc==0
-		// branch here is unreachable for that path. Belt-and-braces.
+		return s.runOnPremFork()
+	}
+	if res.deployRequested {
+		// User pressed Start Deploy — proceed directly to the orchestrator.
+		if err := s.runSharedTail(); err != nil {
+			return s.exit(err)
+		}
 		return 0
 	}
 	for {

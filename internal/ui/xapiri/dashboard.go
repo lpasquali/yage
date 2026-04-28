@@ -88,10 +88,11 @@ const (
 // ─── toggle (bool) slot indices ──────────────────────────────────────────────
 
 const (
-	toiQueue    = 0
-	toiObjStore = 1
-	toiCache    = 2
-	toiCount    = 3
+	toiQueue      = 0
+	toiObjStore   = 1
+	toiCache      = 2
+	toiOvercommit = 3 // on-prem only: allow resource overcommit
+	toiCount      = 4
 )
 
 // ─── logical focus IDs (tab order) ───────────────────────────────────────────
@@ -117,10 +118,11 @@ const (
 	focCacheCPU           // 17
 	focCacheMem           // 18
 	focBootstrap          // 19
-	focDCLoc              // 20
-	focBudget             // 21
-	focHeadroom           // 22
-	focCount              // 23 — must be last
+	focOvercommit         // 20
+	focDCLoc              // 21
+	focBudget             // 22
+	focHeadroom           // 23
+	focCount              // 24 — must be last
 )
 
 // ─── per-field metadata ───────────────────────────────────────────────────────
@@ -168,6 +170,7 @@ var dashFields = []fieldMeta{
 	{fkText, tiCacheMem, "  cache mem (Mi)", "", true},
 	// ── Bootstrap (on-prem only) ──────────────────────────────────────
 	{fkSelect, siBootstrap, "bootstrap mode", "Bootstrap", false},
+	{fkToggle, toiOvercommit, "allow overcommit", "", false},
 	// ── Geo + Budget (cloud only) ─────────────────────────────────────
 	{fkText, tiDCLoc, "data-center loc", "Geo", false},
 	{fkText, tiBudget, "budget USD/mo", "Budget", false},
@@ -312,6 +315,7 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.toggles[toiQueue] = s.workload.HasQueue
 	m.toggles[toiObjStore] = s.workload.HasObjStore
 	m.toggles[toiCache] = s.workload.HasCache
+	m.toggles[toiOvercommit] = cfg.Capacity.AllowOvercommit
 
 	// Focus the first visible input.
 	cmd := m.textInputs[tiKindName].Focus()
@@ -340,7 +344,7 @@ func (m *dashModel) isHidden(fid int) bool {
 		focHasQueue, focHasObjStore, focHasCache,
 		focDCLoc, focBudget, focHeadroom:
 		return !isCloud
-	case focBootstrap:
+	case focBootstrap, focOvercommit:
 		return isCloud // only visible on on-prem
 	case focQueueCPU, focQueueMem, focQueueVol:
 		return !isCloud || !m.toggles[toiQueue]
@@ -577,6 +581,7 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 	}
 
 	snap.BootstrapMode = m.selects[siBootstrap].value()
+	snap.Capacity.AllowOvercommit = m.toggles[toiOvercommit]
 
 	snap.Cost.Currency.DataCenterLocation = strings.ToUpper(strings.TrimSpace(m.textInputs[tiDCLoc].Value()))
 
@@ -662,6 +667,7 @@ func (m *dashModel) flushToCfg() {
 	m.cfg.CacheCPUMillicoresOverride = snap.CacheCPUMillicoresOverride
 	m.cfg.CacheMemoryMiBOverride = snap.CacheMemoryMiBOverride
 	m.cfg.BootstrapMode = snap.BootstrapMode
+	m.cfg.Capacity.AllowOvercommit = snap.Capacity.AllowOvercommit
 
 	// Derive s.fork / s.env / s.resil for the rest of the walkthrough.
 	if m.selects[siMode].value() == "on-prem" {

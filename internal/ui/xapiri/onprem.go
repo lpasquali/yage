@@ -119,9 +119,15 @@ func (s *state) step5_onprem_capacity() error {
 		s.r.info("✓ comfortable on the configured host pool.")
 		return nil
 	case FeasibilityTight:
-		s.r.info("⚠ tight on the configured host pool — proceeding anyway.")
+		s.r.info("⚠ tight on the configured host pool.")
 		if err != nil {
 			s.r.info("  detail: %v", err)
+		}
+		s.r.info("  Resource overcommit lets VMs exceed the soft capacity budget;")
+		s.r.info("  the hard ceiling (memory/disk) still applies.")
+		if s.r.promptYesNo("allow resource overcommit?", s.cfg.Capacity.AllowOvercommit) {
+			s.cfg.Capacity.AllowOvercommit = true
+			s.r.info("  ✓ overcommit enabled (equivalent to --allow-resource-overcommit)")
 		}
 		return nil
 	case FeasibilityInfeasible:

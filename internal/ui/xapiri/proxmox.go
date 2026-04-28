@@ -22,7 +22,11 @@ package xapiri
 //	           directly; the orchestrator's HaveClusterctlCredsInEnv()
 //	           returns true and OpenTofu is skipped.
 
-import "fmt"
+import (
+	"fmt"
+
+	syskeyring "github.com/lpasquali/yage/internal/platform/keyring"
+)
 
 // credentialMode is the local enum for the two Proxmox identity flows.
 type credentialMode int
@@ -155,6 +159,22 @@ func (s *state) step6_proxmox_byo() error {
 	s.cfg.Providers.Proxmox.CSITokenSecret = csiSecret
 	// Clear admin creds — they're not needed when BYO tokens are supplied.
 	s.cfg.Providers.Proxmox.AdminToken = ""
+
+	// Offer to save CAPI token and secret to the OS keychain so the
+	// operator doesn't need to re-enter them on future runs. Silently
+	// skipped on headless servers without a keyring daemon.
+	if syskeyring.Available() {
+		if s.r.promptYesNo("save CAPI credentials to OS keychain?", false) {
+			if err := syskeyring.Set(syskeyring.KeyProxmoxCAPIToken, s.cfg.Providers.Proxmox.CAPIToken); err != nil {
+				s.r.info("⚠ could not save CAPI token to keychain: %v", err)
+			} else if err := syskeyring.Set(syskeyring.KeyProxmoxCAPISecret, s.cfg.Providers.Proxmox.CAPISecret); err != nil {
+				s.r.info("⚠ could not save CAPI secret to keychain: %v", err)
+			} else {
+				s.r.info("✓ CAPI credentials saved to OS keychain.")
+			}
+		}
+	}
+
 	return nil
 }
 

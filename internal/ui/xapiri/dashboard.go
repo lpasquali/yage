@@ -720,10 +720,19 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		key := msg.Type
 		keyStr := msg.String()
 
-		// ── Ctrl+S: global save+quit, except when the Costs tab handles it ──
+		// ── Ctrl+S: save config to kind without quitting ──
 		if key == tea.KeyCtrlS && m.activeTab != tabCosts {
-			m.done = true
-			return m, tea.Quit
+			if !m.saveKindLoading {
+				m.flushToCfg()
+				m.saveKindLoading = true
+				m.saveKindDone = false
+				m.saveKindErr = nil
+				cfg := m.cfg
+				return m, func() tea.Msg {
+					return saveKindMsg{err: kindsync.ApplyBootstrapConfigToManagementCluster(cfg)}
+				}
+			}
+			return m, nil
 		}
 
 		// ── Esc/q: quit, unless terminal is focused (Esc unfocuses instead) ──
@@ -1509,6 +1518,8 @@ func keyMsgToBytes(msg tea.KeyMsg) []byte {
 		return []byte{'\x1b', '[', '5', '~'}
 	case tea.KeyPgDown:
 		return []byte{'\x1b', '[', '6', '~'}
+	case tea.KeySpace:
+		return []byte{' '}
 	case tea.KeyTab:
 		return []byte{'\t'}
 	case tea.KeyCtrlA:

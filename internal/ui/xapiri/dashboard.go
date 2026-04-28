@@ -46,6 +46,7 @@ import (
 	"github.com/lpasquali/yage/internal/cost"
 	"github.com/lpasquali/yage/internal/obs"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
+	"github.com/lpasquali/yage/internal/platform/sysinfo"
 	"github.com/lpasquali/yage/internal/pricing"
 	"github.com/lpasquali/yage/internal/provider"
 )
@@ -453,6 +454,9 @@ type ptyExitMsg struct{ err error }
 // saveKindMsg is returned when the background Save-to-Kind goroutine completes.
 type saveKindMsg struct{ err error }
 
+// sysStatsMsg carries a fresh sysinfo sample.
+type sysStatsMsg struct{ s sysinfo.Stats }
+
 // ─── select state ────────────────────────────────────────────────────────────
 
 type selectState struct {
@@ -526,6 +530,10 @@ type dashModel struct {
 	termH       int    // total pane height (border+title+content); ctrl+alt+↑/↓ to resize
 	termRaw     []byte // raw PTY output ring buffer (last 64 KB)
 
+	// system stats widget (top-right corner of tab bar)
+	sysSampler *sysinfo.Sampler
+	sysStats   sysinfo.Stats
+
 	width, height int
 	errMsg        string
 	done          bool // ctrl+s pressed
@@ -534,12 +542,15 @@ type dashModel struct {
 // ─── init ─────────────────────────────────────────────────────────────────────
 
 func newDashModel(cfg *config.Config, s *state) dashModel {
+	sampler := sysinfo.NewSampler()
+	sampler.Sample() // prime the counters; first real delta will be on the second call
 	m := dashModel{
 		cfg:         cfg,
 		s:           s,
 		focus:       focKindName,
 		costLoading: cfg.CostCompareEnabled, // show "fetching…" from the first frame
 		termH:       termPaneHDefault,
+		sysSampler:  sampler,
 	}
 
 	// Build text inputs.
@@ -766,7 +777,16 @@ func (m dashModel) Init() tea.Cmd {
 		m.textInputs[tiKindName].Focus(),
 		m.kickRefreshCmd(),
 		m.watchLogsCmd(),
+		m.sysStatsTickCmd(),
 	)
+}
+
+// sysStatsTickCmd samples process stats after 2 s and delivers a sysStatsMsg.
+func (m dashModel) sysStatsTickCmd() tea.Cmd {
+	sampler := m.sysSampler
+	return tea.Tick(2*time.Second, func(_ time.Time) tea.Msg {
+		return sysStatsMsg{s: sampler.Sample()}
+	})
 }
 
 // watchLogsCmd returns a command that waits for a log-ring notification and
@@ -1079,6 +1099,10 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.costLoading = true
 		m.costRows = nil // clear so each provider appears as it lands
 		return m, m.kickRefreshCmd()
+
+	case sysStatsMsg:
+		m.sysStats = msg.s
+		return m, m.sysStatsTickCmd()
 
 	case logUpdateMsg:
 		m.logLines = globalLogRing.Lines()
@@ -2620,7 +2644,7 @@ func (m dashModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, tabBar, content, termPane, bottomStrip, footer)
 }
 
-// renderTabBar renders the tab strip at the top.
+// renderTabBar renders the tab strip at the top with a right-aligned sysinfo widget.
 func (m dashModel) renderTabBar() string {
 	var parts []string
 	for i := dashTab(0); i < tabCount; i++ {
@@ -2632,17 +2656,108 @@ func (m dashModel) renderTabBar() string {
 		}
 	}
 	bar := strings.Join(parts, "  ")
-	title := stBold.Render("yage xapiri") + "  "
-	line := title + bar
+	title := stBold.Render("yage") + "  "
+	left := title + bar
+
+	// Right-align the sysinfo widget; pad between left and widget.
+	widget := m.renderSysWidget()
+	// Strip ANSI for width math (widget uses lipgloss styles).
+	wPlain := lipgloss.Width(widget)
+	lPlain := lipgloss.Width(left)
+	pad := m.width - lPlain - wPlain
+	if pad < 1 {
+		pad = 1
+	}
+	line := left + strings.Repeat(" ", pad) + widget
 	return lipgloss.NewStyle().Width(m.width).Render(line) + "\n" +
 		stMuted.Render(strings.Repeat("─", m.width))
 }
 
+// renderSysWidget returns a compact right-corner widget:
+//
+//	cpu 3%  128M  ↓1.2M ↑400B
+func (m dashModel) renderSysWidget() string {
+	s := m.sysStats
+	if s.MemRSSBytes == 0 {
+		return stMuted.Render("cpu –  – M  ↓–  ↑–")
+	}
+
+	// CPU colour: green < 20%, yellow < 60%, red ≥ 60%.
+	cpuStr := fmt.Sprintf("%.0f%%", s.CPUPercent)
+	var cpuStyle lipgloss.Style
+	switch {
+	case s.CPUPercent < 20:
+		cpuStyle = stOK
+	case s.CPUPercent < 60:
+		cpuStyle = stWarn
+	default:
+		cpuStyle = stBad
+	}
+
+	// Memory: colour by absolute size.
+	memStr := fmtBytes(s.MemRSSBytes)
+	var memStyle lipgloss.Style
+	switch {
+	case s.MemRSSBytes < 256<<20: // < 256 MB
+		memStyle = stOK
+	case s.MemRSSBytes < 512<<20: // < 512 MB
+		memStyle = stWarn
+	default:
+		memStyle = stBad
+	}
+
+	// Network: per-second rate; muted when idle, accent when data flowing.
+	var rxRate, txRate uint64
+	if s.DeltaDur > 0 {
+		secs := s.DeltaDur.Seconds()
+		rxRate = uint64(float64(s.NetRxDelta) / secs)
+		txRate = uint64(float64(s.NetTxDelta) / secs)
+	}
+	netStyle := stMuted
+	if rxRate > 1024 || txRate > 1024 {
+		netStyle = stAccent
+	}
+
+	return stMuted.Render("cpu ") + cpuStyle.Render(cpuStr) +
+		stMuted.Render("  ") + memStyle.Render(memStr) +
+		stMuted.Render("  ↓") + netStyle.Render(fmtRate(rxRate)) +
+		stMuted.Render(" ↑") + netStyle.Render(fmtRate(txRate))
+}
+
+// fmtBytes formats a byte count compactly: "128M", "4.2G", "512K", "64B".
+func fmtBytes(b uint64) string {
+	switch {
+	case b >= 1<<30:
+		return fmt.Sprintf("%.1fG", float64(b)/float64(1<<30))
+	case b >= 1<<20:
+		return fmt.Sprintf("%.0fM", float64(b)/float64(1<<20))
+	case b >= 1<<10:
+		return fmt.Sprintf("%.0fK", float64(b)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%dB", b)
+	}
+}
+
+// fmtRate formats bytes/s compactly: "1.2M/s", "400K/s", "64B/s", "0".
+func fmtRate(bps uint64) string {
+	if bps == 0 {
+		return "0"
+	}
+	switch {
+	case bps >= 1<<20:
+		return fmt.Sprintf("%.1fM/s", float64(bps)/float64(1<<20))
+	case bps >= 1<<10:
+		return fmt.Sprintf("%.0fK/s", float64(bps)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%dB/s", bps)
+	}
+}
+
 // tabAtX returns the dashTab at visible column x in the tab bar title row (Y==0).
-// The layout is: "yage xapiri  " (13 visible chars) then "[label]  " per tab
+// The layout is: "yage  " (6 visible chars) then "[label]  " per tab
 // separated by "  ". Returns (tab, true) when x falls inside a tab label.
 func tabAtX(x int) (dashTab, bool) {
-	col := len("yage xapiri  ") // 13 visible chars prefix
+	col := len("yage  ") // 6 visible chars prefix
 	for i := dashTab(0); i < tabCount; i++ {
 		w := len(tabLabels[i]) + 2 // "[" + label + "]"
 		if x >= col && x < col+w {

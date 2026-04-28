@@ -20,11 +20,11 @@ package xapiri
 //   - ctrl+l switches to the logs tab (config tab only).
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -34,6 +34,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/creack/pty"
 
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/config"
@@ -189,24 +190,47 @@ var dashFields = []fieldMeta{
 type dashTab int
 
 const (
-	tabConfig   dashTab = iota // 0 — interactive config form
-	tabEditor                  // 1 — opens $EDITOR on the YAML config file
-	tabCosts                   // 2 — full provider comparison table + bar chart
-	tabLogs                    // 3 — scrollable ring buffer
-	tabHelp                    // 4 — keyboard shortcuts reference
-	tabAbout                   // 5 — version / license / URL
-	tabDeploy                  // 6 — save-to-kind + start-deploy actions
-	tabTerminal                // 7 — solarized-dark shell launcher
-	tabCount                   // must be last
+	tabConfig dashTab = iota // 0 — interactive config form
+	tabEditor                // 1 — opens $EDITOR on the YAML config file
+	tabCosts                 // 2 — full provider comparison table + bar chart
+	tabLogs                  // 3 — scrollable ring buffer
+	tabDeploy                // 4 — save-to-kind + start-deploy actions
+	tabHelp                  // 5 — keyboard shortcuts reference (always second-to-last)
+	tabAbout                 // 6 — version / license / URL (always last)
+	tabCount                 // must be last
 )
 
-var tabLabels = [tabCount]string{"config", "editor", "costs", "logs", "help", "about", "deploy", "terminal"}
+var tabLabels = [tabCount]string{"config", "editor", "costs", "logs", "deploy", "help", "about"}
+
+// ─── cost-tab credential input slots ─────────────────────────────────────────
+
+const (
+	ccAWSKeyID   = 0
+	ccAWSSecret  = 1
+	ccGCPKey     = 2
+	ccHetznerTok = 3
+	ccDOTok      = 4
+	ccIBMKey     = 5
+	ccCount      = 6
+)
+
+var ccLabels = [ccCount]string{
+	"AWS Access Key ID",
+	"AWS Secret Access Key",
+	"GCP API Key",
+	"Hetzner Token",
+	"DigitalOcean Token",
+	"IBM Cloud API Key",
+}
 
 // ─── messages ────────────────────────────────────────────────────────────────
 
 type costMsg struct {
 	rows []cost.CloudCost
 }
+
+// saveCostCredsMsg is returned when the background cost-credentials Secret write completes.
+type saveCostCredsMsg struct{ err error }
 
 type tickMsg time.Time
 
@@ -216,8 +240,11 @@ type logUpdateMsg struct{}
 // editorFinishedMsg is returned by the ExecProcess callback after the editor exits.
 type editorFinishedMsg struct{ err error }
 
-// shellFinishedMsg is returned by the ExecProcess callback after the shell exits.
-type shellFinishedMsg struct{ err error }
+// ptyOutputMsg carries a chunk of raw output from the embedded PTY.
+type ptyOutputMsg struct{ data []byte }
+
+// ptyExitMsg signals that the embedded PTY process has exited.
+type ptyExitMsg struct{ err error }
 
 // saveKindMsg is returned when the background Save-to-Kind goroutine completes.
 type saveKindMsg struct{ err error }
@@ -263,6 +290,12 @@ type dashModel struct {
 	logScroll  int      // scroll offset (lines from bottom; 0 = pinned to bottom)
 	logSub     <-chan struct{}
 
+	// cost tab credential form
+	costCredsInputs [ccCount]textinput.Model
+	costCredsFocus  int
+	costCredsMode   bool   // true = showing credential form instead of comparison table
+	costCredsStatus string // last save result ("" | "saved" | error text)
+
 	// deploy tab
 	deployFocused   int  // 0=save button, 1=deploy button
 	saveKindLoading bool
@@ -270,9 +303,12 @@ type dashModel struct {
 	saveKindErr     error
 	deployRequested bool
 
-	// terminal tab
-	termLastExit    int
-	termHasExited   bool
+	// embedded terminal pane (Ctrl+T)
+	termPTY     *os.File
+	termCmd     *exec.Cmd
+	termRunning bool
+	termFocused bool
+	termRaw     []byte // raw PTY output ring buffer (last 64 KB)
 
 	width, height int
 	errMsg        string
@@ -372,6 +408,31 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.toggles[toiObjStore] = s.workload.HasObjStore
 	m.toggles[toiCache] = s.workload.HasCache
 	m.toggles[toiOvercommit] = cfg.Capacity.AllowOvercommit
+
+	// Cost-tab credential inputs — seeded from saved credentials.
+	credsInit := [ccCount]string{
+		cfg.Cost.Credentials.AWSAccessKeyID,
+		cfg.Cost.Credentials.AWSSecretAccessKey,
+		cfg.Cost.Credentials.GCPAPIKey,
+		cfg.Cost.Credentials.HetznerToken,
+		cfg.Cost.Credentials.DigitalOceanToken,
+		cfg.Cost.Credentials.IBMCloudAPIKey,
+	}
+	for i := 0; i < ccCount; i++ {
+		ti := textinput.New()
+		ti.Prompt = ""
+		ti.Width = 30
+		if i != ccAWSKeyID { // mask all secrets except the non-secret key ID
+			ti.EchoMode = textinput.EchoPassword
+			ti.EchoCharacter = '·'
+		}
+		ti.SetValue(credsInit[i])
+		m.costCredsInputs[i] = ti
+	}
+	m.costCredsMode = !cfg.CostCompareEnabled
+	if m.costCredsMode {
+		m.costCredsInputs[0].Focus()
+	}
 
 	// Subscribe to log ring for the [logs] tab.
 	m.logSub = globalLogRing.Subscribe()
@@ -489,6 +550,12 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if m.termRunning && m.termPTY != nil {
+			_ = pty.Setsize(m.termPTY, &pty.Winsize{
+				Rows: uint16(termPaneH - 2),
+				Cols: uint16(msg.Width),
+			})
+		}
 		return m, nil
 
 	case costMsg:
@@ -523,16 +590,21 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeTab = tabConfig
 		return m, nil
 
-	case shellFinishedMsg:
-		m.termHasExited = true
-		if msg.err != nil {
-			if exitErr, ok := msg.err.(*exec.ExitError); ok {
-				m.termLastExit = exitErr.ExitCode()
-			} else {
-				m.termLastExit = 1
-			}
-		} else {
-			m.termLastExit = 0
+	case ptyOutputMsg:
+		if len(msg.data) > 0 {
+			(&m).processTermBytes(msg.data)
+		}
+		if m.termRunning {
+			return m, m.watchPTYCmd()
+		}
+		return m, nil
+
+	case ptyExitMsg:
+		m.termRunning = false
+		m.termFocused = false
+		if m.termPTY != nil {
+			_ = m.termPTY.Close()
+			m.termPTY = nil
 		}
 		return m, nil
 
@@ -542,60 +614,127 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.saveKindErr = msg.err
 		return m, nil
 
+	case saveCostCredsMsg:
+		if msg.err != nil {
+			m.costCredsStatus = "warning: could not save to kind: " + msg.err.Error()
+		} else {
+			m.costCredsStatus = "saved"
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		key := msg.Type
 		keyStr := msg.String()
 
-		// ── global quit / save (always available) ──
-		switch {
-		case key == tea.KeyCtrlS || keyStr == "ctrl+s":
+		// ── Ctrl+S: always saves and quits ──
+		if key == tea.KeyCtrlS {
 			m.done = true
 			return m, tea.Quit
-		case key == tea.KeyEsc || keyStr == "q":
+		}
+
+		// ── Esc/q: quit, unless terminal is focused (Esc unfocuses instead) ──
+		if key == tea.KeyEsc {
+			if m.termFocused {
+				m.termFocused = false
+				return m, nil
+			}
+			m.done = false
+			return m, tea.Quit
+		}
+		if keyStr == "q" && !m.termFocused {
 			m.done = false
 			return m, tea.Quit
 		}
 
-		// ── Alt+1..8: universal tab switching — works even inside text fields ──
-		if msg.Alt && key == tea.KeyRunes {
-			switch string(msg.Runes) {
-			case "1":
-				m.activeTab = tabConfig
-				return m, nil
-			case "2":
-				m.activeTab = tabEditor
-				return m, m.openEditorCmd()
-			case "3":
-				m.activeTab = tabCosts
-				return m, nil
-			case "4":
-				m.activeTab = tabLogs
-				return m, nil
-			case "5":
-				m.activeTab = tabHelp
-				return m, nil
-			case "6":
-				m.activeTab = tabAbout
-				return m, nil
-			case "7":
-				m.activeTab = tabDeploy
-				return m, nil
-			case "8":
-				m.activeTab = tabTerminal
-				return m, nil
-			}
-		}
-
-		// ── Ctrl+T: navigate to terminal tab (universal) ──
-		if keyStr == "ctrl+t" {
-			if m.activeTab == tabTerminal {
-				return m, m.spawnShellCmd()
-			}
-			m.activeTab = tabTerminal
+		// ── Alt+1..7: universal tab switching — works even inside text fields ──
+		switch keyStr {
+		case "alt+1":
+			m.activeTab = tabConfig
+			return m, nil
+		case "alt+2":
+			m.activeTab = tabEditor
+			return m, m.openEditorCmd()
+		case "alt+3":
+			m.activeTab = tabCosts
+			return m, nil
+		case "alt+4":
+			m.activeTab = tabLogs
+			return m, nil
+		case "alt+5":
+			m.activeTab = tabDeploy
+			return m, nil
+		case "alt+6":
+			m.activeTab = tabHelp
+			return m, nil
+		case "alt+7":
+			m.activeTab = tabAbout
 			return m, nil
 		}
 
-		// ── tab switching: left/right arrows or number keys 1-8 ──
+		// ── Ctrl+Left/Right: universal tab cycling — works even inside text fields ──
+		if key == tea.KeyCtrlLeft {
+			m.activeTab = (m.activeTab - 1 + tabCount) % tabCount
+			if m.activeTab == tabEditor {
+				return m, m.openEditorCmd()
+			}
+			return m, nil
+		}
+		if key == tea.KeyCtrlRight {
+			m.activeTab = (m.activeTab + 1) % tabCount
+			if m.activeTab == tabEditor {
+				return m, m.openEditorCmd()
+			}
+			return m, nil
+		}
+
+		// ── Ctrl+T: start embedded terminal / toggle focus ──
+		if keyStr == "ctrl+t" {
+			if m.termRunning {
+				m.termFocused = !m.termFocused
+				return m, nil
+			}
+			shell := os.Getenv("SHELL")
+			if shell == "" {
+				shell = "sh"
+			}
+			cmd := exec.Command(shell)
+			cmd.Env = append(os.Environ(),
+				"COLORTERM=truecolor",
+				"TERM=xterm-256color",
+				`PS1=\[\e[0;32m\]\u@\h\[\e[0m\]:\[\e[0;34m\]\w\[\e[0;33m\]\$\[\e[0m\] `,
+			)
+			cols := uint16(m.width)
+			if cols == 0 {
+				cols = 80
+			}
+			f, err := pty.StartWithSize(cmd, &pty.Winsize{
+				Rows: uint16(termPaneH - 2),
+				Cols: cols,
+			})
+			if err != nil {
+				m.errMsg = "terminal: " + err.Error()
+				return m, nil
+			}
+			m.termPTY = f
+			m.termCmd = cmd
+			m.termRunning = true
+			m.termFocused = true
+			return m, m.watchPTYCmd()
+		}
+
+		// ── terminal focus: route all keys to PTY ──
+		if m.termFocused && m.termRunning {
+			if b := keyMsgToBytes(msg); len(b) > 0 {
+				f := m.termPTY
+				return m, func() tea.Msg {
+					_, _ = f.Write(b)
+					return nil
+				}
+			}
+			return m, nil
+		}
+
+		// ── tab switching: left/right arrows or number keys 1-7 ──
 		// (Only when not in a text input on the config tab.)
 		inTextField := m.activeTab == tabConfig && dashFields[m.focus].kind == fkText
 		switch {
@@ -612,16 +751,13 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = tabLogs
 			return m, nil
 		case !inTextField && keyStr == "5":
-			m.activeTab = tabHelp
-			return m, nil
-		case !inTextField && keyStr == "6":
-			m.activeTab = tabAbout
-			return m, nil
-		case !inTextField && keyStr == "7":
 			m.activeTab = tabDeploy
 			return m, nil
-		case !inTextField && keyStr == "8":
-			m.activeTab = tabTerminal
+		case !inTextField && keyStr == "6":
+			m.activeTab = tabHelp
+			return m, nil
+		case !inTextField && keyStr == "7":
+			m.activeTab = tabAbout
 			return m, nil
 		case (key == tea.KeyLeft || key == tea.KeyRight) && !inTextField && m.activeTab != tabConfig:
 			// Only cycle tabs with arrows when not on config (config uses arrows for fields).
@@ -646,23 +782,10 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateLogsTab(msg)
 
 		case tabCosts:
-			switch {
-			case key == tea.KeyUp || keyStr == "k":
-				if len(m.costRows) > 0 {
-					m.costVendor = (m.costVendor - 1 + len(m.costRows)) % len(m.costRows)
-				}
-			case key == tea.KeyDown || keyStr == "j":
-				if len(m.costRows) > 0 {
-					m.costVendor = (m.costVendor + 1) % len(m.costRows)
-				}
-			}
-			return m, nil
+			return m.updateCostsTab(msg)
 
 		case tabDeploy:
 			return m.updateDeployTab(msg)
-
-		case tabTerminal:
-			return m.updateTerminalTab(msg)
 		}
 	}
 
@@ -688,18 +811,12 @@ func (m dashModel) updateConfigTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key == tea.KeyUp || keyStr == "k":
-		curMeta := dashFields[m.focus]
-		if curMeta.kind != fkText && len(m.costRows) > 0 {
-			m.costVendor = (m.costVendor - 1 + len(m.costRows)) % len(m.costRows)
-			return m, nil
-		}
+		m = m.moveFocus(false)
+		return m, textinput.Blink
 
 	case key == tea.KeyDown || keyStr == "j":
-		curMeta := dashFields[m.focus]
-		if curMeta.kind != fkText && len(m.costRows) > 0 {
-			m.costVendor = (m.costVendor + 1) % len(m.costRows)
-			return m, nil
-		}
+		m = m.moveFocus(true)
+		return m, textinput.Blink
 	}
 
 	// Per-field-kind handling.
@@ -802,13 +919,106 @@ func (m dashModel) updateDeployTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateTerminalTab handles key events on the terminal tab.
-func (m dashModel) updateTerminalTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// updateCostsTab handles key events on the costs tab.
+func (m dashModel) updateCostsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.Type
-	if key == tea.KeyEnter {
-		return m, m.spawnShellCmd()
+	keyStr := msg.String()
+	if m.costCredsMode {
+		return m.updateCostsCredsForm(msg)
+	}
+	switch {
+	case keyStr == "c" || keyStr == "e":
+		m.costCredsMode = true
+		m.costCredsInputs[m.costCredsFocus].Focus()
+		return m, textinput.Blink
+	case key == tea.KeyUp || keyStr == "k":
+		if len(m.costRows) > 0 {
+			m.costVendor = (m.costVendor - 1 + len(m.costRows)) % len(m.costRows)
+		}
+	case key == tea.KeyDown || keyStr == "j":
+		if len(m.costRows) > 0 {
+			m.costVendor = (m.costVendor + 1) % len(m.costRows)
+		}
 	}
 	return m, nil
+}
+
+// updateCostsCredsForm handles key events inside the credential entry form.
+func (m dashModel) updateCostsCredsForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.Type
+	keyStr := msg.String()
+
+	switch {
+	case key == tea.KeyEnter:
+		if m.costCredsFocus == ccCount-1 {
+			// Last field: submit.
+			return m, m.saveCostCredsCmd()
+		}
+		// Advance to next field.
+		m.costCredsInputs[m.costCredsFocus].Blur()
+		m.costCredsFocus++
+		m.costCredsInputs[m.costCredsFocus].Focus()
+		return m, textinput.Blink
+
+	case key == tea.KeyTab:
+		m.costCredsInputs[m.costCredsFocus].Blur()
+		m.costCredsFocus = (m.costCredsFocus + 1) % ccCount
+		m.costCredsInputs[m.costCredsFocus].Focus()
+		return m, textinput.Blink
+
+	case key == tea.KeyShiftTab:
+		m.costCredsInputs[m.costCredsFocus].Blur()
+		m.costCredsFocus = (m.costCredsFocus - 1 + ccCount) % ccCount
+		m.costCredsInputs[m.costCredsFocus].Focus()
+		return m, textinput.Blink
+
+	case keyStr == "ctrl+s":
+		return m, m.saveCostCredsCmd()
+
+	default:
+		ti, cmd := m.costCredsInputs[m.costCredsFocus].Update(msg)
+		m.costCredsInputs[m.costCredsFocus] = ti
+		return m, cmd
+	}
+}
+
+// saveCostCredsCmd applies the credential form values to cfg, wires the
+// pricing package, and asynchronously persists to the kind Secret.
+func (m *dashModel) saveCostCredsCmd() tea.Cmd {
+	m.cfg.Cost.Credentials.AWSAccessKeyID = strings.TrimSpace(m.costCredsInputs[ccAWSKeyID].Value())
+	m.cfg.Cost.Credentials.AWSSecretAccessKey = strings.TrimSpace(m.costCredsInputs[ccAWSSecret].Value())
+	m.cfg.Cost.Credentials.GCPAPIKey = strings.TrimSpace(m.costCredsInputs[ccGCPKey].Value())
+	m.cfg.Cost.Credentials.HetznerToken = strings.TrimSpace(m.costCredsInputs[ccHetznerTok].Value())
+	m.cfg.Cost.Credentials.DigitalOceanToken = strings.TrimSpace(m.costCredsInputs[ccDOTok].Value())
+	m.cfg.Cost.Credentials.IBMCloudAPIKey = strings.TrimSpace(m.costCredsInputs[ccIBMKey].Value())
+
+	pricing.SetCredentials(pricing.Credentials{
+		AWSAccessKeyID:     m.cfg.Cost.Credentials.AWSAccessKeyID,
+		AWSSecretAccessKey: m.cfg.Cost.Credentials.AWSSecretAccessKey,
+		GCPAPIKey:          m.cfg.Cost.Credentials.GCPAPIKey,
+		HetznerToken:       m.cfg.Cost.Credentials.HetznerToken,
+		DigitalOceanToken:  m.cfg.Cost.Credentials.DigitalOceanToken,
+		IBMCloudAPIKey:     m.cfg.Cost.Credentials.IBMCloudAPIKey,
+	})
+	m.cfg.CostCompareEnabled = true
+	m.costCredsMode = false
+	m.costCredsInputs[m.costCredsFocus].Blur()
+
+	cfg := m.cfg
+	return tea.Batch(
+		m.markDirty(),
+		func() tea.Msg {
+			creds := map[string]string{
+				"aws-access-key-id":     cfg.Cost.Credentials.AWSAccessKeyID,
+				"aws-secret-access-key": cfg.Cost.Credentials.AWSSecretAccessKey,
+				"gcp-api-key":           cfg.Cost.Credentials.GCPAPIKey,
+				"hetzner-token":         cfg.Cost.Credentials.HetznerToken,
+				"digitalocean-token":    cfg.Cost.Credentials.DigitalOceanToken,
+				"ibmcloud-api-key":      cfg.Cost.Credentials.IBMCloudAPIKey,
+			}
+			return saveCostCredsMsg{err: kindsync.WriteCostCompareSecret(cfg, creds)}
+		},
+	)
 }
 
 // openEditorCmd launches $EDITOR (or vi) on cfg.ConfigFile (or a temp file).
@@ -839,40 +1049,6 @@ func (m dashModel) openEditorCmd() tea.Cmd {
 	})
 }
 
-// spawnShellCmd launches $SHELL (or sh) with solarized-dark theme config.
-func (m dashModel) spawnShellCmd() tea.Cmd {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "sh"
-	}
-
-	initFile := "/tmp/yage_solarized_init.sh"
-	solarizedInit := `# yage solarized dark init
-export COLORTERM=truecolor
-export TERM=xterm-256color
-# Solarized dark PS1: base03 bg, green user@host, blue path, yellow $
-PS1='\[\e[0;32m\]\u@\h\[\e[0m\]:\[\e[0;34m\]\w\[\e[0;33m\]\$\[\e[0m\] '
-# Solarized LS_COLORS
-export LS_COLORS='di=0;34:ln=0;36:so=0;35:pi=0;33:ex=0;32:bd=0;34;46:cd=0;34;43:su=0;41:sg=0;46:tw=0;42:ow=0;43'
-`
-	_ = os.WriteFile(initFile, []byte(solarizedInit), 0644)
-
-	base := filepath.Base(shell)
-	var cmd *exec.Cmd
-	switch base {
-	case "bash":
-		cmd = exec.Command(shell, "--init-file", initFile)
-	case "zsh":
-		cmd = exec.Command(shell, "-c", "source "+initFile+"; exec "+shell)
-	default:
-		cmd = exec.Command(shell)
-	}
-	cmd.Env = append(os.Environ(), "COLORTERM=truecolor", "TERM=xterm-256color")
-
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return shellFinishedMsg{err: err}
-	})
-}
 
 // markDirty stamps lastDirty and schedules a debounce tick if none is pending.
 func (m *dashModel) markDirty() tea.Cmd {
@@ -882,6 +1058,211 @@ func (m *dashModel) markDirty() tea.Cmd {
 	}
 	m.refreshPending = true
 	return tea.Tick(400*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// ─── embedded terminal helpers ───────────────────────────────────────────────
+
+const termPaneH = 12 // total pane height (border + title + content rows)
+
+// watchPTYCmd reads one chunk from the PTY master fd and returns a ptyOutputMsg.
+// Re-scheduled after every ptyOutputMsg while termRunning is true.
+func (m dashModel) watchPTYCmd() tea.Cmd {
+	f := m.termPTY
+	return func() tea.Msg {
+		buf := make([]byte, 4096)
+		n, err := f.Read(buf)
+		if n > 0 {
+			return ptyOutputMsg{data: buf[:n]}
+		}
+		if err != nil {
+			return ptyExitMsg{err: err}
+		}
+		return ptyOutputMsg{}
+	}
+}
+
+// processTermBytes appends raw PTY output to the ring buffer.
+func (m *dashModel) processTermBytes(data []byte) {
+	const maxRaw = 64 * 1024
+	m.termRaw = append(m.termRaw, data...)
+	if len(m.termRaw) > maxRaw {
+		m.termRaw = m.termRaw[len(m.termRaw)-maxRaw:]
+	}
+}
+
+// keyMsgToBytes converts a bubbletea key message to the raw bytes sent to the PTY.
+func keyMsgToBytes(msg tea.KeyMsg) []byte {
+	if msg.Type == tea.KeyRunes {
+		if msg.Alt {
+			b := []byte{0x1b}
+			return append(b, []byte(string(msg.Runes))...)
+		}
+		return []byte(string(msg.Runes))
+	}
+	switch msg.Type {
+	case tea.KeyEnter:
+		return []byte{'\r'}
+	case tea.KeyBackspace:
+		return []byte{0x7f}
+	case tea.KeyDelete:
+		return []byte{'\x1b', '[', '3', '~'}
+	case tea.KeyUp:
+		return []byte{'\x1b', '[', 'A'}
+	case tea.KeyDown:
+		return []byte{'\x1b', '[', 'B'}
+	case tea.KeyRight:
+		return []byte{'\x1b', '[', 'C'}
+	case tea.KeyLeft:
+		return []byte{'\x1b', '[', 'D'}
+	case tea.KeyHome:
+		return []byte{'\x1b', '[', 'H'}
+	case tea.KeyEnd:
+		return []byte{'\x1b', '[', 'F'}
+	case tea.KeyPgUp:
+		return []byte{'\x1b', '[', '5', '~'}
+	case tea.KeyPgDown:
+		return []byte{'\x1b', '[', '6', '~'}
+	case tea.KeyTab:
+		return []byte{'\t'}
+	case tea.KeyCtrlA:
+		return []byte{1}
+	case tea.KeyCtrlB:
+		return []byte{2}
+	case tea.KeyCtrlC:
+		return []byte{3}
+	case tea.KeyCtrlD:
+		return []byte{4}
+	case tea.KeyCtrlE:
+		return []byte{5}
+	case tea.KeyCtrlF:
+		return []byte{6}
+	case tea.KeyCtrlK:
+		return []byte{11}
+	case tea.KeyCtrlL:
+		return []byte{12}
+	case tea.KeyCtrlN:
+		return []byte{14}
+	case tea.KeyCtrlP:
+		return []byte{16}
+	case tea.KeyCtrlR:
+		return []byte{18}
+	case tea.KeyCtrlU:
+		return []byte{21}
+	case tea.KeyCtrlW:
+		return []byte{23}
+	case tea.KeyCtrlZ:
+		return []byte{26}
+	default:
+		return nil
+	}
+}
+
+// stripNonSGR strips all ANSI escape sequences from data except SGR (color/style,
+// ending in 'm'). This makes PTY output safe for lipgloss rendering while preserving
+// colours.
+func stripNonSGR(data []byte) string {
+	out := make([]byte, 0, len(data))
+	i := 0
+	for i < len(data) {
+		b := data[i]
+		if b != 0x1b {
+			if b >= 0x20 || b == '\t' {
+				out = append(out, b)
+			}
+			i++
+			continue
+		}
+		i++
+		if i >= len(data) {
+			break
+		}
+		switch data[i] {
+		case '[': // CSI
+			i++
+			start := i
+			for i < len(data) && !(data[i] >= 0x40 && data[i] <= 0x7e) {
+				i++
+			}
+			if i < len(data) {
+				final := data[i]
+				i++
+				if final == 'm' {
+					out = append(out, '\x1b', '[')
+					out = append(out, data[start:i]...)
+				}
+			}
+		case ']': // OSC — skip until BEL or ST
+			i++
+			for i < len(data) {
+				if data[i] == 0x07 {
+					i++
+					break
+				}
+				if data[i] == 0x1b && i+1 < len(data) && data[i+1] == '\\' {
+					i += 2
+					break
+				}
+				i++
+			}
+		default:
+			i++ // skip ESC + one byte
+		}
+	}
+	return string(out)
+}
+
+// termRawToLines converts the PTY raw buffer to display-ready lines.
+// It splits by \n, strips trailing \r (from \r\n sequences), handles
+// progress-bar overwrites (last segment after mid-line \r), and strips
+// non-SGR ANSI sequences.
+func (m dashModel) termRawToLines(maxLines int) []string {
+	if len(m.termRaw) == 0 {
+		return nil
+	}
+	parts := bytes.Split(m.termRaw, []byte{'\n'})
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		for len(part) > 0 && part[len(part)-1] == '\r' {
+			part = part[:len(part)-1]
+		}
+		if idx := bytes.LastIndexByte(part, '\r'); idx >= 0 {
+			part = part[idx+1:]
+		}
+		result = append(result, stripNonSGR(part))
+	}
+	// Trim trailing empty lines.
+	for len(result) > 0 && result[len(result)-1] == "" {
+		result = result[:len(result)-1]
+	}
+	if len(result) > maxLines {
+		return result[len(result)-maxLines:]
+	}
+	return result
+}
+
+// renderTermPane renders the embedded terminal pane (always below tab content
+// when the terminal is running).  Returns "" when not running.
+func (m dashModel) renderTermPane(w int) string {
+	if !m.termRunning {
+		return ""
+	}
+	var lines []string
+	sep := stMuted.Render(strings.Repeat("─", w))
+	if m.termFocused {
+		lines = append(lines, sep)
+		lines = append(lines, stAccent.Render("▸ Terminal")+stMuted.Render("  esc=unfocus  ctrl+t=unfocus"))
+	} else {
+		lines = append(lines, sep)
+		lines = append(lines, stMuted.Render("  Terminal")+stMuted.Render("  ctrl+t=focus"))
+	}
+	contentH := termPaneH - 2
+	for _, l := range m.termRawToLines(contentH) {
+		lines = append(lines, "  "+l)
+	}
+	for len(lines) < termPaneH {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:termPaneH], "\n")
 }
 
 // kickRefreshCmd builds a cost compare against a snapshot cfg.
@@ -1067,11 +1448,12 @@ func (m dashModel) View() string {
 	}
 
 	tabBar := m.renderTabBar()
+	termPane := m.renderTermPane(m.width)
 	bottomStrip := m.renderBottomStrip()
 	footer := m.renderFooter()
 
 	// Compute usable height for tab content.
-	usable := m.height - lipgloss.Height(tabBar) - lipgloss.Height(bottomStrip) - lipgloss.Height(footer)
+	usable := m.height - lipgloss.Height(tabBar) - lipgloss.Height(termPane) - lipgloss.Height(bottomStrip) - lipgloss.Height(footer)
 	if usable < 1 {
 		usable = 1
 	}
@@ -1093,11 +1475,9 @@ func (m dashModel) View() string {
 		content = m.renderAboutTab(m.width, usable)
 	case tabDeploy:
 		content = m.renderDeployTab(m.width, usable)
-	case tabTerminal:
-		content = m.renderTerminalTab(m.width, usable)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, tabBar, content, bottomStrip, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, tabBar, content, termPane, bottomStrip, footer)
 }
 
 // renderTabBar renders the tab strip at the top.
@@ -1122,7 +1502,7 @@ func (m dashModel) renderTabBar() string {
 func (m dashModel) renderBottomStrip() string {
 	line := stMuted.Render(strings.Repeat("─", m.width)) + "\n"
 	if !m.cfg.CostCompareEnabled {
-		return line + stMuted.Render("  cost estimation disabled")
+		return line + stMuted.Render("  cost estimation: go to [costs] tab (alt+3) to enter API credentials")
 	}
 	if len(m.costRows) == 0 {
 		var suffix string
@@ -1166,45 +1546,58 @@ func (m dashModel) renderBottomStrip() string {
 	if m.costLoading {
 		suffix = stMuted.Render("  (fetching…)")
 	}
+	if m.termRunning {
+		if m.termFocused {
+			suffix += stAccent.Render("  [term:active]")
+		} else {
+			suffix += stMuted.Render("  [term:bg]")
+		}
+	}
 	return line + "  " + strings.Join(parts, stMuted.Render("  ")) + suffix
 }
 
 func (m dashModel) renderFooter() string {
+	shellHint := stMuted.Render("ctrl+t") + " terminal  "
+	tabHint := stMuted.Render("1-7/alt+1-7/ctrl+◄►") + " tabs  "
 	var keys string
 	switch m.activeTab {
 	case tabConfig:
 		keys = stMuted.Render("tab/⇧tab") + " navigate  " +
 			stMuted.Render("space") + " toggle  " +
 			stMuted.Render("◄ ►") + " select  " +
-			stMuted.Render("ctrl+t") + " shell  " +
+			shellHint +
 			stMuted.Render("ctrl+l") + " logs  " +
+			tabHint +
 			stAccent.Render("ctrl+s") + " save  " +
 			stMuted.Render("esc/q") + " abort"
 	case tabLogs:
 		keys = stMuted.Render("j/k") + " scroll  " +
 			stMuted.Render("g/G") + " top/bottom  " +
-			stMuted.Render("1-8/alt+1-8") + " switch tabs  " +
+			shellHint + tabHint +
 			stAccent.Render("ctrl+s") + " save  " +
 			stMuted.Render("esc/q") + " abort"
 	case tabCosts:
-		keys = stMuted.Render("j/k") + " scroll  " +
-			stMuted.Render("1-8/alt+1-8") + " switch tabs  " +
-			stAccent.Render("ctrl+s") + " save  " +
-			stMuted.Render("esc/q") + " abort"
+		if m.costCredsMode {
+			keys = stMuted.Render("tab/⇧tab") + " navigate  " +
+				stMuted.Render("enter") + " save (last field)  " +
+				shellHint + tabHint +
+				stAccent.Render("ctrl+s") + " save+exit  " +
+				stMuted.Render("esc/q") + " abort"
+		} else {
+			keys = stMuted.Render("j/k") + " scroll  " +
+				stMuted.Render("c") + " edit creds  " +
+				shellHint + tabHint +
+				stAccent.Render("ctrl+s") + " save  " +
+				stMuted.Render("esc/q") + " abort"
+		}
 	case tabDeploy:
 		keys = stMuted.Render("tab") + " focus  " +
 			stMuted.Render("enter") + " activate  " +
-			stMuted.Render("1-8/alt+1-8") + " switch tabs  " +
-			stAccent.Render("ctrl+s") + " save  " +
-			stMuted.Render("esc/q") + " abort"
-	case tabTerminal:
-		keys = stMuted.Render("enter") + " open shell  " +
-			stMuted.Render("ctrl+t") + " open shell  " +
-			stMuted.Render("1-8/alt+1-8") + " switch tabs  " +
+			shellHint + tabHint +
 			stAccent.Render("ctrl+s") + " save  " +
 			stMuted.Render("esc/q") + " abort"
 	default:
-		keys = stMuted.Render("1-8/alt+1-8") + " switch tabs  " +
+		keys = shellHint + tabHint +
 			stAccent.Render("ctrl+s") + " save  " +
 			stMuted.Render("esc/q") + " abort"
 	}
@@ -1331,10 +1724,8 @@ func (m dashModel) renderCostsTab(w, h int) string {
 	lines = append(lines, title)
 	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
 
-	if !m.cfg.CostCompareEnabled {
-		lines = append(lines, stMuted.Render("  cost estimation disabled"))
-		lines = append(lines, "")
-		lines = append(lines, stMuted.Render("  pass --cost-compare-config to enable"))
+	if m.costCredsMode {
+		lines = append(lines, m.renderCostsCredsForm()...)
 	} else if len(m.costRows) == 0 {
 		lines = append(lines, stMuted.Render("  computing…"))
 	} else {
@@ -1420,10 +1811,47 @@ func (m dashModel) renderCostsTab(w, h int) string {
 		}
 	}
 
+	if !m.costCredsMode {
+		// Footer: allow re-entering credential form.
+		statusLine := stMuted.Render("  c = edit credentials")
+		if m.costCredsStatus != "" {
+			if m.costCredsStatus == "saved" {
+				statusLine = stOK.Render("  ✓ credentials saved")
+			} else {
+				statusLine = stWarn.Render("  ⚠ " + m.costCredsStatus)
+			}
+		}
+		// Insert footer before padding.
+		lines = append(lines, "", statusLine)
+	}
+
 	for len(lines) < h {
 		lines = append(lines, "")
 	}
 	return strings.Join(lines[:min(len(lines), h)], "\n")
+}
+
+// renderCostsCredsForm renders the API credential entry form for the costs tab.
+func (m dashModel) renderCostsCredsForm() []string {
+	var lines []string
+	lines = append(lines, stHdr.Render("  API Credentials"))
+	lines = append(lines, stMuted.Render("  Enter keys for the providers you want priced. Leave blank to skip (Azure, Linode, OCI use public APIs)."))
+	lines = append(lines, stMuted.Render("  tab / shift+tab = move  ·  enter on last field = save  ·  ctrl+s = save"))
+	lines = append(lines, "")
+	for i := 0; i < ccCount; i++ {
+		lbl := fmt.Sprintf("  %-22s", ccLabels[i])
+		input := m.costCredsInputs[i].View()
+		cursor := " "
+		if i == m.costCredsFocus {
+			cursor = stAccent.Render("▌")
+		}
+		lines = append(lines, cursor+lbl+" "+input)
+	}
+	if m.costCredsStatus != "" && m.costCredsStatus != "saved" {
+		lines = append(lines, "")
+		lines = append(lines, stWarn.Render("  ⚠ "+m.costCredsStatus))
+	}
+	return lines
 }
 
 // renderCostRow renders a single provider row with bar chart.
@@ -1581,33 +2009,36 @@ func (m dashModel) renderHelpTab(w, h int) string {
 		stMuted.Render(strings.Repeat("─", w)),
 		"",
 		stBold.Render("  Tab switching"),
-		"  " + stAccent.Render("1-8") + "            switch tabs (when not in text field)",
-		"  " + stAccent.Render("alt+1-8") + "        switch tabs (works from any context)",
-		"  " + stAccent.Render("← →") + "            cycle tabs (when not in text field)",
-		"  " + stAccent.Render("ctrl+t") + "         navigate to terminal tab (press again to open shell)",
+		"  " + stAccent.Render("1-7") + "              switch tabs (when not in text field)",
+		"  " + stAccent.Render("alt+1-7") + "          switch tabs (works from any context)",
+		"  " + stAccent.Render("ctrl+← →") + "         cycle tabs (works from any context)",
+		"  " + stAccent.Render("← →") + "              cycle tabs (when not in text field)",
 		"",
 		stBold.Render("  Config tab"),
-		"  " + stAccent.Render("tab / shift+tab") + "  move between fields",
-		"  " + stAccent.Render("space / enter") + "   toggle booleans",
-		"  " + stAccent.Render("← →") + "            cycle select options",
-		"  " + stAccent.Render("j / k") + "          scroll vendor list",
-		"  " + stAccent.Render("ctrl+l") + "         switch to logs tab",
+		"  " + stAccent.Render("↑ ↓ / j k / tab ⇧tab") + "  move between fields",
+		"  " + stAccent.Render("space / enter") + "          toggle booleans",
+		"  " + stAccent.Render("← →") + "                    cycle select options",
+		"  " + stAccent.Render("ctrl+l") + "                 switch to logs tab",
+		"",
+		stBold.Render("  Costs tab"),
+		"  " + stAccent.Render("j / k") + "            scroll vendor list",
+		"  " + stAccent.Render("c") + "                edit API credentials",
+		"  " + stAccent.Render("tab / shift+tab") + "  move between credential fields",
+		"  " + stAccent.Render("enter") + "            advance / save credentials",
 		"",
 		stBold.Render("  Deploy tab"),
-		"  " + stAccent.Render("tab / ↑↓") + "       cycle between buttons",
-		"  " + stAccent.Render("enter") + "          activate focused button",
-		"",
-		stBold.Render("  Terminal tab"),
-		"  " + stAccent.Render("enter / ctrl+t") + "  open solarized-dark shell",
+		"  " + stAccent.Render("tab / ↑↓") + "         cycle between buttons",
+		"  " + stAccent.Render("enter") + "            activate focused button",
 		"",
 		stBold.Render("  Logs tab"),
-		"  " + stAccent.Render("j / k") + "          scroll down / up",
-		"  " + stAccent.Render("PgUp / PgDn") + "    scroll by 10 lines",
-		"  " + stAccent.Render("g / G") + "          jump to top / bottom (follow)",
+		"  " + stAccent.Render("j / k") + "            scroll down / up",
+		"  " + stAccent.Render("PgUp / PgDn") + "      scroll by 10 lines",
+		"  " + stAccent.Render("g / G") + "            jump to top / bottom (follow)",
 		"",
-		stBold.Render("  Global"),
-		"  " + stAccent.Render("ctrl+s") + "         save config and continue",
-		"  " + stAccent.Render("esc / q") + "        abort (no changes written)",
+		stBold.Render("  Global (any tab)"),
+		"  " + stAccent.Render("ctrl+t") + "           open/focus embedded terminal pane (esc or ctrl+t = unfocus)",
+		"  " + stAccent.Render("ctrl+s") + "           save config and continue",
+		"  " + stAccent.Render("esc / q") + "          abort (no changes written)",
 	}
 	for len(lines) < h {
 		lines = append(lines, "")
@@ -1703,7 +2134,7 @@ func (m dashModel) renderDeployTab(w, h int) string {
 	rightLines = append(rightLines, "")
 
 	if !m.cfg.CostCompareEnabled {
-		rightLines = append(rightLines, stMuted.Render("  cost estimation disabled"))
+		rightLines = append(rightLines, stMuted.Render("  enter credentials in [costs] tab"))
 	} else if len(m.costRows) == 0 {
 		if m.costLoading {
 			rightLines = append(rightLines, stMuted.Render("  fetching…"))
@@ -1765,40 +2196,6 @@ func (m dashModel) renderDeployTab(w, h int) string {
 		out = append(out, "")
 	}
 	return strings.Join(out[:min(len(out), h)], "\n")
-}
-
-// ─── terminal tab ─────────────────────────────────────────────────────────────
-
-func (m dashModel) renderTerminalTab(w, h int) string {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "sh"
-	}
-
-	var lines []string
-	lines = append(lines, stHdr.Render(" Terminal"))
-	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
-	lines = append(lines, "")
-	lines = append(lines, stOK.Render("  Solarized Dark theme active"))
-	lines = append(lines, stMuted.Render("  Shell: "+shell))
-	lines = append(lines, "")
-	lines = append(lines, "  Press "+stAccent.Render("Enter")+" or "+stAccent.Render("ctrl+t")+" to open shell")
-	lines = append(lines, stMuted.Render("  (returns here on exit)"))
-	lines = append(lines, "")
-
-	if m.termHasExited {
-		exitStr := fmt.Sprintf("  Last exit: %d", m.termLastExit)
-		if m.termLastExit == 0 {
-			lines = append(lines, stOK.Render(exitStr))
-		} else {
-			lines = append(lines, stBad.Render(exitStr))
-		}
-	}
-
-	for len(lines) < h {
-		lines = append(lines, "")
-	}
-	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
 // sortedCostRows returns the cost rows sorted cheapest-first (errors last).

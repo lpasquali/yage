@@ -673,10 +673,6 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case kindResourceReadyMsg:
-		if msg.err != nil {
-			m.editorErr = msg.err.Error()
-			return m, nil
-		}
 		res := msg.resource
 		tmpFile := msg.tempFile
 		return m, tea.ExecProcess(exec.Command(resolveEditor(), tmpFile), func(err error) tea.Msg {

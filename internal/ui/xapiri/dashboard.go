@@ -91,9 +91,14 @@ const (
 	tiGateway
 	tiIPPrefix
 	tiDNSServers
-	tiMgmtCPEndpointIP // mgmt control-plane VIP (on-prem)
-	tiMgmtNodeIPRanges // mgmt node IP ranges (on-prem)
-	tiArgoURL          // AppOfApps git URL
+	tiMgmtCPEndpointIP   // mgmt control-plane VIP (on-prem)
+	tiMgmtNodeIPRanges   // mgmt node IP ranges (on-prem)
+	tiProxmoxDefaultTmpl // Proxmox default VM template ID
+	tiProxmoxWLCPTmpl    // Proxmox workload control-plane template ID
+	tiProxmoxWLWorkerTmpl // Proxmox workload worker template ID
+	tiProxmoxMgmtCPTmpl  // Proxmox mgmt control-plane template ID
+	tiProxmoxMgmtWorkerTmpl // Proxmox mgmt worker template ID
+	tiArgoURL            // AppOfApps git URL
 	tiArgoPath      // AppOfApps git path
 	tiArgoRef       // AppOfApps git ref
 	tiImgMirror     // image registry mirror
@@ -166,41 +171,46 @@ const (
 	focHasCache            // 18
 	focCacheCPU            // 19
 	focCacheMem            // 20
-	focBootstrap           // 21
-	focOvercommit          // 22
-	focCPEndpointIP        // 23
-	focNodeIPRanges        // 24
-	focGateway             // 25
-	focIPPrefix            // 26
-	focDNSServers          // 27
-	focMgmtCPEndpointIP   // 28 — on-prem mgmt cluster VIP
-	focMgmtNodeIPRanges   // 29 — on-prem mgmt node IP ranges
-	focArgoURL             // 30
-	focArgoPath            // 31
-	focArgoRef             // 32
-	focAirgapped           // 33
-	focImgMirror           // 34
-	focCABundle            // 35
-	focHelmMirror          // 36
-	focKyverno             // 37
-	focCertMgr             // 38
-	focCNPG                // 39
-	focCrossplane          // 40
-	focExtSecrets          // 41
-	focOTEL                // 42
-	focGrafana             // 43
-	focVictoria            // 44
-	focMetrics             // 45
-	focSPIRE               // 46
-	focDCLoc               // 47
-	focBudget              // 48
-	focHeadroom            // 49
-	focTCO                 // 50 — TCO toggle (on-prem only)
-	focHWCost              // 51
-	focHWWatts             // 52
-	focHWKWH               // 53
-	focHWSupport           // 54
-	focCount               // 55 — must be last
+	focBootstrap              // 21
+	focOvercommit             // 22
+	focProxmoxDefaultTmpl    // 23 — Proxmox default VM template ID
+	focProxmoxWLCPTmpl       // 24 — Proxmox workload CP template ID
+	focProxmoxWLWorkerTmpl   // 25 — Proxmox workload worker template ID
+	focProxmoxMgmtCPTmpl     // 26 — Proxmox mgmt CP template ID
+	focProxmoxMgmtWorkerTmpl // 27 — Proxmox mgmt worker template ID
+	focCPEndpointIP          // 28
+	focNodeIPRanges           // 29
+	focGateway                // 30
+	focIPPrefix               // 31
+	focDNSServers             // 32
+	focMgmtCPEndpointIP      // 33 — on-prem mgmt cluster VIP
+	focMgmtNodeIPRanges      // 34 — on-prem mgmt node IP ranges
+	focArgoURL                // 35
+	focArgoPath               // 36
+	focArgoRef                // 37
+	focAirgapped              // 38
+	focImgMirror              // 39
+	focCABundle               // 40
+	focHelmMirror             // 41
+	focKyverno                // 42
+	focCertMgr                // 43
+	focCNPG                   // 44
+	focCrossplane             // 45
+	focExtSecrets             // 46
+	focOTEL                   // 47
+	focGrafana                // 48
+	focVictoria               // 49
+	focMetrics                // 50
+	focSPIRE                  // 51
+	focDCLoc                  // 52
+	focBudget                 // 53
+	focHeadroom               // 54
+	focTCO                    // 55 — TCO toggle (on-prem only)
+	focHWCost                 // 56
+	focHWWatts                // 57
+	focHWKWH                  // 58
+	focHWSupport              // 59
+	focCount                  // 60 — must be last
 )
 
 // ─── per-field metadata ───────────────────────────────────────────────────────
@@ -252,7 +262,13 @@ var dashFields = []fieldMeta{
 	// ── Bootstrap (on-prem only) ─────────────────────────────────────────── fid 21-22
 	{fkSelect, siBootstrap, "bootstrap mode", "Bootstrap", false},
 	{fkToggle, toiOvercommit, "allow overcommit", "", false},
-	// ── Workload Network (on-prem only) ──────────────────────────────────── fid 23-27
+	// ── Proxmox Templates (proxmox only) ─────────────────────────────────── fid 23-27
+	{fkText, tiProxmoxDefaultTmpl, "default tmpl ID", "Proxmox Templates", false},
+	{fkText, tiProxmoxWLCPTmpl, "  wl CP tmpl ID", "", false},
+	{fkText, tiProxmoxWLWorkerTmpl, "  wl worker tmpl ID", "", false},
+	{fkText, tiProxmoxMgmtCPTmpl, "  mgmt CP tmpl ID", "", false},
+	{fkText, tiProxmoxMgmtWorkerTmpl, "  mgmt worker tmpl ID", "", false},
+	// ── Workload Network (on-prem only) ──────────────────────────────────── fid 28-32
 	{fkText, tiCPEndpointIP, "CP endpoint IP", "Workload Network", false},
 	{fkText, tiNodeIPRanges, "node IP ranges", "", false},
 	{fkText, tiGateway, "gateway", "", false},
@@ -551,6 +567,11 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.textInputs[tiDNSServers].SetValue(cfg.DNSServers)
 	m.textInputs[tiMgmtCPEndpointIP].SetValue(cfg.Mgmt.ControlPlaneEndpointIP)
 	m.textInputs[tiMgmtNodeIPRanges].SetValue(cfg.Mgmt.NodeIPRanges)
+	m.textInputs[tiProxmoxDefaultTmpl].SetValue(cfg.Providers.Proxmox.TemplateID)
+	m.textInputs[tiProxmoxWLCPTmpl].SetValue(cfg.WorkloadControlPlaneTemplateID)
+	m.textInputs[tiProxmoxWLWorkerTmpl].SetValue(cfg.WorkloadWorkerTemplateID)
+	m.textInputs[tiProxmoxMgmtCPTmpl].SetValue(cfg.Providers.Proxmox.Mgmt.ControlPlaneTemplateID)
+	m.textInputs[tiProxmoxMgmtWorkerTmpl].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerTemplateID)
 	m.textInputs[tiArgoURL].SetValue(cfg.ArgoCD.AppOfAppsGitURL)
 	m.textInputs[tiArgoPath].SetValue(cfg.ArgoCD.AppOfAppsGitPath)
 	m.textInputs[tiArgoRef].SetValue(cfg.ArgoCD.AppOfAppsGitRef)
@@ -778,6 +799,10 @@ func (m *dashModel) isHidden(fid int) bool {
 	// On-prem only.
 	case focBootstrap, focOvercommit:
 		return isCloud
+	// Proxmox-specific: only when provider=proxmox.
+	case focProxmoxDefaultTmpl, focProxmoxWLCPTmpl, focProxmoxWLWorkerTmpl,
+		focProxmoxMgmtCPTmpl, focProxmoxMgmtWorkerTmpl:
+		return m.selects[siProvider].value() != "proxmox"
 	// Workload network: on-prem only (cloud VPCs are fully managed).
 	case focCPEndpointIP, focNodeIPRanges, focGateway, focIPPrefix, focDNSServers:
 		return isCloud
@@ -2204,6 +2229,13 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 	snap.DNSServers = strings.TrimSpace(m.textInputs[tiDNSServers].Value())
 	snap.Mgmt.ControlPlaneEndpointIP = strings.TrimSpace(m.textInputs[tiMgmtCPEndpointIP].Value())
 	snap.Mgmt.NodeIPRanges = strings.TrimSpace(m.textInputs[tiMgmtNodeIPRanges].Value())
+	if t := strings.TrimSpace(m.textInputs[tiProxmoxDefaultTmpl].Value()); t != "" {
+		snap.Providers.Proxmox.TemplateID = t
+	}
+	snap.WorkloadControlPlaneTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxWLCPTmpl].Value())
+	snap.WorkloadWorkerTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxWLWorkerTmpl].Value())
+	snap.Providers.Proxmox.Mgmt.ControlPlaneTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxMgmtCPTmpl].Value())
+	snap.Providers.Proxmox.Mgmt.WorkerTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxMgmtWorkerTmpl].Value())
 
 	// ArgoCD git coordinates.
 	if u := strings.TrimSpace(m.textInputs[tiArgoURL].Value()); u != "" {
@@ -2398,6 +2430,11 @@ func (m *dashModel) flushToCfg() {
 	m.cfg.DNSServers = snap.DNSServers
 	m.cfg.Mgmt.ControlPlaneEndpointIP = snap.Mgmt.ControlPlaneEndpointIP
 	m.cfg.Mgmt.NodeIPRanges = snap.Mgmt.NodeIPRanges
+	m.cfg.Providers.Proxmox.TemplateID = snap.Providers.Proxmox.TemplateID
+	m.cfg.WorkloadControlPlaneTemplateID = snap.WorkloadControlPlaneTemplateID
+	m.cfg.WorkloadWorkerTemplateID = snap.WorkloadWorkerTemplateID
+	m.cfg.Providers.Proxmox.Mgmt.ControlPlaneTemplateID = snap.Providers.Proxmox.Mgmt.ControlPlaneTemplateID
+	m.cfg.Providers.Proxmox.Mgmt.WorkerTemplateID = snap.Providers.Proxmox.Mgmt.WorkerTemplateID
 	m.cfg.Airgapped = snap.Airgapped
 	m.cfg.ImageRegistryMirror = snap.ImageRegistryMirror
 	m.cfg.InternalCABundle = snap.InternalCABundle

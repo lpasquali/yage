@@ -19,6 +19,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	syskeyring "github.com/lpasquali/yage/internal/platform/keyring"
 )
 
 // WorkloadShape is the user-stated product description consumed by the
@@ -716,6 +718,9 @@ type Config struct {
 	//   "raw"     — sensitive values inline (full reproducibility)
 	//   "masked"  — sensitive values emit as ********
 	PrintCommand                string
+	// ClearKeyring, when true, removes Proxmox credentials from the OS
+	// keychain and exits. Set by the --clear-keyring flag.
+	ClearKeyring                bool
 	// SkipProviders is a comma-separated list of registry names to
 	// drop from the cost-compare table. Useful when the operator
 	// has no interest in some clouds (e.g. SkipProviders="oci,ibmcloud"
@@ -1548,6 +1553,26 @@ func Load() *Config {
 	c.Providers.Proxmox.TopologyZone = getenv("PROXMOX_TOPOLOGY_ZONE", "")
 	c.Providers.Proxmox.TemplateID = getenv("PROXMOX_TEMPLATE_ID", getenv("TEMPLATE_VMID", "104"))
 	c.Providers.Proxmox.Bridge = getenv("PROXMOX_BRIDGE", "vmbr0")
+
+	// Keyring fallback: if env vars were empty, try the OS keychain.
+	// Silently skips when no keyring backend is available (headless Linux,
+	// CI). The kind-Secret merge in main() runs later and may further fill
+	// empty fields; this fallback sits between env and kind-Secret.
+	if c.Providers.Proxmox.CAPIToken == "" {
+		if val, err := syskeyring.Get(syskeyring.KeyProxmoxCAPIToken); err == nil {
+			c.Providers.Proxmox.CAPIToken = val
+		}
+	}
+	if c.Providers.Proxmox.CAPISecret == "" {
+		if val, err := syskeyring.Get(syskeyring.KeyProxmoxCAPISecret); err == nil {
+			c.Providers.Proxmox.CAPISecret = val
+		}
+	}
+	if c.Providers.Proxmox.AdminToken == "" {
+		if val, err := syskeyring.Get(syskeyring.KeyProxmoxAdminToken); err == nil {
+			c.Providers.Proxmox.AdminToken = val
+		}
+	}
 
 	// --- Network ---
 	c.ControlPlaneEndpointIP = getenv("CONTROL_PLANE_ENDPOINT_IP", "192.168.0.20")

@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -34,6 +35,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/cost"
 	"github.com/lpasquali/yage/internal/pricing"
@@ -187,16 +189,18 @@ var dashFields = []fieldMeta{
 type dashTab int
 
 const (
-	tabConfig dashTab = iota // 0 — interactive config form
-	tabEditor                // 1 — opens $EDITOR on the YAML config file
-	tabCosts                 // 2 — full provider comparison table + bar chart
-	tabLogs                  // 3 — scrollable ring buffer
-	tabHelp                  // 4 — keyboard shortcuts reference
-	tabAbout                 // 5 — version / license / URL
-	tabCount                 // must be last
+	tabConfig   dashTab = iota // 0 — interactive config form
+	tabEditor                  // 1 — opens $EDITOR on the YAML config file
+	tabCosts                   // 2 — full provider comparison table + bar chart
+	tabLogs                    // 3 — scrollable ring buffer
+	tabHelp                    // 4 — keyboard shortcuts reference
+	tabAbout                   // 5 — version / license / URL
+	tabDeploy                  // 6 — save-to-kind + start-deploy actions
+	tabTerminal                // 7 — solarized-dark shell launcher
+	tabCount                   // must be last
 )
 
-var tabLabels = [tabCount]string{"config", "editor", "costs", "logs", "help", "about"}
+var tabLabels = [tabCount]string{"config", "editor", "costs", "logs", "help", "about", "deploy", "terminal"}
 
 // ─── messages ────────────────────────────────────────────────────────────────
 
@@ -214,6 +218,9 @@ type editorFinishedMsg struct{ err error }
 
 // shellFinishedMsg is returned by the ExecProcess callback after the shell exits.
 type shellFinishedMsg struct{ err error }
+
+// saveKindMsg is returned when the background Save-to-Kind goroutine completes.
+type saveKindMsg struct{ err error }
 
 // ─── select state ────────────────────────────────────────────────────────────
 
@@ -255,6 +262,17 @@ type dashModel struct {
 	logLines   []string // snapshot from globalLogRing
 	logScroll  int      // scroll offset (lines from bottom; 0 = pinned to bottom)
 	logSub     <-chan struct{}
+
+	// deploy tab
+	deployFocused   int  // 0=save button, 1=deploy button
+	saveKindLoading bool
+	saveKindDone    bool
+	saveKindErr     error
+	deployRequested bool
+
+	// terminal tab
+	termLastExit    int
+	termHasExited   bool
 
 	width, height int
 	errMsg        string
@@ -506,7 +524,22 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shellFinishedMsg:
-		// Shell exited — just resume.
+		m.termHasExited = true
+		if msg.err != nil {
+			if exitErr, ok := msg.err.(*exec.ExitError); ok {
+				m.termLastExit = exitErr.ExitCode()
+			} else {
+				m.termLastExit = 1
+			}
+		} else {
+			m.termLastExit = 0
+		}
+		return m, nil
+
+	case saveKindMsg:
+		m.saveKindLoading = false
+		m.saveKindDone = true
+		m.saveKindErr = msg.err
 		return m, nil
 
 	case tea.KeyMsg:
@@ -523,7 +556,46 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// ── tab switching: left/right arrows or number keys 1-6 ──
+		// ── Alt+1..8: universal tab switching — works even inside text fields ──
+		if msg.Alt && key == tea.KeyRunes {
+			switch string(msg.Runes) {
+			case "1":
+				m.activeTab = tabConfig
+				return m, nil
+			case "2":
+				m.activeTab = tabEditor
+				return m, m.openEditorCmd()
+			case "3":
+				m.activeTab = tabCosts
+				return m, nil
+			case "4":
+				m.activeTab = tabLogs
+				return m, nil
+			case "5":
+				m.activeTab = tabHelp
+				return m, nil
+			case "6":
+				m.activeTab = tabAbout
+				return m, nil
+			case "7":
+				m.activeTab = tabDeploy
+				return m, nil
+			case "8":
+				m.activeTab = tabTerminal
+				return m, nil
+			}
+		}
+
+		// ── Ctrl+T: navigate to terminal tab (universal) ──
+		if keyStr == "ctrl+t" {
+			if m.activeTab == tabTerminal {
+				return m, m.spawnShellCmd()
+			}
+			m.activeTab = tabTerminal
+			return m, nil
+		}
+
+		// ── tab switching: left/right arrows or number keys 1-8 ──
 		// (Only when not in a text input on the config tab.)
 		inTextField := m.activeTab == tabConfig && dashFields[m.focus].kind == fkText
 		switch {
@@ -544,6 +616,12 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case !inTextField && keyStr == "6":
 			m.activeTab = tabAbout
+			return m, nil
+		case !inTextField && keyStr == "7":
+			m.activeTab = tabDeploy
+			return m, nil
+		case !inTextField && keyStr == "8":
+			m.activeTab = tabTerminal
 			return m, nil
 		case (key == tea.KeyLeft || key == tea.KeyRight) && !inTextField && m.activeTab != tabConfig:
 			// Only cycle tabs with arrows when not on config (config uses arrows for fields).
@@ -579,6 +657,12 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+
+		case tabDeploy:
+			return m.updateDeployTab(msg)
+
+		case tabTerminal:
+			return m.updateTerminalTab(msg)
 		}
 	}
 
@@ -602,9 +686,6 @@ func (m dashModel) updateConfigTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyStr == "ctrl+l":
 		m.activeTab = tabLogs
 		return m, nil
-
-	case keyStr == "ctrl+t":
-		return m, m.spawnShellCmd()
 
 	case key == tea.KeyUp || keyStr == "k":
 		curMeta := dashFields[m.focus]
@@ -690,6 +771,46 @@ func (m dashModel) updateLogsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateDeployTab handles key events on the deploy tab.
+func (m dashModel) updateDeployTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.Type
+	switch {
+	case key == tea.KeyTab || key == tea.KeyDown:
+		m.deployFocused = (m.deployFocused + 1) % 2
+	case key == tea.KeyShiftTab || key == tea.KeyUp:
+		m.deployFocused = (m.deployFocused - 1 + 2) % 2
+	case key == tea.KeyEnter || key == tea.KeySpace:
+		switch m.deployFocused {
+		case 0:
+			if !m.saveKindLoading {
+				m.saveKindLoading = true
+				m.saveKindDone = false
+				m.saveKindErr = nil
+				cfg := m.cfg
+				return m, func() tea.Msg {
+					err := kindsync.ApplyBootstrapConfigToManagementCluster(cfg)
+					return saveKindMsg{err: err}
+				}
+			}
+		case 1:
+			m.flushToCfg()
+			m.deployRequested = true
+			m.done = true
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+// updateTerminalTab handles key events on the terminal tab.
+func (m dashModel) updateTerminalTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.Type
+	if key == tea.KeyEnter {
+		return m, m.spawnShellCmd()
+	}
+	return m, nil
+}
+
 // openEditorCmd launches $EDITOR (or vi) on cfg.ConfigFile (or a temp file).
 func (m dashModel) openEditorCmd() tea.Cmd {
 	editor := os.Getenv("EDITOR")
@@ -718,13 +839,36 @@ func (m dashModel) openEditorCmd() tea.Cmd {
 	})
 }
 
-// spawnShellCmd launches $SHELL (or sh) in the current terminal via ExecProcess.
+// spawnShellCmd launches $SHELL (or sh) with solarized-dark theme config.
 func (m dashModel) spawnShellCmd() tea.Cmd {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "sh"
 	}
-	cmd := exec.Command(shell)
+
+	initFile := "/tmp/yage_solarized_init.sh"
+	solarizedInit := `# yage solarized dark init
+export COLORTERM=truecolor
+export TERM=xterm-256color
+# Solarized dark PS1: base03 bg, green user@host, blue path, yellow $
+PS1='\[\e[0;32m\]\u@\h\[\e[0m\]:\[\e[0;34m\]\w\[\e[0;33m\]\$\[\e[0m\] '
+# Solarized LS_COLORS
+export LS_COLORS='di=0;34:ln=0;36:so=0;35:pi=0;33:ex=0;32:bd=0;34;46:cd=0;34;43:su=0;41:sg=0;46:tw=0;42:ow=0;43'
+`
+	_ = os.WriteFile(initFile, []byte(solarizedInit), 0644)
+
+	base := filepath.Base(shell)
+	var cmd *exec.Cmd
+	switch base {
+	case "bash":
+		cmd = exec.Command(shell, "--init-file", initFile)
+	case "zsh":
+		cmd = exec.Command(shell, "-c", "source "+initFile+"; exec "+shell)
+	default:
+		cmd = exec.Command(shell)
+	}
+	cmd.Env = append(os.Environ(), "COLORTERM=truecolor", "TERM=xterm-256color")
+
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return shellFinishedMsg{err: err}
 	})
@@ -947,6 +1091,10 @@ func (m dashModel) View() string {
 		content = m.renderHelpTab(m.width, usable)
 	case tabAbout:
 		content = m.renderAboutTab(m.width, usable)
+	case tabDeploy:
+		content = m.renderDeployTab(m.width, usable)
+	case tabTerminal:
+		content = m.renderTerminalTab(m.width, usable)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, tabBar, content, bottomStrip, footer)
@@ -1035,16 +1183,28 @@ func (m dashModel) renderFooter() string {
 	case tabLogs:
 		keys = stMuted.Render("j/k") + " scroll  " +
 			stMuted.Render("g/G") + " top/bottom  " +
-			stMuted.Render("1-6") + " switch tabs  " +
+			stMuted.Render("1-8/alt+1-8") + " switch tabs  " +
 			stAccent.Render("ctrl+s") + " save  " +
 			stMuted.Render("esc/q") + " abort"
 	case tabCosts:
 		keys = stMuted.Render("j/k") + " scroll  " +
-			stMuted.Render("1-6") + " switch tabs  " +
+			stMuted.Render("1-8/alt+1-8") + " switch tabs  " +
+			stAccent.Render("ctrl+s") + " save  " +
+			stMuted.Render("esc/q") + " abort"
+	case tabDeploy:
+		keys = stMuted.Render("tab") + " focus  " +
+			stMuted.Render("enter") + " activate  " +
+			stMuted.Render("1-8/alt+1-8") + " switch tabs  " +
+			stAccent.Render("ctrl+s") + " save  " +
+			stMuted.Render("esc/q") + " abort"
+	case tabTerminal:
+		keys = stMuted.Render("enter") + " open shell  " +
+			stMuted.Render("ctrl+t") + " open shell  " +
+			stMuted.Render("1-8/alt+1-8") + " switch tabs  " +
 			stAccent.Render("ctrl+s") + " save  " +
 			stMuted.Render("esc/q") + " abort"
 	default:
-		keys = stMuted.Render("1-6") + " switch tabs  " +
+		keys = stMuted.Render("1-8/alt+1-8") + " switch tabs  " +
 			stAccent.Render("ctrl+s") + " save  " +
 			stMuted.Render("esc/q") + " abort"
 	}
@@ -1421,21 +1581,24 @@ func (m dashModel) renderHelpTab(w, h int) string {
 		stMuted.Render(strings.Repeat("─", w)),
 		"",
 		stBold.Render("  Tab switching"),
-		"  " + stAccent.Render("1") + "              switch to [config] tab",
-		"  " + stAccent.Render("2") + "              switch to [editor] tab (opens $EDITOR)",
-		"  " + stAccent.Render("3") + "              switch to [costs] tab",
-		"  " + stAccent.Render("4") + "              switch to [logs] tab",
-		"  " + stAccent.Render("5") + "              switch to [help] tab",
-		"  " + stAccent.Render("6") + "              switch to [about] tab",
+		"  " + stAccent.Render("1-8") + "            switch tabs (when not in text field)",
+		"  " + stAccent.Render("alt+1-8") + "        switch tabs (works from any context)",
 		"  " + stAccent.Render("← →") + "            cycle tabs (when not in text field)",
+		"  " + stAccent.Render("ctrl+t") + "         navigate to terminal tab (press again to open shell)",
 		"",
 		stBold.Render("  Config tab"),
 		"  " + stAccent.Render("tab / shift+tab") + "  move between fields",
 		"  " + stAccent.Render("space / enter") + "   toggle booleans",
 		"  " + stAccent.Render("← →") + "            cycle select options",
 		"  " + stAccent.Render("j / k") + "          scroll vendor list",
-		"  " + stAccent.Render("ctrl+t") + "         spawn $SHELL in terminal",
 		"  " + stAccent.Render("ctrl+l") + "         switch to logs tab",
+		"",
+		stBold.Render("  Deploy tab"),
+		"  " + stAccent.Render("tab / ↑↓") + "       cycle between buttons",
+		"  " + stAccent.Render("enter") + "          activate focused button",
+		"",
+		stBold.Render("  Terminal tab"),
+		"  " + stAccent.Render("enter / ctrl+t") + "  open solarized-dark shell",
 		"",
 		stBold.Render("  Logs tab"),
 		"  " + stAccent.Render("j / k") + "          scroll down / up",
@@ -1488,6 +1651,156 @@ func (m dashModel) renderAboutTab(w, h int) string {
 	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
+// ─── deploy tab ──────────────────────────────────────────────────────────────
+
+func (m dashModel) renderDeployTab(w, h int) string {
+	leftW := w * 40 / 100
+	rightW := w - leftW - 1
+	if leftW < 20 {
+		leftW = 20
+	}
+	if rightW < 20 {
+		rightW = 20
+	}
+
+	// Left: action buttons + status.
+	var leftLines []string
+	leftLines = append(leftLines, stHdr.Render(" Actions"))
+	leftLines = append(leftLines, stMuted.Render(strings.Repeat("─", leftW)))
+	leftLines = append(leftLines, "")
+
+	btnSave := "[Save to Kind]"
+	btnDeploy := "[Start Deploy]"
+	if m.deployFocused == 0 {
+		btnSave = stAccent.Render("▸ " + btnSave)
+		btnDeploy = stMuted.Render("  " + btnDeploy)
+	} else {
+		btnSave = stMuted.Render("  " + btnSave)
+		btnDeploy = stAccent.Render("▸ " + btnDeploy)
+	}
+	leftLines = append(leftLines, btnSave)
+	leftLines = append(leftLines, "")
+	leftLines = append(leftLines, btnDeploy)
+	leftLines = append(leftLines, "")
+
+	var statusLine string
+	switch {
+	case m.saveKindLoading:
+		statusLine = stWarn.Render("  ● saving…")
+	case m.saveKindDone && m.saveKindErr != nil:
+		statusLine = stBad.Render("  ✗ " + m.saveKindErr.Error())
+	case m.saveKindDone:
+		statusLine = stOK.Render("  ✓ saved to kind")
+	default:
+		statusLine = stMuted.Render("  ● Ready")
+	}
+	leftLines = append(leftLines, "Status: "+statusLine)
+
+	// Right: cost preview.
+	var rightLines []string
+	rightLines = append(rightLines, stHdr.Render(" Live Cost Preview"))
+	rightLines = append(rightLines, stMuted.Render(strings.Repeat("─", rightW)))
+	rightLines = append(rightLines, "")
+
+	if !m.cfg.CostCompareEnabled {
+		rightLines = append(rightLines, stMuted.Render("  cost estimation disabled"))
+	} else if len(m.costRows) == 0 {
+		if m.costLoading {
+			rightLines = append(rightLines, stMuted.Render("  fetching…"))
+		} else {
+			rightLines = append(rightLines, stMuted.Render("  no cost data"))
+		}
+	} else {
+		hdr := fmt.Sprintf("  %-14s  %s", "Provider", "$/mo")
+		rightLines = append(rightLines, stHdr.Render(hdr))
+		rightLines = append(rightLines, stMuted.Render("  "+strings.Repeat("─", 22)))
+		sorted := m.sortedCostRows()
+		cheapest := 0.0
+		for _, r := range sorted {
+			if r.Err == nil {
+				cheapest = r.Estimate.TotalUSDMonthly
+				break
+			}
+		}
+		for _, r := range sorted {
+			if r.Err != nil {
+				rightLines = append(rightLines, stMuted.Render(fmt.Sprintf("  %-14s  n/a", r.ProviderName)))
+				continue
+			}
+			total := r.Estimate.TotalUSDMonthly
+			var style lipgloss.Style
+			switch {
+			case m.cfg.BudgetUSDMonth > 0 && total > m.cfg.BudgetUSDMonth:
+				style = stBad
+			case cheapest > 0 && total <= cheapest:
+				style = stOK
+			default:
+				style = lipgloss.NewStyle()
+			}
+			rightLines = append(rightLines, style.Render(fmt.Sprintf("  %-14s  $%.2f", r.ProviderName, total)))
+		}
+	}
+
+	// Merge into columns.
+	maxRows := h
+	if len(leftLines) > maxRows {
+		maxRows = len(leftLines)
+	}
+	if len(rightLines) > maxRows {
+		maxRows = len(rightLines)
+	}
+	for len(leftLines) < maxRows {
+		leftLines = append(leftLines, "")
+	}
+	for len(rightLines) < maxRows {
+		rightLines = append(rightLines, "")
+	}
+
+	var out []string
+	for i := 0; i < maxRows && i < h; i++ {
+		l := fmt.Sprintf("%-*s", leftW, leftLines[i])
+		out = append(out, l+"│"+rightLines[i])
+	}
+	for len(out) < h {
+		out = append(out, "")
+	}
+	return strings.Join(out[:min(len(out), h)], "\n")
+}
+
+// ─── terminal tab ─────────────────────────────────────────────────────────────
+
+func (m dashModel) renderTerminalTab(w, h int) string {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "sh"
+	}
+
+	var lines []string
+	lines = append(lines, stHdr.Render(" Terminal"))
+	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
+	lines = append(lines, "")
+	lines = append(lines, stOK.Render("  Solarized Dark theme active"))
+	lines = append(lines, stMuted.Render("  Shell: "+shell))
+	lines = append(lines, "")
+	lines = append(lines, "  Press "+stAccent.Render("Enter")+" or "+stAccent.Render("ctrl+t")+" to open shell")
+	lines = append(lines, stMuted.Render("  (returns here on exit)"))
+	lines = append(lines, "")
+
+	if m.termHasExited {
+		exitStr := fmt.Sprintf("  Last exit: %d", m.termLastExit)
+		if m.termLastExit == 0 {
+			lines = append(lines, stOK.Render(exitStr))
+		} else {
+			lines = append(lines, stBad.Render(exitStr))
+		}
+	}
+
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:min(len(lines), h)], "\n")
+}
+
 // sortedCostRows returns the cost rows sorted cheapest-first (errors last).
 func (m dashModel) sortedCostRows() []cost.CloudCost {
 	sorted := make([]cost.CloudCost, len(m.costRows))
@@ -1505,13 +1818,15 @@ func (m dashModel) sortedCostRows() []cost.CloudCost {
 
 // ─── entry point ─────────────────────────────────────────────────────────────
 
-// runDashboard replaces runHuhForm. Opens a full-screen bubbletea
-// dashboard, waits for ctrl+s (commit) or esc (abort), then writes the
-// operator's choices back to cfg + s so the rest of the walkthrough runs
-// unchanged.
-//
-// Returns 0 on a clean commit; 1 on abort.
-func runDashboard(w io.Writer, cfg *config.Config, s *state) int {
+// dashResult carries the outcome of a dashboard session.
+type dashResult struct {
+	saved           bool
+	deployRequested bool
+}
+
+// runDashboard opens the full-screen bubbletea dashboard and waits for the
+// user to commit (ctrl+s or Start Deploy) or abort (esc/q).
+func runDashboard(w io.Writer, cfg *config.Config, s *state) dashResult {
 	m := newDashModel(cfg, s)
 	p := tea.NewProgram(m,
 		tea.WithAltScreen(),
@@ -1521,19 +1836,18 @@ func runDashboard(w io.Writer, cfg *config.Config, s *state) int {
 	result, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(w, "xapiri (dashboard): %v\n", err)
-		return 1
+		return dashResult{}
 	}
 	final, ok := result.(dashModel)
 	if !ok || !final.done {
-		s.r.info("nothing written. the spirits rest.")
-		return 0
+		return dashResult{}
 	}
 	if final.selects[siMode].value() == "on-prem" {
 		s.fork = forkOnPrem
-		return s.runOnPremFork()
+		return dashResult{saved: true}
 	}
 	final.flushToCfg()
-	return 0
+	return dashResult{saved: true, deployRequested: final.deployRequested}
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

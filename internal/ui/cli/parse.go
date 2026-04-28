@@ -679,6 +679,8 @@ func Parse(c *config.Config, argv []string) {
 			// directs the user at --xapiri or this flag (§18).
 			c.InfraProvider = strings.ToLower(strings.TrimSpace(shiftVal(a)))
 			c.InfraProviderDefaulted = false // explicit choice
+		case "--clear-keyring":
+			c.ClearKeyring = true
 		case "-h", "--help":
 			// Optional next-arg topic: drill into a specific help
 			// section. The arg must not start with "-".

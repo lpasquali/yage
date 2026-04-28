@@ -233,6 +233,30 @@ type VerifySecret struct {
 	Name      string
 }
 
+// BootstrapSecretRef describes one Kubernetes Secret the provider
+// wants the generic kindsync layer to read and absorb. The generic
+// layer fetches the Secret from the kind cluster, decodes all data
+// entries, optionally restricts to KeyFilter, and calls
+// AbsorbConfigYAML with the decoded map. OnAbsorbed, when non-nil,
+// is called after AbsorbConfigYAML returns true so the provider can
+// set additional cfg flags (e.g. "this Secret was the capmox-system
+// live copy" markers). See §11.
+type BootstrapSecretRef struct {
+	// Namespace and Name identify the Secret on the kind cluster.
+	// An empty Name is treated as "skip this ref" by the dispatcher.
+	Namespace string
+	Name      string
+	// KeyFilter, when non-nil, restricts the keys passed to
+	// AbsorbConfigYAML to only those listed here. nil = pass all
+	// decoded keys. Used for admin-only Secrets whose other keys
+	// must not bleed into the cfg.
+	KeyFilter []string
+	// OnAbsorbed, when non-nil, is called after AbsorbConfigYAML
+	// returns true for this Secret. Useful for setting provider-
+	// specific side-effects (e.g. cfg.Providers.Proxmox.KindCAPMOXActive).
+	OnAbsorbed func(cfg *config.Config)
+}
+
 // KindSyncer is composed into Provider for callers that only need
 // the kind-Secret handoff capability (e.g. the kindsync layer that
 // iterates over the provider's returned map). See §11.
@@ -261,6 +285,15 @@ type KindSyncer interface {
 	// (matches KindSyncFields output) used by the generic
 	// Secret-as-source-of-truth path.
 	AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bool
+
+	// BootstrapSecrets returns the ordered list of credential
+	// Secrets the provider wants the generic kindsync layer to
+	// fetch and absorb on each run. The refs are processed in order;
+	// the dispatcher calls AbsorbConfigYAML for each Secret that
+	// exists on the kind cluster. Returns nil when the provider
+	// has no credential Secrets beyond the generic config.yaml
+	// snapshot (e.g. cost-only providers via MinStub).
+	BootstrapSecrets(cfg *config.Config) []BootstrapSecretRef
 }
 
 // Purger is composed into Provider so cleanup paths (--purge) can

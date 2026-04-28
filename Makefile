@@ -15,11 +15,12 @@ OUT_OPERATOR   ?= bin/yage-operator
 MODULE         := ./cmd/yage
 MODULE_OPERATOR := ./cmd/yage-operator
 GOMINOR        := 23
+CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.17.3
 
 export GOTOOLCHAIN ?= auto
 export GOPROXY     ?=
 
-.PHONY: all help deps check-go tidy mod-verify build build-operator test install clean system-deps
+.PHONY: all help deps check-go tidy mod-verify build build-operator test install clean system-deps crds
 
 all: build
 
@@ -33,6 +34,8 @@ help:
 	@echo "  make install      — go install $(MODULE) (uses GOBIN or GOPATH/bin)"
 	@echo "  make clean        — remove $(OUT)"
 	@echo "  make system-deps  — install OS packages (git, curl, build tools) on apt-based systems"
+	@echo ""
+	@echo "  make crds         — generate CRD manifests into deploy/yage-operator/kustomize/crds"
 	@echo ""
 	@echo "Set GO, OUT, or GOTOOLCHAIN as needed. Module requires Go 1.$(GOMINOR)+ (see go.mod)."
 
@@ -87,6 +90,9 @@ clean:
 	rm -f $(OUT)
 
 # --- Optional host packages (for building and for running the full bootstrap) ---
+
+crds:
+	$(CONTROLLER_GEN) rbac:roleName=yage-operator-role crd paths="./api/..." output:crd:artifacts:config=deploy/yage-operator/kustomize/crds
 
 system-deps:
 	@if ! command -v apt-get >/dev/null 2>&1; then \

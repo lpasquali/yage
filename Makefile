@@ -8,16 +8,18 @@
 #   OUT     — path to built binary (default: bin/yage)
 #   GOPROXY — e.g. direct or https://proxy.golang.org
 
-SHELL      := /bin/sh
-GO         ?= go
-OUT        ?= bin/yage
-MODULE     := ./cmd/yage
-GOMINOR    := 23
+SHELL          := /bin/sh
+GO             ?= go
+OUT            ?= bin/yage
+OUT_OPERATOR   ?= bin/yage-operator
+MODULE         := ./cmd/yage
+MODULE_OPERATOR := ./cmd/yage-operator
+GOMINOR        := 23
 
 export GOTOOLCHAIN ?= auto
 export GOPROXY     ?=
 
-.PHONY: all help deps check-go tidy mod-verify build test install clean system-deps
+.PHONY: all help deps check-go tidy mod-verify build build-operator test install clean system-deps
 
 all: build
 
@@ -25,7 +27,8 @@ help:
 	@echo "yage Makefile"
 	@echo ""
 	@echo "  make deps         — verify Go, tidy modules, download + verify (run first on a new clone)"
-	@echo "  make build        — compile to $(OUT)"
+	@echo "  make build              — compile to $(OUT)"
+	@echo "  make build-operator     — compile operator to $(OUT_OPERATOR)"
 	@echo "  make test         — go test ./..."
 	@echo "  make install      — go install $(MODULE) (uses GOBIN or GOPATH/bin)"
 	@echo "  make clean        — remove $(OUT)"
@@ -66,6 +69,9 @@ mod-verify:
 
 build: | $(dir $(OUT))
 	$(GO) build -o $(OUT) -trimpath $(MODULE)
+
+build-operator: | $(dir $(OUT_OPERATOR))
+	$(GO) build -o $(OUT_OPERATOR) -trimpath $(MODULE_OPERATOR)
 
 $(dir $(OUT)):
 	mkdir -p "$@"

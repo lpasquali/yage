@@ -47,6 +47,7 @@ import (
 	"github.com/lpasquali/yage/internal/obs"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/pricing"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 // ─── palette ─────────────────────────────────────────────────────────────────
@@ -71,8 +72,9 @@ var (
 // ─── text-input slot indices ─────────────────────────────────────────────────
 
 const (
-	tiKindName = iota
+	tiKindName     = iota
 	tiK8sVer
+	tiWorkloadName  // workload cluster name
 	tiApps
 	tiDBGB
 	tiEgressGB
@@ -84,6 +86,21 @@ const (
 	tiObjVol
 	tiCacheCPU
 	tiCacheMem
+	tiCPEndpointIP // control-plane VIP
+	tiNodeIPRanges // node IP range
+	tiGateway
+	tiIPPrefix
+	tiDNSServers
+	tiArgoURL       // AppOfApps git URL
+	tiArgoPath      // AppOfApps git path
+	tiArgoRef       // AppOfApps git ref
+	tiImgMirror     // image registry mirror
+	tiCABundle      // internal CA bundle path
+	tiHelmMirror    // helm repo mirror URL
+	tiHWCost        // TCO: hardware cost USD
+	tiHWWatts       // TCO: hardware watts
+	tiHWKWH         // TCO: electricity rate USD/kWh
+	tiHWSupport     // TCO: support USD/month
 	tiDCLoc
 	tiBudget
 	tiHeadroom
@@ -97,7 +114,8 @@ const (
 	siEnv       = 1 // dev | staging | prod
 	siResil     = 2 // single-az | ha | ha-multi-region
 	siBootstrap = 3 // kubeadm | k3s  (on-prem only)
-	siCount     = 4
+	siProvider  = 4 // infra provider (auto | aws | gcp | …)
+	siCount     = 5
 )
 
 // ─── toggle (bool) slot indices ──────────────────────────────────────────────
@@ -106,38 +124,77 @@ const (
 	toiQueue      = 0
 	toiObjStore   = 1
 	toiCache      = 2
-	toiOvercommit = 3 // on-prem only: allow resource overcommit
-	toiCount      = 4
+	toiOvercommit = 3  // on-prem only: allow resource overcommit
+	toiAirgapped  = 4
+	toiKyverno    = 5
+	toiCertMgr    = 6
+	toiCNPG       = 7
+	toiCrossplane = 8
+	toiExtSecrets = 9
+	toiOTEL       = 10
+	toiGrafana    = 11
+	toiVictoria   = 12
+	toiMetrics    = 13
+	toiSPIRE      = 14
+	toiCount      = 15
 )
 
 // ─── logical focus IDs (tab order) ───────────────────────────────────────────
 
 const (
-	focKindName    = iota // 0
-	focK8sVer             // 1
-	focMode               // 2
-	focEnv                // 3
-	focResil              // 4
-	focApps               // 5
-	focDBGB               // 6
-	focEgressGB           // 7
-	focHasQueue           // 8
-	focQueueCPU           // 9
-	focQueueMem           // 10
-	focQueueVol           // 11
-	focHasObjStore        // 12
-	focObjCPU             // 13
-	focObjMem             // 14
-	focObjVol             // 15
-	focHasCache           // 16
-	focCacheCPU           // 17
-	focCacheMem           // 18
-	focBootstrap          // 19
-	focOvercommit         // 20
-	focDCLoc              // 21
-	focBudget             // 22
-	focHeadroom           // 23
-	focCount              // 24 — must be last
+	focKindName     = iota // 0
+	focK8sVer              // 1
+	focWorkloadName        // 2
+	focProvider            // 3
+	focMode                // 4
+	focEnv                 // 5
+	focResil               // 6
+	focApps                // 7
+	focDBGB                // 8
+	focEgressGB            // 9
+	focHasQueue            // 10
+	focQueueCPU            // 11
+	focQueueMem            // 12
+	focQueueVol            // 13
+	focHasObjStore         // 14
+	focObjCPU              // 15
+	focObjMem              // 16
+	focObjVol              // 17
+	focHasCache            // 18
+	focCacheCPU            // 19
+	focCacheMem            // 20
+	focBootstrap           // 21
+	focOvercommit          // 22
+	focCPEndpointIP        // 23
+	focNodeIPRanges        // 24
+	focGateway             // 25
+	focIPPrefix            // 26
+	focDNSServers          // 27
+	focArgoURL             // 28
+	focArgoPath            // 29
+	focArgoRef             // 30
+	focAirgapped           // 31
+	focImgMirror           // 32
+	focCABundle            // 33
+	focHelmMirror          // 34
+	focKyverno             // 35
+	focCertMgr             // 36
+	focCNPG                // 37
+	focCrossplane          // 38
+	focExtSecrets          // 39
+	focOTEL                // 40
+	focGrafana             // 41
+	focVictoria            // 42
+	focMetrics             // 43
+	focSPIRE               // 44
+	focDCLoc               // 45
+	focBudget              // 46
+	focHeadroom            // 47
+	focHWCost              // 48
+	focHWWatts             // 49
+	focHWKWH               // 50
+	focHWSupport           // 51
+	focCount               // 52 — must be last
 )
 
 // ─── per-field metadata ───────────────────────────────────────────────────────
@@ -159,19 +216,21 @@ type fieldMeta struct {
 }
 
 var dashFields = []fieldMeta{
-	// ── Cluster ──────────────────────────────────────────────────────
+	// ── Cluster ──────────────────────────────────────────────────────────── fid 0-3
 	{fkText, tiKindName, "kind name", "Cluster", false},
 	{fkText, tiK8sVer, "k8s version", "", false},
-	// ── Mode ─────────────────────────────────────────────────────────
+	{fkText, tiWorkloadName, "workload name", "", false},
+	{fkSelect, siProvider, "provider", "", true},
+	// ── Mode ─────────────────────────────────────────────────────────────── fid 4
 	{fkSelect, siMode, "mode", "Mode", true},
-	// ── Tier (cloud only) ────────────────────────────────────────────
+	// ── Tier ─────────────────────────────────────────────────────────────── fid 5-6
 	{fkSelect, siEnv, "environment", "Tier", true},
 	{fkSelect, siResil, "resilience", "", true},
-	// ── Workload (cloud only) ─────────────────────────────────────────
+	// ── Workload ─────────────────────────────────────────────────────────── fid 7-9
 	{fkText, tiApps, "apps", "Workload", true},
 	{fkText, tiDBGB, "db (GB)", "", true},
 	{fkText, tiEgressGB, "egress GB/mo", "", true},
-	// ── Add-ons (cloud only) ──────────────────────────────────────────
+	// ── Add-ons (cloud sizing) ───────────────────────────────────────────── fid 10-20
 	{fkToggle, toiQueue, "message queue", "Add-ons", true},
 	{fkText, tiQueueCPU, "  queue CPU (m)", "", true},
 	{fkText, tiQueueMem, "  queue mem (Mi)", "", true},
@@ -183,13 +242,44 @@ var dashFields = []fieldMeta{
 	{fkToggle, toiCache, "in-mem cache", "", true},
 	{fkText, tiCacheCPU, "  cache CPU (m)", "", true},
 	{fkText, tiCacheMem, "  cache mem (Mi)", "", true},
-	// ── Bootstrap (on-prem only) ──────────────────────────────────────
+	// ── Bootstrap (on-prem only) ─────────────────────────────────────────── fid 21-22
 	{fkSelect, siBootstrap, "bootstrap mode", "Bootstrap", false},
 	{fkToggle, toiOvercommit, "allow overcommit", "", false},
-	// ── Geo + Budget (cloud only) ─────────────────────────────────────
+	// ── Network ──────────────────────────────────────────────────────────── fid 23-27
+	{fkText, tiCPEndpointIP, "CP endpoint IP", "Network", false},
+	{fkText, tiNodeIPRanges, "node IP ranges", "", false},
+	{fkText, tiGateway, "gateway", "", false},
+	{fkText, tiIPPrefix, "IP prefix", "", false},
+	{fkText, tiDNSServers, "DNS servers", "", false},
+	// ── ArgoCD ───────────────────────────────────────────────────────────── fid 28-30
+	{fkText, tiArgoURL, "app-of-apps URL", "ArgoCD", false},
+	{fkText, tiArgoPath, "app-of-apps path", "", false},
+	{fkText, tiArgoRef, "app-of-apps ref", "", false},
+	// ── Airgap ───────────────────────────────────────────────────────────── fid 31-34
+	{fkToggle, toiAirgapped, "airgapped", "Airgap", false},
+	{fkText, tiImgMirror, "image mirror", "", false},
+	{fkText, tiCABundle, "CA bundle path", "", false},
+	{fkText, tiHelmMirror, "helm mirror", "", false},
+	// ── Add-ons installed ────────────────────────────────────────────────── fid 35-44
+	{fkToggle, toiKyverno, "kyverno", "Add-ons installed", false},
+	{fkToggle, toiCertMgr, "cert-manager", "", false},
+	{fkToggle, toiCNPG, "CNPG", "", false},
+	{fkToggle, toiCrossplane, "crossplane", "", false},
+	{fkToggle, toiExtSecrets, "ext-secrets", "", false},
+	{fkToggle, toiOTEL, "otel", "", false},
+	{fkToggle, toiGrafana, "grafana", "", false},
+	{fkToggle, toiVictoria, "victoriametrics", "", false},
+	{fkToggle, toiMetrics, "metrics-server", "", false},
+	{fkToggle, toiSPIRE, "spire", "", false},
+	// ── Geo + Budget (cloud only) ────────────────────────────────────────── fid 45-47
 	{fkText, tiDCLoc, "data-center loc", "Geo", false},
 	{fkText, tiBudget, "budget USD/mo", "Budget", false},
 	{fkText, tiHeadroom, "headroom %", "", false},
+	// ── TCO (on-prem only) ───────────────────────────────────────────────── fid 48-51
+	{fkText, tiHWCost, "HW cost USD", "TCO", false},
+	{fkText, tiHWWatts, "HW watts", "", false},
+	{fkText, tiHWKWH, "kWh rate USD", "", false},
+	{fkText, tiHWSupport, "support USD/mo", "", false},
 }
 
 // ─── tab IDs ─────────────────────────────────────────────────────────────────
@@ -232,8 +322,23 @@ var ccLabels = [ccCount]string{
 
 // ─── messages ────────────────────────────────────────────────────────────────
 
-type costMsg struct {
-	rows []cost.CloudCost
+// costRowMsg carries one provider's result as it arrives from the streaming
+// cost fetch. ch is the same channel used for subsequent waits so the caller
+// can chain without storing state in the model.
+type costRowMsg struct {
+	row  cost.CloudCost
+	ch   <-chan cost.CloudCost
+	done bool // true when ch is closed (all providers finished)
+}
+
+// waitForCostRowCmd blocks until the next CloudCost arrives on ch, then
+// delivers it as a costRowMsg. The channel reference is forwarded so
+// Update can schedule the next wait without extra state.
+func waitForCostRowCmd(ch <-chan cost.CloudCost) tea.Cmd {
+	return func() tea.Msg {
+		row, ok := <-ch
+		return costRowMsg{row: row, ch: ch, done: !ok}
+	}
 }
 
 // saveCostCredsMsg is returned when the background cost-credentials Secret write completes.
@@ -322,9 +427,13 @@ type dashModel struct {
 	lastDirty      time.Time
 
 	// logs tab
-	logLines   []string // snapshot from globalLogRing
-	logScroll  int      // scroll offset (lines from bottom; 0 = pinned to bottom)
-	logSub     <-chan struct{}
+	logLines       []string        // snapshot from globalLogRing
+	logScroll      int             // scroll offset (lines from bottom; 0 = pinned to bottom)
+	logSub         <-chan struct{}
+	logFilter      string          // active filter pattern (empty = show all)
+	logFiltering   bool            // true = filter input bar is open
+	logWrap        bool            // ctrl+w toggles word-wrap vs truncate
+	logFilterInput textinput.Model
 
 	// cost tab credential form
 	costCredsInputs [ccCount]textinput.Model
@@ -351,7 +460,7 @@ type dashModel struct {
 	termCmd     *exec.Cmd
 	termRunning bool
 	termFocused bool
-	termH       int    // total pane height (border+title+content); ctrl+↑/↓ to resize
+	termH       int    // total pane height (border+title+content); ctrl+alt+↑/↓ to resize
 	termRaw     []byte // raw PTY output ring buffer (last 64 KB)
 
 	width, height int
@@ -422,6 +531,35 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.textInputs[tiHeadroom].SetValue(strconv.FormatFloat(headroomPct, 'f', 0, 64))
 	m.textInputs[tiHeadroom].Validate = validateNonNegativeIntOptional
 
+	// New fields.
+	m.textInputs[tiWorkloadName].SetValue(cfg.WorkloadClusterName)
+	m.textInputs[tiCPEndpointIP].SetValue(cfg.ControlPlaneEndpointIP)
+	m.textInputs[tiNodeIPRanges].SetValue(cfg.NodeIPRanges)
+	m.textInputs[tiGateway].SetValue(cfg.Gateway)
+	m.textInputs[tiIPPrefix].SetValue(cfg.IPPrefix)
+	m.textInputs[tiDNSServers].SetValue(cfg.DNSServers)
+	m.textInputs[tiArgoURL].SetValue(cfg.ArgoCD.AppOfAppsGitURL)
+	m.textInputs[tiArgoPath].SetValue(cfg.ArgoCD.AppOfAppsGitPath)
+	m.textInputs[tiArgoRef].SetValue(cfg.ArgoCD.AppOfAppsGitRef)
+	m.textInputs[tiImgMirror].SetValue(cfg.ImageRegistryMirror)
+	m.textInputs[tiCABundle].SetValue(cfg.InternalCABundle)
+	m.textInputs[tiHelmMirror].SetValue(cfg.HelmRepoMirror)
+	if cfg.HardwareCostUSD != 0 {
+		m.textInputs[tiHWCost].SetValue(strconv.FormatFloat(cfg.HardwareCostUSD, 'f', 2, 64))
+	}
+	if cfg.HardwareWatts != 0 {
+		m.textInputs[tiHWWatts].SetValue(strconv.FormatFloat(cfg.HardwareWatts, 'f', 0, 64))
+	}
+	if cfg.HardwareKWHRateUSD != 0 {
+		m.textInputs[tiHWKWH].SetValue(strconv.FormatFloat(cfg.HardwareKWHRateUSD, 'f', 4, 64))
+	}
+	if cfg.HardwareSupportUSDMonth != 0 {
+		m.textInputs[tiHWSupport].SetValue(strconv.FormatFloat(cfg.HardwareSupportUSDMonth, 'f', 2, 64))
+	}
+	for _, i := range []int{tiHWCost, tiHWWatts, tiHWKWH, tiHWSupport} {
+		m.textInputs[i].Validate = validateNonNegativeIntOptional
+	}
+
 	// Selects.
 	m.selects[siMode] = selectState{options: []string{"cloud", "on-prem"}, cur: 0}
 	if s.fork == forkOnPrem {
@@ -449,11 +587,32 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 		m.selects[siBootstrap].cur = 1
 	}
 
+	provOptions := append([]string{"auto"}, provider.Registered()...)
+	provCur := 0
+	for i, p := range provOptions {
+		if p == cfg.InfraProvider {
+			provCur = i
+			break
+		}
+	}
+	m.selects[siProvider] = selectState{options: provOptions, cur: provCur}
+
 	// Toggles.
 	m.toggles[toiQueue] = s.workload.HasQueue
 	m.toggles[toiObjStore] = s.workload.HasObjStore
 	m.toggles[toiCache] = s.workload.HasCache
 	m.toggles[toiOvercommit] = cfg.Capacity.AllowOvercommit
+	m.toggles[toiAirgapped] = cfg.Airgapped
+	m.toggles[toiKyverno] = cfg.KyvernoEnabled
+	m.toggles[toiCertMgr] = cfg.CertManagerEnabled
+	m.toggles[toiCNPG] = cfg.CNPGEnabled
+	m.toggles[toiCrossplane] = cfg.CrossplaneEnabled
+	m.toggles[toiExtSecrets] = cfg.ExternalSecretsEnabled
+	m.toggles[toiOTEL] = cfg.OTELEnabled
+	m.toggles[toiGrafana] = cfg.GrafanaEnabled
+	m.toggles[toiVictoria] = cfg.VictoriaMetricsEnabled
+	m.toggles[toiMetrics] = cfg.EnableMetricsServer
+	m.toggles[toiSPIRE] = cfg.SPIREEnabled
 
 	// Cost-tab credential inputs — seeded from saved credentials.
 	credsInit := [ccCount]string{
@@ -483,6 +642,13 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	// Subscribe to log ring for the [logs] tab.
 	m.logSub = globalLogRing.Subscribe()
 	m.logLines = globalLogRing.Lines()
+
+	// Filter input for the logs tab.
+	fi := textinput.New()
+	fi.Placeholder = "filter pattern…"
+	fi.Prompt = "/"
+	fi.Width = 40
+	m.logFilterInput = fi
 
 	// Focus the first visible input.
 	cmd := m.textInputs[tiKindName].Focus()
@@ -521,19 +687,43 @@ func (m *dashModel) isCloud() bool { return m.selects[siMode].value() == "cloud"
 func (m *dashModel) isHidden(fid int) bool {
 	isCloud := m.isCloud()
 	switch fid {
-	case focEnv, focResil, focApps, focDBGB, focEgressGB:
-		return false // visible on both cloud and on-prem
-	case focHasQueue, focHasObjStore, focHasCache,
-		focDCLoc, focBudget, focHeadroom:
+	// Always visible.
+	case focKindName, focK8sVer, focWorkloadName, focProvider,
+		focMode, focEnv, focResil, focApps, focDBGB, focEgressGB:
+		return false
+	// Cloud sizing add-ons.
+	case focHasQueue, focHasObjStore, focHasCache:
 		return !isCloud
-	case focBootstrap, focOvercommit:
-		return isCloud // only visible on on-prem
 	case focQueueCPU, focQueueMem, focQueueVol:
 		return !isCloud || !m.toggles[toiQueue]
 	case focObjCPU, focObjMem, focObjVol:
 		return !isCloud || !m.toggles[toiObjStore]
 	case focCacheCPU, focCacheMem:
 		return !isCloud || !m.toggles[toiCache]
+	// On-prem only.
+	case focBootstrap, focOvercommit:
+		return isCloud
+	// Network: always visible.
+	case focCPEndpointIP, focNodeIPRanges, focGateway, focIPPrefix, focDNSServers:
+		return false
+	// ArgoCD: hidden when env=dev (ArgoCD is not installed in dev tier).
+	case focArgoURL, focArgoPath, focArgoRef:
+		return m.selects[siEnv].value() == "dev"
+	// Airgap.
+	case focAirgapped:
+		return false
+	case focImgMirror, focCABundle, focHelmMirror:
+		return !m.toggles[toiAirgapped]
+	// Add-ons installed: always visible.
+	case focKyverno, focCertMgr, focCNPG, focCrossplane, focExtSecrets,
+		focOTEL, focGrafana, focVictoria, focMetrics, focSPIRE:
+		return false
+	// Geo + Budget: cloud only.
+	case focDCLoc, focBudget, focHeadroom:
+		return !isCloud
+	// TCO: on-prem only.
+	case focHWCost, focHWWatts, focHWKWH, focHWSupport:
+		return isCloud
 	}
 	return false
 }
@@ -546,6 +736,53 @@ func (m *dashModel) visibleFocusList() []int {
 		}
 	}
 	return out
+}
+
+// focusAtConfigRow returns the focus ID for the field at content-area row
+// (0-indexed, tab bar excluded). Returns (-1, false) for blank/header rows.
+// Mirrors the layout produced by renderConfigTab so clicks map correctly.
+func (m dashModel) focusAtConfigRow(row int) (int, bool) {
+	cur := 0
+	lastSection := ""
+	for fid := 0; fid < focCount; fid++ {
+		if m.isHidden(fid) {
+			continue
+		}
+		meta := dashFields[fid]
+		if meta.section != "" && meta.section != lastSection {
+			if cur > 0 { // blank line before section header (mirrors "if len(lines) > 0")
+				if cur == row {
+					return -1, false
+				}
+				cur++
+			}
+			if cur == row { // section header line
+				return -1, false
+			}
+			cur++
+			lastSection = meta.section
+		}
+		if cur == row {
+			return fid, true
+		}
+		cur++
+	}
+	return -1, false
+}
+
+// jumpFocus sets focus directly to fid, blurring/focusing text inputs as needed.
+func (m dashModel) jumpFocus(fid int) dashModel {
+	if m.isHidden(fid) {
+		return m
+	}
+	if oldMeta := dashFields[m.focus]; oldMeta.kind == fkText {
+		m.textInputs[oldMeta.subIdx].Blur()
+	}
+	m.focus = fid
+	if newMeta := dashFields[fid]; newMeta.kind == fkText {
+		_ = m.textInputs[newMeta.subIdx].Focus()
+	}
+	return m
 }
 
 // ─── focus navigation ─────────────────────────────────────────────────────────
@@ -604,10 +841,79 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case costMsg:
-		m.costLoading = false
-		m.costRows = msg.rows
+	case tea.MouseMsg:
+		// Left-click on the tab bar row (Y==0) switches tabs.
+		if msg.Action == tea.MouseActionPress &&
+			msg.Button == tea.MouseButtonLeft &&
+			msg.Y == 0 {
+			if tab, ok := tabAtX(msg.X); ok && tab != tabEditor {
+				m.activeTab = tab
+				return m, nil
+			}
+		}
+		// Scroll wheel: route to the active tab.
+		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+			up := msg.Button == tea.MouseButtonWheelUp
+			switch m.activeTab {
+			case tabLogs:
+				if up {
+					m.logScroll++
+				} else if m.logScroll > 0 {
+					m.logScroll--
+				}
+			case tabCosts:
+				if !m.costCredsMode && len(m.costRows) > 0 {
+					if up {
+						m.costVendor = (m.costVendor - 1 + len(m.costRows)) % len(m.costRows)
+					} else {
+						m.costVendor = (m.costVendor + 1) % len(m.costRows)
+					}
+				}
+			case tabConfig:
+				m = m.moveFocus(!up) // wheel-up = move backward = up the list
+			}
+			return m, nil
+		}
+		// Left-click in config content area: click-to-focus a field.
+		if msg.Action == tea.MouseActionPress &&
+			msg.Button == tea.MouseButtonLeft &&
+			msg.Y >= 1 &&
+			m.activeTab == tabConfig {
+			if fid, ok := m.focusAtConfigRow(msg.Y - 1); ok {
+				m = m.jumpFocus(fid)
+			}
+			return m, nil
+		}
 		return m, nil
+
+	case costRowMsg:
+		if msg.row.ProviderName != "" {
+			log := obs.Global()
+			if msg.row.Err != nil {
+				log.Error("cost: "+msg.row.ProviderName, msg.row.Err)
+			} else {
+				log.Info("cost: "+msg.row.ProviderName,
+					slog.String("monthly_usd", fmt.Sprintf("$%.2f", msg.row.Estimate.TotalUSDMonthly)))
+			}
+			m.costRows = append(m.costRows, msg.row)
+		}
+		if msg.done {
+			m.costLoading = false
+			log := obs.Global()
+			if len(m.costRows) == 0 {
+				log.Error("cost fetch", fmt.Errorf("no providers matched (InfraProvider filter or airgap)"))
+			} else {
+				ok := 0
+				for _, r := range m.costRows {
+					if r.Err == nil {
+						ok++
+					}
+				}
+				log.Info("cost fetch complete", slog.Int("ok", ok), slog.Int("total", len(m.costRows)))
+			}
+			return m, nil
+		}
+		return m, waitForCostRowCmd(msg.ch)
 
 	case tickMsg:
 		if time.Since(m.lastDirty) < 380*time.Millisecond {
@@ -615,6 +921,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshPending = false
 		m.costLoading = true
+		m.costRows = nil // clear so each provider appears as it lands
 		return m, m.kickRefreshCmd()
 
 	case logUpdateMsg:
@@ -639,7 +946,6 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = config.ApplyYAMLFile(m.cfg, m.cfg.ConfigFile)
 			m2 := newDashModel(m.cfg, m.s)
 			m2.activeTab = tabConfig
-			m2.costRows = m.costRows
 			m2.width = m.width
 			m2.height = m.height
 			return m2, tea.Batch(textinput.Blink, m2.kickRefreshCmd())
@@ -840,8 +1146,9 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 		}
 
-		// ── Ctrl+↑/↓: resize terminal pane (works focused or not) ──
-		if m.termRunning && (key == tea.KeyCtrlUp || key == tea.KeyCtrlDown) {
+		// ── Ctrl+Alt+↑/↓: resize terminal pane (works focused or not) ──
+		// Ctrl+↑/↓ alone conflicts with macOS Mission Control shortcuts.
+		if m.termRunning && msg.Alt && (key == tea.KeyCtrlUp || key == tea.KeyCtrlDown) {
 			prev := m.termH
 			if key == tea.KeyCtrlUp {
 				m.termH--
@@ -885,7 +1192,8 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// ── tab switching: left/right arrows or number keys 1-7 ──
 		// (Only when not in a text input on the config tab.)
-		inTextField := m.activeTab == tabConfig && dashFields[m.focus].kind == fkText
+		inTextField := (m.activeTab == tabConfig && dashFields[m.focus].kind == fkText) ||
+			(m.activeTab == tabLogs && m.logFiltering)
 		switch {
 		case !inTextField && keyStr == "1":
 			m.activeTab = tabConfig
@@ -1011,11 +1319,44 @@ func (m dashModel) updateConfigTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateLogsTab handles key events on the logs tab (scroll).
+// updateLogsTab handles key events on the logs tab (scroll + filter).
 func (m dashModel) updateLogsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// When filter input is open, route all keys there except Esc/Enter.
+	if m.logFiltering {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.logFiltering = false
+			m.logFilter = ""
+			m.logFilterInput.SetValue("")
+			m.logFilterInput.Blur()
+			return m, nil
+		case tea.KeyEnter:
+			m.logFiltering = false
+			m.logFilter = m.logFilterInput.Value()
+			m.logFilterInput.Blur()
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.logFilterInput, cmd = m.logFilterInput.Update(msg)
+			m.logFilter = m.logFilterInput.Value()
+			return m, cmd
+		}
+	}
+
 	key := msg.Type
 	keyStr := msg.String()
 	switch {
+	case keyStr == "/":
+		// Open filter bar (vim-style).
+		m.logFiltering = true
+		m.logFilterInput.SetValue("")
+		m.logFilter = ""
+		cmd := m.logFilterInput.Focus()
+		return m, cmd
+	case keyStr == "esc" || key == tea.KeyEsc:
+		// Clear active filter.
+		m.logFilter = ""
+		m.logFilterInput.SetValue("")
 	case key == tea.KeyUp || keyStr == "k":
 		m.logScroll++
 	case key == tea.KeyDown || keyStr == "j":
@@ -1036,6 +1377,8 @@ func (m dashModel) updateLogsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyStr == "G":
 		// Bottom (follow).
 		m.logScroll = 0
+	case key == tea.KeyCtrlW:
+		m.logWrap = !m.logWrap
 	}
 	return m, nil
 }
@@ -1103,8 +1446,11 @@ func (m dashModel) updateCostsCredsForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key == tea.KeyEnter:
 		if m.costCredsFocus == ccCount-1 {
-			// Last field: submit.
-			return m, m.saveCostCredsCmd()
+			// Last field: submit. Evaluate saveCostCredsCmd first so
+			// pointer-receiver mutations (costCredsMode=false) are
+			// visible in the returned model.
+			cmd := m.saveCostCredsCmd()
+			return m, cmd
 		}
 		// Advance to next field.
 		m.costCredsInputs[m.costCredsFocus].Blur()
@@ -1125,7 +1471,8 @@ func (m dashModel) updateCostsCredsForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 
 	case keyStr == "ctrl+s":
-		return m, m.saveCostCredsCmd()
+		cmd := m.saveCostCredsCmd()
+		return m, cmd
 
 	default:
 		ti, cmd := m.costCredsInputs[m.costCredsFocus].Update(msg)
@@ -1503,7 +1850,7 @@ func (m *dashModel) markDirty() tea.Cmd {
 
 // ─── embedded terminal helpers ───────────────────────────────────────────────
 
-const termPaneHDefault = 12 // initial terminal pane height; user can resize with ctrl+↑/↓
+const termPaneHDefault = 12 // initial terminal pane height; user can resize with ctrl+alt+↑/↓
 const termPaneHMin = 4
 
 // watchPTYCmd reads one chunk from the PTY master fd and returns a ptyOutputMsg.
@@ -1694,10 +2041,10 @@ func (m dashModel) renderTermPane(w int) string {
 	sep := stMuted.Render(strings.Repeat("─", w))
 	if m.termFocused {
 		lines = append(lines, sep)
-		lines = append(lines, stAccent.Render("▸ Terminal")+stMuted.Render("  esc=unfocus  ctrl+↑/↓=resize"))
+		lines = append(lines, stAccent.Render("▸ Terminal")+stMuted.Render("  esc=unfocus  ctrl+alt+↑/↓=resize"))
 	} else {
 		lines = append(lines, sep)
-		lines = append(lines, stMuted.Render("  Terminal")+stMuted.Render("  ctrl+t=focus  ctrl+↑/↓=resize"))
+		lines = append(lines, stMuted.Render("  Terminal")+stMuted.Render("  ctrl+t=focus  ctrl+alt+↑/↓=resize"))
 	}
 	contentH := m.termH - 2
 	for _, l := range m.termRawToLines(contentH) {
@@ -1709,17 +2056,17 @@ func (m dashModel) renderTermPane(w int) string {
 	return strings.Join(lines[:m.termH], "\n")
 }
 
-// kickRefreshCmd builds a cost compare against a snapshot cfg.
-// Returns nil when cost estimation is disabled (no credentials configured).
+// kickRefreshCmd launches streaming cost fetches and returns a cmd that
+// delivers the first result. Subsequent results chain via waitForCostRowCmd.
+// Returns nil when cost estimation is disabled.
 func (m dashModel) kickRefreshCmd() tea.Cmd {
 	if !m.cfg.CostCompareEnabled {
 		return nil
 	}
 	snap := m.buildSnapshotCfg()
 	// Capture credentials at dispatch time: pricing.SetCredentials is a
-	// process-global set by main.go before kind is connected, so it does
-	// not include credentials loaded later from the cost-compare-config
-	// Secret. Sync here to ensure every fetch uses the current values.
+	// process-global set before kind is connected, so it may not include
+	// credentials loaded later from the cost-compare-config Secret.
 	c := m.cfg.Cost.Credentials
 	return func() tea.Msg {
 		pricing.SetCredentials(pricing.Credentials{
@@ -1730,22 +2077,10 @@ func (m dashModel) kickRefreshCmd() tea.Cmd {
 			DigitalOceanToken:  c.DigitalOceanToken,
 			IBMCloudAPIKey:     c.IBMCloudAPIKey,
 		})
-		rows := cost.CompareWithFilter(&snap, cost.ScopeCloudOnly, nil)
-		log := obs.Global()
-		ok := 0
-		for _, r := range rows {
-			if r.Err != nil {
-				log.Error("cost fetch", r.Err, slog.String("provider", r.ProviderName))
-			} else {
-				ok++
-			}
-		}
-		if len(rows) == 0 {
-			log.Error("cost fetch", fmt.Errorf("no providers matched (InfraProvider filter or airgap)"))
-		} else {
-			log.Info("cost fetch complete", slog.Int("ok", ok), slog.Int("total", len(rows)))
-		}
-		return costMsg{rows: rows}
+		ch := make(chan cost.CloudCost, 16)
+		cost.StreamWithFilter(&snap, cost.ScopeCloudOnly, globalLogRing, ch)
+		row, ok := <-ch
+		return costRowMsg{row: row, ch: ch, done: !ok}
 	}
 }
 
@@ -1759,6 +2094,67 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 		snap.KindClusterName = "yage-mgmt"
 	}
 	snap.WorkloadKubernetesVersion = strings.TrimSpace(m.textInputs[tiK8sVer].Value())
+	if wn := strings.TrimSpace(m.textInputs[tiWorkloadName].Value()); wn != "" {
+		snap.WorkloadClusterName = wn
+	}
+
+	// Provider select: "auto" means keep whatever InfraProvider was loaded from config.
+	if prov := m.selects[siProvider].value(); prov != "auto" {
+		snap.InfraProvider = prov
+		snap.InfraProviderDefaulted = false
+	}
+
+	// Network.
+	snap.ControlPlaneEndpointIP = strings.TrimSpace(m.textInputs[tiCPEndpointIP].Value())
+	snap.NodeIPRanges = strings.TrimSpace(m.textInputs[tiNodeIPRanges].Value())
+	snap.Gateway = strings.TrimSpace(m.textInputs[tiGateway].Value())
+	snap.IPPrefix = strings.TrimSpace(m.textInputs[tiIPPrefix].Value())
+	snap.DNSServers = strings.TrimSpace(m.textInputs[tiDNSServers].Value())
+
+	// ArgoCD git coordinates.
+	if u := strings.TrimSpace(m.textInputs[tiArgoURL].Value()); u != "" {
+		snap.ArgoCD.AppOfAppsGitURL = u
+	}
+	if p := strings.TrimSpace(m.textInputs[tiArgoPath].Value()); p != "" {
+		snap.ArgoCD.AppOfAppsGitPath = p
+	}
+	if r := strings.TrimSpace(m.textInputs[tiArgoRef].Value()); r != "" {
+		snap.ArgoCD.AppOfAppsGitRef = r
+	}
+
+	// Airgap.
+	snap.Airgapped = m.toggles[toiAirgapped]
+	if snap.Airgapped {
+		snap.ImageRegistryMirror = strings.TrimSpace(m.textInputs[tiImgMirror].Value())
+		snap.InternalCABundle = strings.TrimSpace(m.textInputs[tiCABundle].Value())
+		snap.HelmRepoMirror = strings.TrimSpace(m.textInputs[tiHelmMirror].Value())
+	}
+
+	// Add-ons installed.
+	snap.KyvernoEnabled = m.toggles[toiKyverno]
+	snap.CertManagerEnabled = m.toggles[toiCertMgr]
+	snap.CNPGEnabled = m.toggles[toiCNPG]
+	snap.CrossplaneEnabled = m.toggles[toiCrossplane]
+	snap.ExternalSecretsEnabled = m.toggles[toiExtSecrets]
+	snap.OTELEnabled = m.toggles[toiOTEL]
+	snap.GrafanaEnabled = m.toggles[toiGrafana]
+	snap.VictoriaMetricsEnabled = m.toggles[toiVictoria]
+	snap.EnableMetricsServer = m.toggles[toiMetrics]
+	snap.SPIREEnabled = m.toggles[toiSPIRE]
+
+	// TCO (on-prem).
+	if v, err := strconv.ParseFloat(strings.TrimSpace(m.textInputs[tiHWCost].Value()), 64); err == nil {
+		snap.HardwareCostUSD = v
+	}
+	if v, err := strconv.ParseFloat(strings.TrimSpace(m.textInputs[tiHWWatts].Value()), 64); err == nil {
+		snap.HardwareWatts = v
+	}
+	if v, err := strconv.ParseFloat(strings.TrimSpace(m.textInputs[tiHWKWH].Value()), 64); err == nil {
+		snap.HardwareKWHRateUSD = v
+	}
+	if v, err := strconv.ParseFloat(strings.TrimSpace(m.textInputs[tiHWSupport].Value()), 64); err == nil {
+		snap.HardwareSupportUSDMonth = v
+	}
 
 	mode := m.selects[siMode].value()
 	fork := forkCloud
@@ -1856,11 +2252,25 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 
 	syncWorkloadShapeToCfg(&snap, wl, resil, env, fork)
 
-	// The dashboard always compares all cloud providers — clearing
-	// InfraProvider prevents CompareWithFilter from narrowing to a single
-	// provider (which would produce zero rows when that provider is on-prem).
-	snap.InfraProvider = ""
-	snap.InfraProviderDefaulted = true
+	// For on-prem InfraProviders (proxmox, vsphere, openstack) clear the
+	// field so CompareWithFilter doesn't narrow to that provider via
+	// filterByInclusion — after filterCloudOnly it would produce zero rows.
+	// For cloud InfraProviders (aws, gcp, …) keep the filter; the user
+	// explicitly chose that cloud and wants the comparison scoped to it.
+	if snap.InfraProvider != "" && !snap.InfraProviderDefaulted &&
+		provider.AirgapCompatible(snap.InfraProvider) {
+		snap.InfraProvider = ""
+		snap.InfraProviderDefaulted = true
+	}
+
+	// Recalculate SkipProviders from current credentials rather than using
+	// the snapshot captured at dashboard startup (which may have excluded
+	// providers that now have credentials from the kind Secret or the
+	// credentials form).  Start from only the env-var-level skip list
+	// (YAGE_SKIP_PROVIDERS) by clearing the accumulated value first, then
+	// re-apply the credential-based filter with the current snap credentials.
+	snap.SkipProviders = ""
+	disableProvidersMissingCredentials(&snap)
 
 	return snap
 }
@@ -1889,6 +2299,32 @@ func (m *dashModel) flushToCfg() {
 	m.cfg.CacheMemoryMiBOverride = snap.CacheMemoryMiBOverride
 	m.cfg.BootstrapMode = snap.BootstrapMode
 	m.cfg.Capacity.AllowOvercommit = snap.Capacity.AllowOvercommit
+	m.cfg.WorkloadClusterName = snap.WorkloadClusterName
+	m.cfg.InfraProvider = snap.InfraProvider
+	m.cfg.InfraProviderDefaulted = snap.InfraProviderDefaulted
+	m.cfg.ControlPlaneEndpointIP = snap.ControlPlaneEndpointIP
+	m.cfg.NodeIPRanges = snap.NodeIPRanges
+	m.cfg.Gateway = snap.Gateway
+	m.cfg.IPPrefix = snap.IPPrefix
+	m.cfg.DNSServers = snap.DNSServers
+	m.cfg.Airgapped = snap.Airgapped
+	m.cfg.ImageRegistryMirror = snap.ImageRegistryMirror
+	m.cfg.InternalCABundle = snap.InternalCABundle
+	m.cfg.HelmRepoMirror = snap.HelmRepoMirror
+	m.cfg.KyvernoEnabled = snap.KyvernoEnabled
+	m.cfg.CertManagerEnabled = snap.CertManagerEnabled
+	m.cfg.CNPGEnabled = snap.CNPGEnabled
+	m.cfg.CrossplaneEnabled = snap.CrossplaneEnabled
+	m.cfg.ExternalSecretsEnabled = snap.ExternalSecretsEnabled
+	m.cfg.OTELEnabled = snap.OTELEnabled
+	m.cfg.GrafanaEnabled = snap.GrafanaEnabled
+	m.cfg.VictoriaMetricsEnabled = snap.VictoriaMetricsEnabled
+	m.cfg.EnableMetricsServer = snap.EnableMetricsServer
+	m.cfg.SPIREEnabled = snap.SPIREEnabled
+	m.cfg.HardwareCostUSD = snap.HardwareCostUSD
+	m.cfg.HardwareWatts = snap.HardwareWatts
+	m.cfg.HardwareKWHRateUSD = snap.HardwareKWHRateUSD
+	m.cfg.HardwareSupportUSDMonth = snap.HardwareSupportUSDMonth
 
 	// Derive s.fork / s.env / s.resil for the rest of the walkthrough.
 	if m.selects[siMode].value() == "on-prem" {
@@ -1973,6 +2409,21 @@ func (m dashModel) renderTabBar() string {
 	line := title + bar
 	return lipgloss.NewStyle().Width(m.width).Render(line) + "\n" +
 		stMuted.Render(strings.Repeat("─", m.width))
+}
+
+// tabAtX returns the dashTab at visible column x in the tab bar title row (Y==0).
+// The layout is: "yage xapiri  " (13 visible chars) then "[label]  " per tab
+// separated by "  ". Returns (tab, true) when x falls inside a tab label.
+func tabAtX(x int) (dashTab, bool) {
+	col := len("yage xapiri  ") // 13 visible chars prefix
+	for i := dashTab(0); i < tabCount; i++ {
+		w := len(tabLabels[i]) + 2 // "[" + label + "]"
+		if x >= col && x < col+w {
+			return i, true
+		}
+		col += w + 2 // "  " separator between tabs
+	}
+	return 0, false
 }
 
 // renderBottomStrip renders the live cost tally always visible below tab content.
@@ -2455,8 +2906,25 @@ func (m dashModel) renderVendorRow(r cost.CloudCost, selected bool, cheapest, bu
 func (m dashModel) renderLogsTab(w, h int) string {
 	lines := m.logLines
 
-	// Available content lines (reserve 2 for header).
-	contentH := h - 2
+	// Apply filter (case-insensitive substring).
+	if m.logFilter != "" {
+		pat := strings.ToLower(m.logFilter)
+		var filtered []string
+		for _, l := range lines {
+			if strings.Contains(strings.ToLower(l), pat) {
+				filtered = append(filtered, l)
+			}
+		}
+		lines = filtered
+	}
+
+	// Header row + optional filter bar + separator.
+	showFilterBar := m.logFiltering || m.logFilter != ""
+	hdrRows := 2
+	if showFilterBar {
+		hdrRows = 3
+	}
+	contentH := h - hdrRows
 	if contentH < 1 {
 		contentH = 1
 	}
@@ -2477,22 +2945,57 @@ func (m dashModel) renderLogsTab(w, h int) string {
 
 	var out []string
 	hdrText := fmt.Sprintf(" Logs  [%d lines]", total)
+	if m.logFilter != "" {
+		hdrText += fmt.Sprintf("  filter:%q", m.logFilter)
+	}
 	if m.logScroll > 0 {
 		hdrText += fmt.Sprintf("  scroll↑ %d", m.logScroll)
 	} else {
 		hdrText += "  (following)"
 	}
+	if m.logWrap {
+		hdrText += "  [wrap]"
+	}
 	out = append(out, stHdr.Render(hdrText))
+
+	// Filter bar: active input or static hint when a filter is set.
+	if showFilterBar {
+		if m.logFiltering {
+			out = append(out, m.logFilterInput.View())
+		} else {
+			out = append(out, stMuted.Render(" /"+m.logFilter+"  (/ to edit, esc to clear)"))
+		}
+	}
+
 	out = append(out, stMuted.Render(strings.Repeat("─", w)))
 
+	colW := w - 2
+	if colW < 10 {
+		colW = 10
+	}
 	if total == 0 {
-		out = append(out, stMuted.Render("  no log output yet"))
+		if m.logFilter != "" {
+			out = append(out, stMuted.Render("  no matching lines"))
+		} else {
+			out = append(out, stMuted.Render("  no log output yet"))
+		}
 	} else {
 		for _, l := range lines[start:end] {
-			if len(l) > w-2 {
-				l = l[:w-2] + "…"
+			if m.logWrap && len(l) > colW {
+				// Break into colW-wide chunks.
+				for len(l) > colW {
+					out = append(out, "  "+l[:colW])
+					l = l[colW:]
+				}
+				if len(l) > 0 {
+					out = append(out, "  "+l)
+				}
+			} else {
+				if len(l) > colW {
+					l = l[:colW] + "…"
+				}
+				out = append(out, "  "+l)
 			}
-			out = append(out, "  "+l)
 		}
 	}
 
@@ -2535,9 +3038,12 @@ func (m dashModel) renderHelpTab(w, h int) string {
 		"  " + stAccent.Render("j / k") + "            scroll down / up",
 		"  " + stAccent.Render("PgUp / PgDn") + "      scroll by 10 lines",
 		"  " + stAccent.Render("g / G") + "            jump to top / bottom (follow)",
+		"  " + stAccent.Render("/") + "                filter (vim-style, esc to clear)",
+		"  " + stAccent.Render("ctrl+w") + "           toggle line-wrap",
 		"",
 		stBold.Render("  Global (any tab)"),
 		"  " + stAccent.Render("ctrl+t") + "           open/focus embedded terminal pane (esc or ctrl+t = unfocus)",
+		"  " + stAccent.Render("ctrl+alt+↑/↓") + "     resize terminal pane",
 		"  " + stAccent.Render("ctrl+s") + "           save config and continue",
 		"  " + stAccent.Render("esc / q") + "          abort (no changes written)",
 	}

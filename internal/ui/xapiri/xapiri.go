@@ -55,8 +55,12 @@ func (h *multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h *multiHandler) Handle(ctx context.Context, r slog.Record) error {
-	// Write plain text (no ANSI) to the ring buffer.
-	line := r.Message
+	// Single-line structured format: [15:04:05] LEVL message  key=val …
+	lvl := r.Level.String()
+	if len(lvl) > 4 {
+		lvl = lvl[:4]
+	}
+	line := fmt.Sprintf("[%s] %-4s %s", r.Time.Format("15:04:05"), lvl, r.Message)
 	r.Attrs(func(a slog.Attr) bool {
 		line += "  " + a.Key + "=" + fmt.Sprintf("%v", a.Value.Any())
 		return true

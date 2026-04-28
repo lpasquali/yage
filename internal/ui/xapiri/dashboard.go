@@ -38,6 +38,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -2565,7 +2566,12 @@ func (m dashModel) renderBottomStrip() string {
 			suffix += stMuted.Render("  [term:bg]")
 		}
 	}
-	return line + "  " + strings.Join(parts, stMuted.Render("  ")) + suffix
+	content := "  " + strings.Join(parts, stMuted.Render("  ")) + suffix
+	// Hard-cap to terminal width so the bar never wraps onto a second line.
+	if m.width > 0 && lipgloss.Width(content) > m.width {
+		content = ansi.Truncate(content, m.width-1, "…")
+	}
+	return line + content
 }
 
 func (m dashModel) renderFooter() string {

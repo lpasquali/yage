@@ -2272,13 +2272,13 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 	// refresh/compare path, not while building the config snapshot that is
 	// also used for persistence.
 
-	// Recalculate SkipProviders from current credentials rather than using
-	// the snapshot captured at dashboard startup (which may have excluded
-	// providers that now have credentials from the kind Secret or the
-	// credentials form).  Start from only the env-var-level skip list
-	// (YAGE_SKIP_PROVIDERS) by clearing the accumulated value first, then
-	// re-apply the credential-based filter with the current snap credentials.
-	snap.SkipProviders = ""
+	// Recalculate the credential-based SkipProviders using the current
+	// snapshot credentials, but preserve any explicit skip list already
+	// configured via config/env/flags. This avoids dropping user-requested
+	// skips while still refreshing the auto-disabled providers based on the
+	// latest credentials from the kind Secret or the credentials form.
+	explicitSkipProviders := snap.SkipProviders
+	snap.SkipProviders = explicitSkipProviders
 	disableProvidersMissingCredentials(&snap)
 
 	return snap

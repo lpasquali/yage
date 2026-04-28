@@ -1222,11 +1222,7 @@ func (m dashModel) openKindResourceEditorCmd(res editorResource) tea.Cmd {
 		}
 		_ = tmp.Close()
 
-		editor := os.Getenv("EDITOR")
-		if editor == "" {
-			editor = "vi"
-		}
-		cmd := exec.Command(editor, tmp.Name())
+		cmd := exec.Command(resolveEditor(), tmp.Name())
 		resPtr := res
 		tmpName := tmp.Name()
 		return tea.ExecProcess(cmd, func(err error) tea.Msg {
@@ -1383,7 +1379,7 @@ func (m dashModel) renderEditorTab(w, h int) string {
 			}
 		}
 		lines = append(lines, "")
-		lines = append(lines, stMuted.Render("  ↑/↓  navigate    enter  edit in $EDITOR    r  refresh"))
+		lines = append(lines, stMuted.Render(fmt.Sprintf("  ↑/↓  navigate    enter  edit in %s    r  refresh", resolveEditor())))
 		if m.editorSelected < len(m.editorItems) &&
 			m.editorItems[m.editorSelected].Kind == "Secret" {
 			lines = append(lines, "")
@@ -1398,12 +1394,8 @@ func (m dashModel) renderEditorTab(w, h int) string {
 	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
-// openEditorCmd launches $EDITOR (or vi) on cfg.ConfigFile (or a temp file).
+// openEditorCmd launches the resolved editor on cfg.ConfigFile (or a temp file).
 func (m dashModel) openEditorCmd() tea.Cmd {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
-	}
 	path := m.cfg.ConfigFile
 	if path == "" {
 		// No config file set — open a temp file so the user can see/edit the
@@ -1420,7 +1412,7 @@ func (m dashModel) openEditorCmd() tea.Cmd {
 		tmp.Close()
 		path = tmp.Name()
 	}
-	cmd := exec.Command(editor, path)
+	cmd := exec.Command(resolveEditor(), path)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return editorFinishedMsg{err: err}
 	})
@@ -2020,12 +2012,30 @@ func (m dashModel) renderConfigTab(w, h int) string {
 	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
+// resolveEditor returns the editor to launch for in-place editing.
+// Priority: $VISUAL → $EDITOR → first hit in editorFallbacks (OS-specific).
+// It never returns an empty string.
+func resolveEditor() string {
+	for _, env := range []string{"VISUAL", "EDITOR"} {
+		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+			return v
+		}
+	}
+	for _, candidate := range editorFallbacks {
+		if _, err := exec.LookPath(candidate); err == nil {
+			return candidate
+		}
+	}
+	// editorFallbacks must always contain at least one entry, but be safe.
+	if len(editorFallbacks) > 0 {
+		return editorFallbacks[len(editorFallbacks)-1]
+	}
+	return "vi"
+}
+
 // renderEditorPlaceholder shows while waiting for the editor to launch.
 func (m dashModel) renderEditorPlaceholder(w, h int) string {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
-	}
+	editor := resolveEditor()
 	msg := stMuted.Render(fmt.Sprintf("  Opening %s…  (press any key after it exits)", editor))
 	lines := []string{"", msg}
 	for len(lines) < h {

@@ -46,6 +46,7 @@ import (
 	"github.com/lpasquali/yage/internal/cost"
 	"github.com/lpasquali/yage/internal/obs"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
+	"github.com/lpasquali/yage/internal/platform/sysinfo"
 	"github.com/lpasquali/yage/internal/pricing"
 	"github.com/lpasquali/yage/internal/provider"
 )
@@ -86,12 +87,31 @@ const (
 	tiObjVol
 	tiCacheCPU
 	tiCacheMem
-	tiCPEndpointIP // control-plane VIP
-	tiNodeIPRanges // node IP range
+	tiCPEndpointIP     // workload control-plane VIP
+	tiNodeIPRanges     // workload node IP range
 	tiGateway
 	tiIPPrefix
 	tiDNSServers
-	tiArgoURL       // AppOfApps git URL
+	tiMgmtCPEndpointIP   // mgmt control-plane VIP (on-prem)
+	tiMgmtNodeIPRanges   // mgmt node IP ranges (on-prem)
+	tiProxmoxDefaultTmpl    // Proxmox default VM template ID
+	tiProxmoxWLCPTmpl       // Proxmox workload control-plane template ID
+	tiProxmoxWLCPCores      // Proxmox workload CP CPU cores
+	tiProxmoxWLCPMemMiB     // Proxmox workload CP memory MiB
+	tiProxmoxWLCPDiskGB     // Proxmox workload CP boot disk GB
+	tiProxmoxWLWorkerTmpl   // Proxmox workload worker template ID
+	tiProxmoxWLWorkerCores  // Proxmox workload worker CPU cores
+	tiProxmoxWLWorkerMemMiB // Proxmox workload worker memory MiB
+	tiProxmoxWLWorkerDiskGB // Proxmox workload worker boot disk GB
+	tiProxmoxMgmtCPTmpl     // Proxmox mgmt control-plane template ID
+	tiProxmoxMgmtCPCores    // Proxmox mgmt CP CPU cores
+	tiProxmoxMgmtCPMemMiB   // Proxmox mgmt CP memory MiB
+	tiProxmoxMgmtCPDiskGB   // Proxmox mgmt CP boot disk GB
+	tiProxmoxMgmtWorkerTmpl    // Proxmox mgmt worker template ID
+	tiProxmoxMgmtWorkerCores   // Proxmox mgmt worker CPU cores
+	tiProxmoxMgmtWorkerMemMiB  // Proxmox mgmt worker memory MiB
+	tiProxmoxMgmtWorkerDiskGB  // Proxmox mgmt worker boot disk GB
+	tiArgoURL               // AppOfApps git URL
 	tiArgoPath      // AppOfApps git path
 	tiArgoRef       // AppOfApps git ref
 	tiImgMirror     // image registry mirror
@@ -136,17 +156,18 @@ const (
 	toiVictoria   = 12
 	toiMetrics    = 13
 	toiSPIRE      = 14
-	toiCount      = 15
+	toiTCO        = 15 // on-prem TCO fields enabled
+	toiCount      = 16
 )
 
 // ─── logical focus IDs (tab order) ───────────────────────────────────────────
 
 const (
-	focKindName     = iota // 0
-	focK8sVer              // 1
-	focWorkloadName        // 2
-	focProvider            // 3
-	focMode                // 4
+	focMode                = iota // 0
+	focProvider                   // 1
+	focKindName            // 2
+	focK8sVer              // 3
+	focWorkloadName        // 4
 	focEnv                 // 5
 	focResil               // 6
 	focApps                // 7
@@ -163,38 +184,58 @@ const (
 	focHasCache            // 18
 	focCacheCPU            // 19
 	focCacheMem            // 20
-	focBootstrap           // 21
-	focOvercommit          // 22
-	focCPEndpointIP        // 23
-	focNodeIPRanges        // 24
-	focGateway             // 25
-	focIPPrefix            // 26
-	focDNSServers          // 27
-	focArgoURL             // 28
-	focArgoPath            // 29
-	focArgoRef             // 30
-	focAirgapped           // 31
-	focImgMirror           // 32
-	focCABundle            // 33
-	focHelmMirror          // 34
-	focKyverno             // 35
-	focCertMgr             // 36
-	focCNPG                // 37
-	focCrossplane          // 38
-	focExtSecrets          // 39
-	focOTEL                // 40
-	focGrafana             // 41
-	focVictoria            // 42
-	focMetrics             // 43
-	focSPIRE               // 44
-	focDCLoc               // 45
-	focBudget              // 46
-	focHeadroom            // 47
-	focHWCost              // 48
-	focHWWatts             // 49
-	focHWKWH               // 50
-	focHWSupport           // 51
-	focCount               // 52 — must be last
+	focBootstrap              // 21
+	focOvercommit             // 22
+	focProxmoxDefaultTmpl    // 23 — Proxmox default VM template ID
+	focProxmoxWLCPTmpl       // 24 — Proxmox workload CP template ID
+	focProxmoxWLCPCores      // 25
+	focProxmoxWLCPMemMiB     // 26
+	focProxmoxWLCPDiskGB     // 27
+	focProxmoxWLWorkerTmpl   // 28 — Proxmox workload worker template ID
+	focProxmoxWLWorkerCores  // 29
+	focProxmoxWLWorkerMemMiB // 30
+	focProxmoxWLWorkerDiskGB // 31
+	focProxmoxMgmtCPTmpl     // 32 — Proxmox mgmt CP template ID
+	focProxmoxMgmtCPCores    // 33
+	focProxmoxMgmtCPMemMiB   // 34
+	focProxmoxMgmtCPDiskGB   // 35
+	focProxmoxMgmtWorkerTmpl    // 36 — Proxmox mgmt worker template ID
+	focProxmoxMgmtWorkerCores   // 37
+	focProxmoxMgmtWorkerMemMiB  // 38
+	focProxmoxMgmtWorkerDiskGB  // 39
+	focCPEndpointIP             // 40
+	focNodeIPRanges             // 41
+	focGateway                  // 42
+	focIPPrefix                 // 43
+	focDNSServers               // 44
+	focMgmtCPEndpointIP         // 45 — on-prem mgmt cluster VIP
+	focMgmtNodeIPRanges         // 46 — on-prem mgmt node IP ranges
+	focArgoURL                  // 47
+	focArgoPath                 // 48
+	focArgoRef                  // 49
+	focAirgapped                // 50
+	focImgMirror                // 51
+	focCABundle                 // 52
+	focHelmMirror               // 53
+	focKyverno                  // 54
+	focCertMgr                  // 55
+	focCNPG                     // 56
+	focCrossplane               // 57
+	focExtSecrets               // 58
+	focOTEL                     // 59
+	focGrafana                  // 60
+	focVictoria                 // 61
+	focMetrics                  // 62
+	focSPIRE                    // 63
+	focDCLoc                    // 64
+	focBudget                   // 65
+	focHeadroom                 // 66
+	focTCO                      // 67 — TCO toggle (on-prem only)
+	focHWCost                   // 68
+	focHWWatts                  // 69
+	focHWKWH                    // 70
+	focHWSupport                // 71
+	focCount                    // 72 — must be last
 )
 
 // ─── per-field metadata ───────────────────────────────────────────────────────
@@ -216,13 +257,14 @@ type fieldMeta struct {
 }
 
 var dashFields = []fieldMeta{
-	// ── Cluster ──────────────────────────────────────────────────────────── fid 0-3
+	// ── Mode ─────────────────────────────────────────────────────────────── fid 0
+	{fkSelect, siMode, "mode", "Mode", false},
+	// ── Provider ─────────────────────────────────────────────────────────── fid 1
+	{fkSelect, siProvider, "provider", "Provider", false},
+	// ── Cluster ──────────────────────────────────────────────────────────── fid 2-4
 	{fkText, tiKindName, "kind name", "Cluster", false},
 	{fkText, tiK8sVer, "k8s version", "", false},
 	{fkText, tiWorkloadName, "workload name", "", false},
-	{fkSelect, siProvider, "provider", "", true},
-	// ── Mode ─────────────────────────────────────────────────────────────── fid 4
-	{fkSelect, siMode, "mode", "Mode", true},
 	// ── Tier ─────────────────────────────────────────────────────────────── fid 5-6
 	{fkSelect, siEnv, "environment", "Tier", true},
 	{fkSelect, siResil, "resilience", "", true},
@@ -245,13 +287,34 @@ var dashFields = []fieldMeta{
 	// ── Bootstrap (on-prem only) ─────────────────────────────────────────── fid 21-22
 	{fkSelect, siBootstrap, "bootstrap mode", "Bootstrap", false},
 	{fkToggle, toiOvercommit, "allow overcommit", "", false},
-	// ── Network ──────────────────────────────────────────────────────────── fid 23-27
-	{fkText, tiCPEndpointIP, "CP endpoint IP", "Network", false},
+	// ── Proxmox Config (proxmox only) ────────────────────────────────────── fid 23-39
+	{fkText, tiProxmoxDefaultTmpl, "default tmpl ID", "Proxmox Config", false},
+	{fkText, tiProxmoxWLCPTmpl, "wl CP tmpl ID", "", false},
+	{fkText, tiProxmoxWLCPCores, "  cores", "", false},
+	{fkText, tiProxmoxWLCPMemMiB, "  mem MiB", "", false},
+	{fkText, tiProxmoxWLCPDiskGB, "  disk GB", "", false},
+	{fkText, tiProxmoxWLWorkerTmpl, "wl worker tmpl ID", "", false},
+	{fkText, tiProxmoxWLWorkerCores, "  cores", "", false},
+	{fkText, tiProxmoxWLWorkerMemMiB, "  mem MiB", "", false},
+	{fkText, tiProxmoxWLWorkerDiskGB, "  disk GB", "", false},
+	{fkText, tiProxmoxMgmtCPTmpl, "mgmt CP tmpl ID", "", false},
+	{fkText, tiProxmoxMgmtCPCores, "  cores", "", false},
+	{fkText, tiProxmoxMgmtCPMemMiB, "  mem MiB", "", false},
+	{fkText, tiProxmoxMgmtCPDiskGB, "  disk GB", "", false},
+	{fkText, tiProxmoxMgmtWorkerTmpl, "mgmt worker tmpl ID", "", false},
+	{fkText, tiProxmoxMgmtWorkerCores, "  cores", "", false},
+	{fkText, tiProxmoxMgmtWorkerMemMiB, "  mem MiB", "", false},
+	{fkText, tiProxmoxMgmtWorkerDiskGB, "  disk GB", "", false},
+	// ── Workload Network (on-prem only) ──────────────────────────────────── fid 40-44
+	{fkText, tiCPEndpointIP, "CP endpoint IP", "Workload Network", false},
 	{fkText, tiNodeIPRanges, "node IP ranges", "", false},
 	{fkText, tiGateway, "gateway", "", false},
 	{fkText, tiIPPrefix, "IP prefix", "", false},
 	{fkText, tiDNSServers, "DNS servers", "", false},
-	// ── ArgoCD ───────────────────────────────────────────────────────────── fid 28-30
+	// ── Mgmt Network (on-prem only) ───────────────────────────────────────── fid 28-29
+	{fkText, tiMgmtCPEndpointIP, "CP endpoint IP", "Mgmt Network", false},
+	{fkText, tiMgmtNodeIPRanges, "node IP ranges", "", false},
+	// ── ArgoCD ───────────────────────────────────────────────────────────── fid 30-32
 	{fkText, tiArgoURL, "app-of-apps URL", "ArgoCD", false},
 	{fkText, tiArgoPath, "app-of-apps path", "", false},
 	{fkText, tiArgoRef, "app-of-apps ref", "", false},
@@ -275,11 +338,12 @@ var dashFields = []fieldMeta{
 	{fkText, tiDCLoc, "data-center loc", "Geo", false},
 	{fkText, tiBudget, "budget USD/mo", "Budget", false},
 	{fkText, tiHeadroom, "headroom %", "", false},
-	// ── TCO (on-prem only) ───────────────────────────────────────────────── fid 48-51
-	{fkText, tiHWCost, "HW cost USD", "TCO", false},
-	{fkText, tiHWWatts, "HW watts", "", false},
-	{fkText, tiHWKWH, "kWh rate USD", "", false},
-	{fkText, tiHWSupport, "support USD/mo", "", false},
+	// ── TCO (on-prem only) ───────────────────────────────────────────────── fid 50-54
+	{fkToggle, toiTCO, "TCO enabled", "TCO", false},
+	{fkText, tiHWCost, "  HW cost USD", "", false},
+	{fkText, tiHWWatts, "  HW watts", "", false},
+	{fkText, tiHWKWH, "  kWh rate USD", "", false},
+	{fkText, tiHWSupport, "  support USD/mo", "", false},
 }
 
 // ─── tab IDs ─────────────────────────────────────────────────────────────────
@@ -390,6 +454,9 @@ type ptyExitMsg struct{ err error }
 // saveKindMsg is returned when the background Save-to-Kind goroutine completes.
 type saveKindMsg struct{ err error }
 
+// sysStatsMsg carries a fresh sysinfo sample.
+type sysStatsMsg struct{ s sysinfo.Stats }
+
 // ─── select state ────────────────────────────────────────────────────────────
 
 type selectState struct {
@@ -463,6 +530,10 @@ type dashModel struct {
 	termH       int    // total pane height (border+title+content); ctrl+alt+↑/↓ to resize
 	termRaw     []byte // raw PTY output ring buffer (last 64 KB)
 
+	// system stats widget (top-right corner of tab bar)
+	sysSampler *sysinfo.Sampler
+	sysStats   sysinfo.Stats
+
 	width, height int
 	errMsg        string
 	done          bool // ctrl+s pressed
@@ -471,12 +542,15 @@ type dashModel struct {
 // ─── init ─────────────────────────────────────────────────────────────────────
 
 func newDashModel(cfg *config.Config, s *state) dashModel {
+	sampler := sysinfo.NewSampler()
+	sampler.Sample() // prime the counters; first real delta will be on the second call
 	m := dashModel{
 		cfg:         cfg,
 		s:           s,
 		focus:       focKindName,
 		costLoading: cfg.CostCompareEnabled, // show "fetching…" from the first frame
 		termH:       termPaneHDefault,
+		sysSampler:  sampler,
 	}
 
 	// Build text inputs.
@@ -538,6 +612,25 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.textInputs[tiGateway].SetValue(cfg.Gateway)
 	m.textInputs[tiIPPrefix].SetValue(cfg.IPPrefix)
 	m.textInputs[tiDNSServers].SetValue(cfg.DNSServers)
+	m.textInputs[tiMgmtCPEndpointIP].SetValue(cfg.Mgmt.ControlPlaneEndpointIP)
+	m.textInputs[tiMgmtNodeIPRanges].SetValue(cfg.Mgmt.NodeIPRanges)
+	m.textInputs[tiProxmoxDefaultTmpl].SetValue(cfg.Providers.Proxmox.TemplateID)
+	m.textInputs[tiProxmoxWLCPTmpl].SetValue(cfg.WorkloadControlPlaneTemplateID)
+	m.textInputs[tiProxmoxWLCPCores].SetValue(cfg.Providers.Proxmox.ControlPlaneNumCores)
+	m.textInputs[tiProxmoxWLCPMemMiB].SetValue(cfg.Providers.Proxmox.ControlPlaneMemoryMiB)
+	m.textInputs[tiProxmoxWLCPDiskGB].SetValue(cfg.Providers.Proxmox.ControlPlaneBootVolumeSize)
+	m.textInputs[tiProxmoxWLWorkerTmpl].SetValue(cfg.WorkloadWorkerTemplateID)
+	m.textInputs[tiProxmoxWLWorkerCores].SetValue(cfg.Providers.Proxmox.WorkerNumCores)
+	m.textInputs[tiProxmoxWLWorkerMemMiB].SetValue(cfg.Providers.Proxmox.WorkerMemoryMiB)
+	m.textInputs[tiProxmoxWLWorkerDiskGB].SetValue(cfg.Providers.Proxmox.WorkerBootVolumeSize)
+	m.textInputs[tiProxmoxMgmtCPTmpl].SetValue(cfg.Providers.Proxmox.Mgmt.ControlPlaneTemplateID)
+	m.textInputs[tiProxmoxMgmtCPCores].SetValue(cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores)
+	m.textInputs[tiProxmoxMgmtCPMemMiB].SetValue(cfg.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB)
+	m.textInputs[tiProxmoxMgmtCPDiskGB].SetValue(cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize)
+	m.textInputs[tiProxmoxMgmtWorkerTmpl].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerTemplateID)
+	m.textInputs[tiProxmoxMgmtWorkerCores].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerNumCores)
+	m.textInputs[tiProxmoxMgmtWorkerMemMiB].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerMemoryMiB)
+	m.textInputs[tiProxmoxMgmtWorkerDiskGB].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerBootVolumeSize)
 	m.textInputs[tiArgoURL].SetValue(cfg.ArgoCD.AppOfAppsGitURL)
 	m.textInputs[tiArgoPath].SetValue(cfg.ArgoCD.AppOfAppsGitPath)
 	m.textInputs[tiArgoRef].SetValue(cfg.ArgoCD.AppOfAppsGitRef)
@@ -601,7 +694,12 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 		m.selects[siBootstrap].cur = 1
 	}
 
-	provOptions := append([]string{"auto"}, provider.Registered()...)
+	// Build the initial provider list filtered to the resolved mode.
+	initialMode := "cloud"
+	if s.fork == forkOnPrem {
+		initialMode = "on-prem"
+	}
+	provOptions := providerListForMode(initialMode)
 	provCur := 0
 	for i, p := range provOptions {
 		if p == cfg.InfraProvider {
@@ -627,6 +725,7 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.toggles[toiVictoria] = cfg.VictoriaMetricsEnabled
 	m.toggles[toiMetrics] = cfg.EnableMetricsServer
 	m.toggles[toiSPIRE] = cfg.SPIREEnabled
+	m.toggles[toiTCO] = cfg.HardwareCostUSD != 0 || cfg.HardwareWatts != 0 || cfg.HardwareKWHRateUSD != 0 || cfg.HardwareSupportUSDMonth != 0
 
 	// Cost-tab credential inputs — seeded from saved credentials.
 	credsInit := [ccCount]string{
@@ -678,7 +777,16 @@ func (m dashModel) Init() tea.Cmd {
 		m.textInputs[tiKindName].Focus(),
 		m.kickRefreshCmd(),
 		m.watchLogsCmd(),
+		m.sysStatsTickCmd(),
 	)
+}
+
+// sysStatsTickCmd samples process stats after 2 s and delivers a sysStatsMsg.
+func (m dashModel) sysStatsTickCmd() tea.Cmd {
+	sampler := m.sysSampler
+	return tea.Tick(2*time.Second, func(_ time.Time) tea.Msg {
+		return sysStatsMsg{s: sampler.Sample()}
+	})
 }
 
 // watchLogsCmd returns a command that waits for a log-ring notification and
@@ -698,12 +806,54 @@ func (m dashModel) watchLogsCmd() tea.Cmd {
 
 func (m *dashModel) isCloud() bool { return m.selects[siMode].value() == "cloud" }
 
+// onPremProviders is the set of provider IDs that only make sense for bare-metal / VM deployments.
+var onPremProviders = map[string]bool{
+	"proxmox":   true,
+	"vsphere":   true,
+	"openstack": true,
+	"docker":    true,
+}
+
+// providerListForMode returns ["auto", ...] filtered to the providers that
+// match mode ("cloud" or "on-prem"). "auto" is always first.
+func providerListForMode(mode string) []string {
+	all := provider.Registered()
+	out := make([]string, 1, len(all)+1)
+	out[0] = "auto"
+	onPrem := mode == "on-prem"
+	for _, p := range all {
+		if onPremProviders[p] == onPrem {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// rebuildProviderList refreshes m.selects[siProvider].options for the current
+// mode. If the previously selected provider is still valid it is preserved;
+// otherwise the select resets to "auto". Also clears stale cost rows since the
+// affordable provider set may have changed.
+func (m dashModel) rebuildProviderList() dashModel {
+	newOpts := providerListForMode(m.selects[siMode].value())
+	cur := m.selects[siProvider].value()
+	newCur := 0
+	for i, p := range newOpts {
+		if p == cur {
+			newCur = i
+			break
+		}
+	}
+	m.selects[siProvider] = selectState{options: newOpts, cur: newCur}
+	m.costRows = nil // stale rows belong to the old mode
+	return m
+}
+
 func (m *dashModel) isHidden(fid int) bool {
 	isCloud := m.isCloud()
 	switch fid {
 	// Always visible.
-	case focKindName, focK8sVer, focWorkloadName, focProvider,
-		focMode, focEnv, focResil, focApps, focDBGB, focEgressGB:
+	case focMode, focProvider, focKindName, focK8sVer, focWorkloadName,
+		focEnv, focResil, focApps, focDBGB, focEgressGB:
 		return false
 	// Cloud sizing add-ons.
 	case focHasQueue, focHasObjStore, focHasCache:
@@ -717,9 +867,19 @@ func (m *dashModel) isHidden(fid int) bool {
 	// On-prem only.
 	case focBootstrap, focOvercommit:
 		return isCloud
-	// Network: always visible.
+	// Proxmox-specific: only when provider=proxmox.
+	case focProxmoxDefaultTmpl,
+		focProxmoxWLCPTmpl, focProxmoxWLCPCores, focProxmoxWLCPMemMiB, focProxmoxWLCPDiskGB,
+		focProxmoxWLWorkerTmpl, focProxmoxWLWorkerCores, focProxmoxWLWorkerMemMiB, focProxmoxWLWorkerDiskGB,
+		focProxmoxMgmtCPTmpl, focProxmoxMgmtCPCores, focProxmoxMgmtCPMemMiB, focProxmoxMgmtCPDiskGB,
+		focProxmoxMgmtWorkerTmpl, focProxmoxMgmtWorkerCores, focProxmoxMgmtWorkerMemMiB, focProxmoxMgmtWorkerDiskGB:
+		return m.selects[siProvider].value() != "proxmox"
+	// Workload network: on-prem only (cloud VPCs are fully managed).
 	case focCPEndpointIP, focNodeIPRanges, focGateway, focIPPrefix, focDNSServers:
-		return false
+		return isCloud
+	// Mgmt cluster network: on-prem only.
+	case focMgmtCPEndpointIP, focMgmtNodeIPRanges:
+		return isCloud
 	// ArgoCD: hidden when env=dev (ArgoCD is not installed in dev tier).
 	case focArgoURL, focArgoPath, focArgoRef:
 		return m.selects[siEnv].value() == "dev"
@@ -735,9 +895,11 @@ func (m *dashModel) isHidden(fid int) bool {
 	// Geo + Budget: cloud only.
 	case focDCLoc, focBudget, focHeadroom:
 		return !isCloud
-	// TCO: on-prem only.
-	case focHWCost, focHWWatts, focHWKWH, focHWSupport:
+	// TCO: on-prem only; detail fields gated by the toggle.
+	case focTCO:
 		return isCloud
+	case focHWCost, focHWWatts, focHWKWH, focHWSupport:
+		return isCloud || !m.toggles[toiTCO]
 	}
 	return false
 }
@@ -937,6 +1099,10 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.costLoading = true
 		m.costRows = nil // clear so each provider appears as it lands
 		return m, m.kickRefreshCmd()
+
+	case sysStatsMsg:
+		m.sysStats = msg.s
+		return m, m.sysStatsTickCmd()
 
 	case logUpdateMsg:
 		m.logLines = globalLogRing.Lines()
@@ -1308,11 +1474,17 @@ func (m dashModel) updateConfigTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case key == tea.KeyRight || key == tea.KeyEnter || keyStr == "l":
 			m.selects[meta.subIdx].next()
+			if meta.subIdx == siMode {
+				m = m.rebuildProviderList()
+			}
 			if meta.costKey {
 				return m, m.markDirty()
 			}
 		case key == tea.KeyLeft || keyStr == "h":
 			m.selects[meta.subIdx].prev()
+			if meta.subIdx == siMode {
+				m = m.rebuildProviderList()
+			}
 			if meta.costKey {
 				return m, m.markDirty()
 			}
@@ -2078,6 +2250,12 @@ func (m dashModel) kickRefreshCmd() tea.Cmd {
 		return nil
 	}
 	snap := m.buildSnapshotCfg()
+	// Cost comparison always queries every credentialled provider, regardless
+	// of which provider the user has selected in the config tab. The provider
+	// select is a deployment choice, not a cost-filter. Clear InfraProvider
+	// so StreamWithFilter does not narrow to a single provider.
+	snap.InfraProvider = ""
+	snap.InfraProviderDefaulted = true
 	// Capture credentials at dispatch time: pricing.SetCredentials is a
 	// process-global set before kind is connected, so it may not include
 	// credentials loaded later from the cost-compare-config Secret.
@@ -2118,12 +2296,57 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 		snap.InfraProviderDefaulted = false
 	}
 
-	// Network.
+	// Network (on-prem only; cloud fields are managed by the cloud provider).
 	snap.ControlPlaneEndpointIP = strings.TrimSpace(m.textInputs[tiCPEndpointIP].Value())
 	snap.NodeIPRanges = strings.TrimSpace(m.textInputs[tiNodeIPRanges].Value())
 	snap.Gateway = strings.TrimSpace(m.textInputs[tiGateway].Value())
 	snap.IPPrefix = strings.TrimSpace(m.textInputs[tiIPPrefix].Value())
 	snap.DNSServers = strings.TrimSpace(m.textInputs[tiDNSServers].Value())
+	snap.Mgmt.ControlPlaneEndpointIP = strings.TrimSpace(m.textInputs[tiMgmtCPEndpointIP].Value())
+	snap.Mgmt.NodeIPRanges = strings.TrimSpace(m.textInputs[tiMgmtNodeIPRanges].Value())
+	if t := strings.TrimSpace(m.textInputs[tiProxmoxDefaultTmpl].Value()); t != "" {
+		snap.Providers.Proxmox.TemplateID = t
+	}
+	snap.WorkloadControlPlaneTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxWLCPTmpl].Value())
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLCPCores].Value()); v != "" {
+		snap.Providers.Proxmox.ControlPlaneNumCores = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLCPMemMiB].Value()); v != "" {
+		snap.Providers.Proxmox.ControlPlaneMemoryMiB = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLCPDiskGB].Value()); v != "" {
+		snap.Providers.Proxmox.ControlPlaneBootVolumeSize = v
+	}
+	snap.WorkloadWorkerTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxWLWorkerTmpl].Value())
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLWorkerCores].Value()); v != "" {
+		snap.Providers.Proxmox.WorkerNumCores = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLWorkerMemMiB].Value()); v != "" {
+		snap.Providers.Proxmox.WorkerMemoryMiB = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLWorkerDiskGB].Value()); v != "" {
+		snap.Providers.Proxmox.WorkerBootVolumeSize = v
+	}
+	snap.Providers.Proxmox.Mgmt.ControlPlaneTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxMgmtCPTmpl].Value())
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtCPCores].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.ControlPlaneNumCores = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtCPMemMiB].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtCPDiskGB].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize = v
+	}
+	snap.Providers.Proxmox.Mgmt.WorkerTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxMgmtWorkerTmpl].Value())
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtWorkerCores].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.WorkerNumCores = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtWorkerMemMiB].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.WorkerMemoryMiB = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtWorkerDiskGB].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.WorkerBootVolumeSize = v
+	}
 
 	// ArgoCD git coordinates.
 	if u := strings.TrimSpace(m.textInputs[tiArgoURL].Value()); u != "" {
@@ -2316,6 +2539,25 @@ func (m *dashModel) flushToCfg() {
 	m.cfg.Gateway = snap.Gateway
 	m.cfg.IPPrefix = snap.IPPrefix
 	m.cfg.DNSServers = snap.DNSServers
+	m.cfg.Mgmt.ControlPlaneEndpointIP = snap.Mgmt.ControlPlaneEndpointIP
+	m.cfg.Mgmt.NodeIPRanges = snap.Mgmt.NodeIPRanges
+	m.cfg.Providers.Proxmox.TemplateID = snap.Providers.Proxmox.TemplateID
+	m.cfg.WorkloadControlPlaneTemplateID = snap.WorkloadControlPlaneTemplateID
+	m.cfg.Providers.Proxmox.ControlPlaneNumCores = snap.Providers.Proxmox.ControlPlaneNumCores
+	m.cfg.Providers.Proxmox.ControlPlaneMemoryMiB = snap.Providers.Proxmox.ControlPlaneMemoryMiB
+	m.cfg.Providers.Proxmox.ControlPlaneBootVolumeSize = snap.Providers.Proxmox.ControlPlaneBootVolumeSize
+	m.cfg.WorkloadWorkerTemplateID = snap.WorkloadWorkerTemplateID
+	m.cfg.Providers.Proxmox.WorkerNumCores = snap.Providers.Proxmox.WorkerNumCores
+	m.cfg.Providers.Proxmox.WorkerMemoryMiB = snap.Providers.Proxmox.WorkerMemoryMiB
+	m.cfg.Providers.Proxmox.WorkerBootVolumeSize = snap.Providers.Proxmox.WorkerBootVolumeSize
+	m.cfg.Providers.Proxmox.Mgmt.ControlPlaneTemplateID = snap.Providers.Proxmox.Mgmt.ControlPlaneTemplateID
+	m.cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores = snap.Providers.Proxmox.Mgmt.ControlPlaneNumCores
+	m.cfg.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB = snap.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB
+	m.cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize = snap.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize
+	m.cfg.Providers.Proxmox.Mgmt.WorkerTemplateID = snap.Providers.Proxmox.Mgmt.WorkerTemplateID
+	m.cfg.Providers.Proxmox.Mgmt.WorkerNumCores = snap.Providers.Proxmox.Mgmt.WorkerNumCores
+	m.cfg.Providers.Proxmox.Mgmt.WorkerMemoryMiB = snap.Providers.Proxmox.Mgmt.WorkerMemoryMiB
+	m.cfg.Providers.Proxmox.Mgmt.WorkerBootVolumeSize = snap.Providers.Proxmox.Mgmt.WorkerBootVolumeSize
 	m.cfg.Airgapped = snap.Airgapped
 	m.cfg.ImageRegistryMirror = snap.ImageRegistryMirror
 	m.cfg.InternalCABundle = snap.InternalCABundle
@@ -2402,7 +2644,7 @@ func (m dashModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, tabBar, content, termPane, bottomStrip, footer)
 }
 
-// renderTabBar renders the tab strip at the top.
+// renderTabBar renders the tab strip at the top with a right-aligned sysinfo widget.
 func (m dashModel) renderTabBar() string {
 	var parts []string
 	for i := dashTab(0); i < tabCount; i++ {
@@ -2414,17 +2656,108 @@ func (m dashModel) renderTabBar() string {
 		}
 	}
 	bar := strings.Join(parts, "  ")
-	title := stBold.Render("yage xapiri") + "  "
-	line := title + bar
+	title := stBold.Render("yage") + "  "
+	left := title + bar
+
+	// Right-align the sysinfo widget; pad between left and widget.
+	widget := m.renderSysWidget()
+	// Strip ANSI for width math (widget uses lipgloss styles).
+	wPlain := lipgloss.Width(widget)
+	lPlain := lipgloss.Width(left)
+	pad := m.width - lPlain - wPlain
+	if pad < 1 {
+		pad = 1
+	}
+	line := left + strings.Repeat(" ", pad) + widget
 	return lipgloss.NewStyle().Width(m.width).Render(line) + "\n" +
 		stMuted.Render(strings.Repeat("─", m.width))
 }
 
+// renderSysWidget returns a compact right-corner widget:
+//
+//	cpu 3%  128M  ↓1.2M ↑400B
+func (m dashModel) renderSysWidget() string {
+	s := m.sysStats
+	if s.MemRSSBytes == 0 {
+		return stMuted.Render("cpu –  – M  ↓–  ↑–")
+	}
+
+	// CPU colour: green < 20%, yellow < 60%, red ≥ 60%.
+	cpuStr := fmt.Sprintf("%.0f%%", s.CPUPercent)
+	var cpuStyle lipgloss.Style
+	switch {
+	case s.CPUPercent < 20:
+		cpuStyle = stOK
+	case s.CPUPercent < 60:
+		cpuStyle = stWarn
+	default:
+		cpuStyle = stBad
+	}
+
+	// Memory: colour by absolute size.
+	memStr := fmtBytes(s.MemRSSBytes)
+	var memStyle lipgloss.Style
+	switch {
+	case s.MemRSSBytes < 256<<20: // < 256 MB
+		memStyle = stOK
+	case s.MemRSSBytes < 512<<20: // < 512 MB
+		memStyle = stWarn
+	default:
+		memStyle = stBad
+	}
+
+	// Network: per-second rate; muted when idle, accent when data flowing.
+	var rxRate, txRate uint64
+	if s.DeltaDur > 0 {
+		secs := s.DeltaDur.Seconds()
+		rxRate = uint64(float64(s.NetRxDelta) / secs)
+		txRate = uint64(float64(s.NetTxDelta) / secs)
+	}
+	netStyle := stMuted
+	if rxRate > 1024 || txRate > 1024 {
+		netStyle = stAccent
+	}
+
+	return stMuted.Render("cpu ") + cpuStyle.Render(cpuStr) +
+		stMuted.Render("  ") + memStyle.Render(memStr) +
+		stMuted.Render("  ↓") + netStyle.Render(fmtRate(rxRate)) +
+		stMuted.Render(" ↑") + netStyle.Render(fmtRate(txRate))
+}
+
+// fmtBytes formats a byte count compactly: "128M", "4.2G", "512K", "64B".
+func fmtBytes(b uint64) string {
+	switch {
+	case b >= 1<<30:
+		return fmt.Sprintf("%.1fG", float64(b)/float64(1<<30))
+	case b >= 1<<20:
+		return fmt.Sprintf("%.0fM", float64(b)/float64(1<<20))
+	case b >= 1<<10:
+		return fmt.Sprintf("%.0fK", float64(b)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%dB", b)
+	}
+}
+
+// fmtRate formats bytes/s compactly: "1.2M/s", "400K/s", "64B/s", "0".
+func fmtRate(bps uint64) string {
+	if bps == 0 {
+		return "0"
+	}
+	switch {
+	case bps >= 1<<20:
+		return fmt.Sprintf("%.1fM/s", float64(bps)/float64(1<<20))
+	case bps >= 1<<10:
+		return fmt.Sprintf("%.0fK/s", float64(bps)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%dB/s", bps)
+	}
+}
+
 // tabAtX returns the dashTab at visible column x in the tab bar title row (Y==0).
-// The layout is: "yage xapiri  " (13 visible chars) then "[label]  " per tab
+// The layout is: "yage  " (6 visible chars) then "[label]  " per tab
 // separated by "  ". Returns (tab, true) when x falls inside a tab label.
 func tabAtX(x int) (dashTab, bool) {
-	col := len("yage xapiri  ") // 13 visible chars prefix
+	col := len("yage  ") // 6 visible chars prefix
 	for i := dashTab(0); i < tabCount; i++ {
 		w := len(tabLabels[i]) + 2 // "[" + label + "]"
 		if x >= col && x < col+w {
@@ -2451,46 +2784,101 @@ func (m dashModel) renderBottomStrip() string {
 		return line + suffix
 	}
 	sorted := m.sortedCostRows()
-	var parts []string
-	for _, r := range sorted {
-		if r.Err != nil {
-			parts = append(parts, stMuted.Render(r.ProviderName+" n/a"))
-			continue
+
+	// Find cheapest once.
+	cheapest := 0.0
+	for _, rr := range sorted {
+		if rr.Err == nil && rr.Estimate.TotalUSDMonthly > 0 {
+			cheapest = rr.Estimate.TotalUSDMonthly
+			break
 		}
-		total := r.Estimate.TotalUSDMonthly
-		var style lipgloss.Style
-		cheapest := 0.0
-		for _, rr := range sorted {
-			if rr.Err == nil && rr.Estimate.TotalUSDMonthly > 0 {
-				cheapest = rr.Estimate.TotalUSDMonthly
-				break
-			}
-		}
-		budget := m.cfg.BudgetUSDMonth
-		switch {
-		case budget > 0 && total > budget:
-			style = stBad
-		case cheapest > 0 && total <= cheapest:
-			style = stOK
-		case cheapest > 0 && total > cheapest*1.5:
-			style = stWarn
-		default:
-			style = lipgloss.NewStyle()
-		}
-		parts = append(parts, style.Render(fmt.Sprintf("%s $%.0f", r.ProviderName, total)))
 	}
+	budget := m.cfg.BudgetUSDMonth
+
+	// Build fixed suffix first so we know how much room is left.
 	suffix := ""
 	if m.costLoading {
-		suffix = stMuted.Render("  (fetching…)")
+		suffix = "  (fetching…)"
 	}
 	if m.termRunning {
 		if m.termFocused {
-			suffix += stAccent.Render("  [term:active]")
+			suffix += "  [term:active]"
 		} else {
-			suffix += stMuted.Render("  [term:bg]")
+			suffix += "  [term:bg]"
 		}
 	}
-	return line + "  " + strings.Join(parts, stMuted.Render("  ")) + suffix
+
+	// Greedy-fit: add provider tokens one by one until they no longer fit.
+	// Each token is "  provider $NNN". Width budget = terminal width - 2
+	// (leading indent) - suffix width. When a token doesn't fit we stop and
+	// show "+N more" so the bar is always exactly one line.
+	avail := m.width
+	if avail <= 0 {
+		avail = 120 // safe default before WindowSizeMsg
+	}
+	avail -= 2 // leading "  "
+	avail -= len(suffix)
+
+	var kept []string
+	skipped := 0
+	sep := "  "
+	for _, r := range sorted {
+		var token string
+		if r.Err != nil {
+			token = r.ProviderName + " n/a"
+		} else {
+			token = fmt.Sprintf("%s $%.0f", r.ProviderName, r.Estimate.TotalUSDMonthly)
+		}
+		need := len(token)
+		if len(kept) > 0 {
+			need += len(sep)
+		}
+		if need > avail {
+			skipped++
+			continue
+		}
+		avail -= need
+		kept = append(kept, token)
+	}
+
+	// Render kept tokens with colour.
+	var renderedParts []string
+	for _, tok := range kept {
+		name := strings.Fields(tok)[0]
+		// Find the original row to apply colour.
+		var style lipgloss.Style
+		for _, r := range sorted {
+			if r.ProviderName != name {
+				continue
+			}
+			if r.Err != nil {
+				style = stMuted
+			} else {
+				total := r.Estimate.TotalUSDMonthly
+				switch {
+				case budget > 0 && total > budget:
+					style = stBad
+				case cheapest > 0 && total <= cheapest:
+					style = stOK
+				case cheapest > 0 && total > cheapest*1.5:
+					style = stWarn
+				default:
+					style = lipgloss.NewStyle()
+				}
+			}
+			break
+		}
+		renderedParts = append(renderedParts, style.Render(tok))
+	}
+
+	content := "  " + strings.Join(renderedParts, stMuted.Render(sep))
+	if skipped > 0 {
+		content += stMuted.Render(fmt.Sprintf("  +%d more", skipped))
+	}
+	if suffix != "" {
+		content += stMuted.Render(suffix)
+	}
+	return line + content
 }
 
 func (m dashModel) renderFooter() string {

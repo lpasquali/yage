@@ -118,27 +118,33 @@ func awsBulkCachePath(service, region string) string {
 	return filepath.Join(d, fmt.Sprintf("aws-bulk-%s-%s.json", service, region))
 }
 
-// newAWSPricingClient creates a Pricing API client using the explicit
-// key+secret stored in the package-level creds global (set via
-// pricing.SetCredentials). Returns ErrUnavailable when either field is
-// empty — the default AWS credential chain is intentionally NOT used to
-// avoid ambient-credential conflicts with the operator's shell profile.
-//
-// The AWS Pricing API endpoint is always in us-east-1 regardless of
-// the priced workload region.
+// newAWSPricingClient creates a Pricing API client.
+// If explicit key+secret have been set via pricing.SetCredentials those are
+// used as a static credential provider. Otherwise the SDK's default
+// credential chain is tried (AWS_ACCESS_KEY_ID env vars, ~/.aws/credentials,
+// IAM instance profile, etc.). The AWS Pricing API returns the same public
+// catalog regardless of which account authenticates, so ambient credentials
+// are safe to use here — there is no "wrong account" risk for a read-only
+// price query.
+// The Pricing API endpoint is always us-east-1.
 func newAWSPricingClient(ctx context.Context) (*awspricingsdk.Client, error) {
 	keyID := creds.AWSAccessKeyID
 	secret := creds.AWSSecretAccessKey
-	if keyID == "" || secret == "" {
-		return nil, fmt.Errorf("%w: aws credentials not configured — pass --cost-compare-config to set them", ErrUnavailable)
-	}
-	cfg, err := config.LoadDefaultConfig(ctx,
+	opts := []func(*config.LoadOptions) error{
 		config.WithRegion("us-east-1"),
 		config.WithHTTPClient(&http.Client{}),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(keyID, secret, "")),
-	)
+	}
+	if keyID != "" && secret != "" {
+		opts = append(opts, config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(keyID, secret, ""),
+		))
+	}
+	// If no explicit credentials, LoadDefaultConfig uses the standard chain
+	// (env → shared-credentials-file → IAM role). If that chain has nothing,
+	// the first real API call will fail and we surface the error then.
+	cfg, err := config.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("aws config: %w", err)
+		return nil, fmt.Errorf("%w: aws config: %v", ErrUnavailable, err)
 	}
 	return awspricingsdk.NewFromConfig(cfg), nil
 }

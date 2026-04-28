@@ -133,6 +133,11 @@ type ProxmoxMgmtConfig struct {
 	ControlPlaneBootVolumeDevice string
 	ControlPlaneBootVolumeSize   string
 	ControlPlaneTemplateID       string
+	WorkerNumSockets             string // "1"
+	WorkerNumCores               string // "2"
+	WorkerMemoryMiB              string // "2048"
+	WorkerBootVolumeDevice       string
+	WorkerBootVolumeSize         string // "30"
 	WorkerTemplateID             string
 	// Pool is the Proxmox VE pool name the management cluster's VMs are
 	// tagged with. See ProxmoxConfig.Pool for the workload counterpart.
@@ -1695,6 +1700,11 @@ func Load() *Config {
 	c.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB = getenv("MGMT_CONTROL_PLANE_MEMORY_MIB", "2048")
 	c.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeDevice = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_DEVICE", c.Providers.Proxmox.ControlPlaneBootVolumeDevice)
 	c.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize = getenv("MGMT_CONTROL_PLANE_BOOT_VOLUME_SIZE", "30")
+	c.Providers.Proxmox.Mgmt.WorkerNumSockets = getenv("MGMT_WORKER_NUM_SOCKETS", "1")
+	c.Providers.Proxmox.Mgmt.WorkerNumCores = getenv("MGMT_WORKER_NUM_CORES", "2")
+	c.Providers.Proxmox.Mgmt.WorkerMemoryMiB = getenv("MGMT_WORKER_MEMORY_MIB", "2048")
+	c.Providers.Proxmox.Mgmt.WorkerBootVolumeDevice = getenv("MGMT_WORKER_BOOT_VOLUME_DEVICE", c.Providers.Proxmox.WorkerBootVolumeDevice)
+	c.Providers.Proxmox.Mgmt.WorkerBootVolumeSize = getenv("MGMT_WORKER_BOOT_VOLUME_SIZE", "30")
 	// Proxmox CSI on the management cluster: off by default (stateless).
 	c.Providers.Proxmox.Mgmt.CSIEnabled = envBool("MGMT_PROXMOX_CSI_ENABLED", false)
 

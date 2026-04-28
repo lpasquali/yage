@@ -258,6 +258,17 @@ type editorResourcesMsg struct {
 // editorSaveMsg is returned after a kind resource has been written back.
 type editorSaveMsg struct{ err error }
 
+// kindResourceReadyMsg is returned by openKindResourceEditorCmd after the
+// temp file has been written. Update() converts it into a tea.ExecProcess
+// command — the only correct way to hand off to an external process from
+// inside a goroutine (returning tea.ExecProcess directly from a Cmd goroutine
+// gives bubbletea a Cmd-as-Msg which it cannot execute).
+type kindResourceReadyMsg struct {
+	resource *editorResource
+	tempFile string
+	err      error
+}
+
 // editorResource describes a Secret or ConfigMap in the yage-system namespace.
 type editorResource struct {
 	Kind string // "Secret" or "ConfigMap"
@@ -654,6 +665,17 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadEditorResourcesCmd()
 		}
 		return m, nil
+
+	case kindResourceReadyMsg:
+		if msg.err != nil {
+			m.editorErr = msg.err.Error()
+			return m, nil
+		}
+		res := msg.resource
+		tmpFile := msg.tempFile
+		return m, tea.ExecProcess(exec.Command(resolveEditor(), tmpFile), func(err error) tea.Msg {
+			return editorFinishedMsg{err: err, resource: res, tempFile: tmpFile}
+		})
 
 	case ptyOutputMsg:
 		if len(msg.data) > 0 {
@@ -1222,12 +1244,8 @@ func (m dashModel) openKindResourceEditorCmd(res editorResource) tea.Cmd {
 		}
 		_ = tmp.Close()
 
-		cmd := exec.Command(resolveEditor(), tmp.Name())
 		resPtr := res
-		tmpName := tmp.Name()
-		return tea.ExecProcess(cmd, func(err error) tea.Msg {
-			return editorFinishedMsg{err: err, resource: &resPtr, tempFile: tmpName}
-		})
+		return kindResourceReadyMsg{resource: &resPtr, tempFile: tmp.Name()}
 	}
 }
 
@@ -2012,21 +2030,27 @@ func (m dashModel) renderConfigTab(w, h int) string {
 	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
-// resolveEditor returns the editor to launch for in-place editing.
+// resolveEditor returns the editor binary to use for in-place editing.
 // Priority: $VISUAL → $EDITOR → first hit in editorFallbacks (OS-specific).
+// Each candidate (including env-var values) is verified with exec.LookPath
+// so we never hand an absent binary to tea.ExecProcess.
 // It never returns an empty string.
 func resolveEditor() string {
 	for _, env := range []string{"VISUAL", "EDITOR"} {
 		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
-			return v
+			if p, err := exec.LookPath(v); err == nil {
+				return p
+			}
+			// Env var set but binary not in PATH — fall through to probe list.
 		}
 	}
 	for _, candidate := range editorFallbacks {
-		if _, err := exec.LookPath(candidate); err == nil {
-			return candidate
+		if p, err := exec.LookPath(candidate); err == nil {
+			return p
 		}
 	}
-	// editorFallbacks must always contain at least one entry, but be safe.
+	// Last resort: return the final fallback name even if not found —
+	// exec will produce a clear error message to the user.
 	if len(editorFallbacks) > 0 {
 		return editorFallbacks[len(editorFallbacks)-1]
 	}
@@ -2471,20 +2495,10 @@ func (m dashModel) renderAboutTab(w, h int) string {
 // ─── deploy tab ──────────────────────────────────────────────────────────────
 
 func (m dashModel) renderDeployTab(w, h int) string {
-	leftW := w * 40 / 100
-	rightW := w - leftW - 1
-	if leftW < 20 {
-		leftW = 20
-	}
-	if rightW < 20 {
-		rightW = 20
-	}
-
-	// Left: action buttons + status.
-	var leftLines []string
-	leftLines = append(leftLines, stHdr.Render(" Actions"))
-	leftLines = append(leftLines, stMuted.Render(strings.Repeat("─", leftW)))
-	leftLines = append(leftLines, "")
+	var lines []string
+	lines = append(lines, stHdr.Render(" Actions"))
+	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
+	lines = append(lines, "")
 
 	btnSave := "[Save to Kind]"
 	btnDeploy := "[Start Deploy]"
@@ -2495,10 +2509,10 @@ func (m dashModel) renderDeployTab(w, h int) string {
 		btnSave = stMuted.Render("  " + btnSave)
 		btnDeploy = stAccent.Render("▸ " + btnDeploy)
 	}
-	leftLines = append(leftLines, btnSave)
-	leftLines = append(leftLines, "")
-	leftLines = append(leftLines, btnDeploy)
-	leftLines = append(leftLines, "")
+	lines = append(lines, btnSave)
+	lines = append(lines, "")
+	lines = append(lines, btnDeploy)
+	lines = append(lines, "")
 
 	var statusLine string
 	switch {
@@ -2511,77 +2525,12 @@ func (m dashModel) renderDeployTab(w, h int) string {
 	default:
 		statusLine = stMuted.Render("  ● Ready")
 	}
-	leftLines = append(leftLines, "Status: "+statusLine)
+	lines = append(lines, "Status: "+statusLine)
 
-	// Right: cost preview.
-	var rightLines []string
-	rightLines = append(rightLines, stHdr.Render(" Live Cost Preview"))
-	rightLines = append(rightLines, stMuted.Render(strings.Repeat("─", rightW)))
-	rightLines = append(rightLines, "")
-
-	if !m.cfg.CostCompareEnabled {
-		rightLines = append(rightLines, stMuted.Render("  enter credentials in [costs] tab"))
-	} else if len(m.costRows) == 0 {
-		if m.costLoading {
-			rightLines = append(rightLines, stMuted.Render("  fetching…"))
-		} else {
-			rightLines = append(rightLines, stMuted.Render("  no cost data"))
-		}
-	} else {
-		hdr := fmt.Sprintf("  %-14s  %s", "Provider", "$/mo")
-		rightLines = append(rightLines, stHdr.Render(hdr))
-		rightLines = append(rightLines, stMuted.Render("  "+strings.Repeat("─", 22)))
-		sorted := m.sortedCostRows()
-		cheapest := 0.0
-		for _, r := range sorted {
-			if r.Err == nil {
-				cheapest = r.Estimate.TotalUSDMonthly
-				break
-			}
-		}
-		for _, r := range sorted {
-			if r.Err != nil {
-				rightLines = append(rightLines, stMuted.Render(fmt.Sprintf("  %-14s  n/a", r.ProviderName)))
-				continue
-			}
-			total := r.Estimate.TotalUSDMonthly
-			var style lipgloss.Style
-			switch {
-			case m.cfg.BudgetUSDMonth > 0 && total > m.cfg.BudgetUSDMonth:
-				style = stBad
-			case cheapest > 0 && total <= cheapest:
-				style = stOK
-			default:
-				style = lipgloss.NewStyle()
-			}
-			rightLines = append(rightLines, style.Render(fmt.Sprintf("  %-14s  $%.2f", r.ProviderName, total)))
-		}
+	for len(lines) < h {
+		lines = append(lines, "")
 	}
-
-	// Merge into columns.
-	maxRows := h
-	if len(leftLines) > maxRows {
-		maxRows = len(leftLines)
-	}
-	if len(rightLines) > maxRows {
-		maxRows = len(rightLines)
-	}
-	for len(leftLines) < maxRows {
-		leftLines = append(leftLines, "")
-	}
-	for len(rightLines) < maxRows {
-		rightLines = append(rightLines, "")
-	}
-
-	var out []string
-	for i := 0; i < maxRows && i < h; i++ {
-		l := fmt.Sprintf("%-*s", leftW, leftLines[i])
-		out = append(out, l+"│"+rightLines[i])
-	}
-	for len(out) < h {
-		out = append(out, "")
-	}
-	return strings.Join(out[:min(len(out), h)], "\n")
+	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
 // sortedCostRows returns the cost rows sorted cheapest-first (errors last).

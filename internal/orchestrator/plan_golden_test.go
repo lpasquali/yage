@@ -76,7 +76,14 @@ func hermeticEnv(t *testing.T) {
 	// are non-empty — that path skips the "Estimated monthly cost"
 	// section silently, which is what we want for hermetic goldens
 	// (live pricing is disabled, so the estimate would always fail).
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATESTONLY")
+	// AWS credentials are now sourced from pricing.SetCredentials, not env
+	// vars (ambient-credential isolation). Hetzner still reads HCLOUD_TOKEN.
+	pricing.SetCredentials(pricing.Credentials{
+		AWSAccessKeyID:     "AKIATESTONLY",
+		AWSSecretAccessKey: "testsecret",
+		HetznerToken:       "test-token",
+	})
+	t.Cleanup(func() { pricing.SetCredentials(pricing.Credentials{}) })
 	t.Setenv("HCLOUD_TOKEN", "test-token")
 }
 

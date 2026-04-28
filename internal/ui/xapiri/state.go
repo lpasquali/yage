@@ -97,6 +97,16 @@ type workloadShape struct {
 	HasQueue    bool
 	HasObjStore bool
 	HasCache    bool
+	// Per-add-on resource sizing (0 = use cost.SubstituteFootprint default).
+	// Stamped into cfg.MQ*/ObjStore*/Cache*Override by syncWorkloadShapeToCfg.
+	QueueCPUMilli    int
+	QueueMemMiB      int
+	QueueVolGB       int
+	ObjStoreCPUMilli int
+	ObjStoreMemMiB   int
+	ObjStoreVolGB    int
+	CacheCPUMilli    int
+	CacheMemMiB      int
 }
 
 // state is the running walkthrough's mutable bag. Each step method
@@ -201,6 +211,14 @@ func (s *state) initFromConfig(cfg *config.Config) {
 	s.workload.HasQueue = cfg.Workload.HasQueue
 	s.workload.HasObjStore = cfg.Workload.HasObjStore
 	s.workload.HasCache = cfg.Workload.HasCache
+	s.workload.QueueCPUMilli = cfg.MQCPUMillicoresOverride
+	s.workload.QueueMemMiB = cfg.MQMemoryMiBOverride
+	s.workload.QueueVolGB = cfg.MQVolumeGBOverride
+	s.workload.ObjStoreCPUMilli = cfg.ObjStoreCPUMillicoresOverride
+	s.workload.ObjStoreMemMiB = cfg.ObjStoreMemoryMiBOverride
+	s.workload.ObjStoreVolGB = cfg.ObjStoreVolumeGBOverride
+	s.workload.CacheCPUMilli = cfg.CacheCPUMillicoresOverride
+	s.workload.CacheMemMiB = cfg.CacheMemoryMiBOverride
 	for _, ag := range cfg.Workload.Apps {
 		s.workload.Apps = append(s.workload.Apps, appBucket{Count: ag.Count, Template: ag.Template})
 	}

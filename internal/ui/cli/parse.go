@@ -333,12 +333,12 @@ func Parse(c *config.Config, argv []string) {
 			// — only the comparison view filters them. Env:
 			// YAGE_SKIP_PROVIDERS.
 			c.SkipProviders = strings.TrimSpace(shiftVal(a))
-		case "--allowed-providers":
-			// Comma-separated allowlist for the cost compare table.
-			// Inverse of --skip-providers. Composes with it (allowlist
-			// applies first; --skip-providers subtracts from the
-			// result). Env: YAGE_ALLOWED_PROVIDERS.
-			c.AllowedProviders = strings.TrimSpace(shiftVal(a))
+		case "--cost-compare-config":
+			// Enable cost estimation and trigger the credential-setup
+			// step at xapiri startup. Writes credentials to the
+			// yage-system/cost-compare-config Secret for future runs.
+			// Env: YAGE_COST_COMPARE_CONFIG.
+			c.CostCompareEnabled = true
 		case "--no-managed-postgres":
 			// Force in-cluster CloudNativePG even when the active
 			// vendor offers managed Postgres. Default uses the

@@ -155,6 +155,12 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		items = append(items, mPG)
 	}
 
+	for _, svc := range []cost.ManagedService{cost.MSMessageQueue, cost.MSObjectStore, cost.MSCache} {
+		if item, fired, _ := cost.AddonCostItem(cfg, "aws", region, svc); fired {
+			items = append(items, item)
+		}
+	}
+
 	// Service overhead.
 	items, err = addServiceOverhead(items, cfg, region)
 	if err != nil {

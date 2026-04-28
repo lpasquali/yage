@@ -163,9 +163,10 @@ func CompareWithFilter(cfg *config.Config, scope Scope, progress io.Writer) []Cl
 	case ScopeOnPremOnly:
 		names = filterOnPremOnly(names)
 	}
-	allowed := parseProviderList(cfg.AllowedProviders)
-	if len(allowed) > 0 {
-		names = filterByInclusion(names, allowed)
+	// When --infra-provider is set explicitly (not defaulted), cost only
+	// that provider — it acts as the sole allowed provider for comparison.
+	if cfg.InfraProvider != "" && !cfg.InfraProviderDefaulted {
+		names = filterByInclusion(names, map[string]struct{}{cfg.InfraProvider: {}})
 	}
 	skipped := parseProviderList(cfg.SkipProviders)
 	if len(skipped) > 0 {
@@ -173,13 +174,13 @@ func CompareWithFilter(cfg *config.Config, scope Scope, progress io.Writer) []Cl
 	}
 	if progress != nil {
 		switch {
-		case len(allowed) > 0 && len(skipped) > 0:
-			fmt.Fprintf(progress, "  live cost compare: %d provider(s) (allowed: %s; skipping: %s)\n",
-				len(names), strings.Join(sortedKeys(allowed), ", "),
+		case cfg.InfraProvider != "" && !cfg.InfraProviderDefaulted && len(skipped) > 0:
+			fmt.Fprintf(progress, "  live cost compare: %d provider(s) (infra-provider: %s; skipping: %s)\n",
+				len(names), cfg.InfraProvider,
 				strings.Join(sortedKeys(skipped), ", "))
-		case len(allowed) > 0:
-			fmt.Fprintf(progress, "  live cost compare: %d provider(s) (allowed: %s)\n",
-				len(names), strings.Join(sortedKeys(allowed), ", "))
+		case cfg.InfraProvider != "" && !cfg.InfraProviderDefaulted:
+			fmt.Fprintf(progress, "  live cost compare: %d provider(s) (infra-provider: %s)\n",
+				len(names), cfg.InfraProvider)
 		case len(skipped) > 0:
 			fmt.Fprintf(progress, "  live cost compare: %d provider(s) (skipping: %s)\n",
 				len(names), strings.Join(sortedKeys(skipped), ", "))
@@ -341,8 +342,8 @@ func filterEphemeralTestProviders(names []string) []string {
 
 // parseProviderList splits a comma-separated list of registry
 // names into a lowercased set. Empty values and whitespace are
-// dropped so "aws, ,gcp" yields {"aws", "gcp"}. Used by both
-// --allowed-providers and --skip-providers.
+// dropped so "aws, ,gcp" yields {"aws", "gcp"}. Used by
+// --skip-providers.
 func parseProviderList(raw string) map[string]struct{} {
 	out := map[string]struct{}{}
 	for _, p := range strings.Split(raw, ",") {

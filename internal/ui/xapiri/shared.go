@@ -20,7 +20,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/cost"
 	"github.com/lpasquali/yage/internal/pricing"
 	"github.com/lpasquali/yage/internal/provider"
 	"github.com/lpasquali/yage/internal/ui/cli"
@@ -227,8 +229,49 @@ func (s *state) step3_workloadShape() error {
 		s.workload.EgressGBMo = s.promptIntVal("egress GB/month (default db × 2)", def)
 	}
 	s.workload.HasQueue = s.r.promptYesNo("add-on: message queue?", s.workload.HasQueue)
+	if s.workload.HasQueue {
+		def := cost.SubstituteFootprint(cost.MSMessageQueue)
+		if s.workload.QueueCPUMilli == 0 {
+			s.workload.QueueCPUMilli = def.CPUMillicores
+		}
+		if s.workload.QueueMemMiB == 0 {
+			s.workload.QueueMemMiB = def.MemoryMiB
+		}
+		if s.workload.QueueVolGB == 0 {
+			s.workload.QueueVolGB = def.PersistentGB
+		}
+		s.workload.QueueCPUMilli = s.promptIntVal("  queue CPU (millicores)", s.workload.QueueCPUMilli)
+		s.workload.QueueMemMiB = s.promptIntVal("  queue memory (MiB)", s.workload.QueueMemMiB)
+		s.workload.QueueVolGB = s.promptIntVal("  queue volume (GB)", s.workload.QueueVolGB)
+	}
 	s.workload.HasObjStore = s.r.promptYesNo("add-on: object storage?", s.workload.HasObjStore)
+	if s.workload.HasObjStore {
+		def := cost.SubstituteFootprint(cost.MSObjectStore)
+		if s.workload.ObjStoreCPUMilli == 0 {
+			s.workload.ObjStoreCPUMilli = def.CPUMillicores
+		}
+		if s.workload.ObjStoreMemMiB == 0 {
+			s.workload.ObjStoreMemMiB = def.MemoryMiB
+		}
+		if s.workload.ObjStoreVolGB == 0 {
+			s.workload.ObjStoreVolGB = def.PersistentGB
+		}
+		s.workload.ObjStoreCPUMilli = s.promptIntVal("  obj-storage CPU (millicores)", s.workload.ObjStoreCPUMilli)
+		s.workload.ObjStoreMemMiB = s.promptIntVal("  obj-storage memory (MiB)", s.workload.ObjStoreMemMiB)
+		s.workload.ObjStoreVolGB = s.promptIntVal("  obj-storage volume (GB)", s.workload.ObjStoreVolGB)
+	}
 	s.workload.HasCache = s.r.promptYesNo("add-on: in-memory cache?", s.workload.HasCache)
+	if s.workload.HasCache {
+		def := cost.SubstituteFootprint(cost.MSCache)
+		if s.workload.CacheCPUMilli == 0 {
+			s.workload.CacheCPUMilli = def.CPUMillicores
+		}
+		if s.workload.CacheMemMiB == 0 {
+			s.workload.CacheMemMiB = def.MemoryMiB
+		}
+		s.workload.CacheCPUMilli = s.promptIntVal("  cache CPU (millicores)", s.workload.CacheCPUMilli)
+		s.workload.CacheMemMiB = s.promptIntVal("  cache memory (MiB)", s.workload.CacheMemMiB)
+	}
 	// Stamp worker count from the workload size so orchestrator
 	// code paths see a sensible number while feasibility-derived
 	// sizing matures.
@@ -306,6 +349,39 @@ func syncWorkloadShapeToCfg(cfg *config.Config, w workloadShape, resil resilienc
 		HasQueue:      w.HasQueue,
 		HasObjStore:   w.HasObjStore,
 		HasCache:      w.HasCache,
+	}
+	// Stamp add-on resource overrides so cost.AddonCostItem reads them.
+	// Only write non-zero values; a disabled add-on keeps any prior override
+	// so re-enabling it on the next run restores the operator's sizing.
+	if w.HasQueue {
+		if w.QueueCPUMilli > 0 {
+			cfg.MQCPUMillicoresOverride = w.QueueCPUMilli
+		}
+		if w.QueueMemMiB > 0 {
+			cfg.MQMemoryMiBOverride = w.QueueMemMiB
+		}
+		if w.QueueVolGB > 0 {
+			cfg.MQVolumeGBOverride = w.QueueVolGB
+		}
+	}
+	if w.HasObjStore {
+		if w.ObjStoreCPUMilli > 0 {
+			cfg.ObjStoreCPUMillicoresOverride = w.ObjStoreCPUMilli
+		}
+		if w.ObjStoreMemMiB > 0 {
+			cfg.ObjStoreMemoryMiBOverride = w.ObjStoreMemMiB
+		}
+		if w.ObjStoreVolGB > 0 {
+			cfg.ObjStoreVolumeGBOverride = w.ObjStoreVolGB
+		}
+	}
+	if w.HasCache {
+		if w.CacheCPUMilli > 0 {
+			cfg.CacheCPUMillicoresOverride = w.CacheCPUMilli
+		}
+		if w.CacheMemMiB > 0 {
+			cfg.CacheMemoryMiBOverride = w.CacheMemMiB
+		}
 	}
 }
 
@@ -654,4 +730,133 @@ func (s *state) runSharedTail() error {
 		return err
 	}
 	return s.step8_persistAndDecide()
+}
+
+// disableProvidersMissingCredentials appends to cfg.SkipProviders the names
+// of credential-requiring providers that have no key set. Azure, Linode, and
+// OCI use public APIs and are never auto-disabled here.
+// When cfg.InfraProvider is set explicitly (non-defaulted), only that provider
+// is checked — others are left alone.
+func disableProvidersMissingCredentials(cfg *config.Config) {
+	type check struct {
+		name    string
+		missing bool
+	}
+	checks := []check{
+		{"aws", cfg.Cost.Credentials.AWSAccessKeyID == "" || cfg.Cost.Credentials.AWSSecretAccessKey == ""},
+		{"gcp", cfg.Cost.Credentials.GCPAPIKey == ""},
+		{"hetzner", cfg.Cost.Credentials.HetznerToken == ""},
+		{"digitalocean", cfg.Cost.Credentials.DigitalOceanToken == ""},
+		{"ibmcloud", cfg.Cost.Credentials.IBMCloudAPIKey == ""},
+	}
+	skipped := make(map[string]struct{})
+	for _, p := range strings.Split(cfg.SkipProviders, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			skipped[p] = struct{}{}
+		}
+	}
+	for _, c := range checks {
+		if cfg.InfraProvider != "" && !cfg.InfraProviderDefaulted && c.name != cfg.InfraProvider {
+			continue
+		}
+		if c.missing {
+			skipped[c.name] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(skipped))
+	for n := range skipped {
+		names = append(names, n)
+	}
+	cfg.SkipProviders = strings.Join(names, ",")
+}
+
+// stepCostCompareSetup prompts for API credentials of every provider that
+// needs them and saves the result to the yage-system/cost-compare-config
+// Secret. Runs only when cfg.CostCompareEnabled is true. Blank entry with
+// no prior value causes the provider to be auto-disabled via SkipProviders.
+func (s *state) stepCostCompareSetup() error {
+	s.r.info("")
+	s.r.info("── cost-estimation credentials ──────────────────────────────")
+	s.r.info("Providers with no key will be disabled in the cost panel.")
+	s.r.info("Press enter to keep an existing value; leave blank to skip a provider.")
+	s.r.info("")
+
+	type entry struct {
+		label   string
+		key     string // secret key name
+		ptr     *string
+		twoLine bool // AWS needs two prompts
+		ptr2    *string
+		key2    string
+	}
+
+	cfg := s.cfg
+	entries := []entry{
+		{label: "AWS Access Key ID", key: "aws-access-key-id", ptr: &cfg.Cost.Credentials.AWSAccessKeyID},
+		{label: "AWS Secret Access Key", key: "aws-secret-access-key", ptr: &cfg.Cost.Credentials.AWSSecretAccessKey},
+		{label: "GCP API Key", key: "gcp-api-key", ptr: &cfg.Cost.Credentials.GCPAPIKey},
+		{label: "Hetzner Token", key: "hetzner-token", ptr: &cfg.Cost.Credentials.HetznerToken},
+		{label: "DigitalOcean Token", key: "digitalocean-token", ptr: &cfg.Cost.Credentials.DigitalOceanToken},
+		{label: "IBM Cloud API Key", key: "ibmcloud-api-key", ptr: &cfg.Cost.Credentials.IBMCloudAPIKey},
+	}
+
+	// Narrow to just the infra-provider's entry when set explicitly.
+	infraFilter := cfg.InfraProvider != "" && !cfg.InfraProviderDefaulted
+	infraKeys := map[string]bool{
+		"aws":          infraFilter && cfg.InfraProvider == "aws",
+		"gcp":          infraFilter && cfg.InfraProvider == "gcp",
+		"hetzner":      infraFilter && cfg.InfraProvider == "hetzner",
+		"digitalocean": infraFilter && cfg.InfraProvider == "digitalocean",
+		"ibmcloud":     infraFilter && cfg.InfraProvider == "ibmcloud",
+	}
+	providerForKey := map[string]string{
+		"aws-access-key-id":     "aws",
+		"aws-secret-access-key": "aws",
+		"gcp-api-key":           "gcp",
+		"hetzner-token":         "hetzner",
+		"digitalocean-token":    "digitalocean",
+		"ibmcloud-api-key":      "ibmcloud",
+	}
+
+	creds := map[string]string{}
+	for _, e := range entries {
+		if infraFilter && !infraKeys[providerForKey[e.key]] {
+			continue
+		}
+		val := s.r.promptSecret(e.label, *e.ptr)
+		if val == "" && *e.ptr == "" {
+			fmt.Fprintf(s.w, "  → %s: no key provided — provider will be disabled\n", providerForKey[e.key])
+		} else if val != "" {
+			*e.ptr = val
+			creds[e.key] = val
+		} else {
+			// keep existing value
+			creds[e.key] = *e.ptr
+		}
+	}
+
+	disableProvidersMissingCredentials(cfg)
+
+	// Sync new credentials to the pricing package so the rest of the
+	// session (cost-compare, dashboard) can call the APIs immediately.
+	pricing.SetCredentials(pricing.Credentials{
+		AWSAccessKeyID:     cfg.Cost.Credentials.AWSAccessKeyID,
+		AWSSecretAccessKey: cfg.Cost.Credentials.AWSSecretAccessKey,
+		GCPAPIKey:          cfg.Cost.Credentials.GCPAPIKey,
+		HetznerToken:       cfg.Cost.Credentials.HetznerToken,
+		DigitalOceanToken:  cfg.Cost.Credentials.DigitalOceanToken,
+		IBMCloudAPIKey:     cfg.Cost.Credentials.IBMCloudAPIKey,
+	})
+
+	if len(creds) > 0 {
+		if err := kindsync.WriteCostCompareSecret(cfg, creds); err != nil {
+			fmt.Fprintf(s.w, "  xapiri: warning — could not persist cost credentials to kind: %v\n", err)
+			fmt.Fprintln(s.w, "  (credentials are active for this session; re-run --cost-compare-config to retry)")
+		} else {
+			fmt.Fprintln(s.w, "  ✓ credentials saved to yage-system/cost-compare-config")
+		}
+	}
+	s.r.info("")
+	return nil
 }

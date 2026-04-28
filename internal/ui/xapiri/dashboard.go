@@ -1505,7 +1505,6 @@ func (m *dashModel) markDirty() tea.Cmd {
 
 const termPaneHDefault = 12 // initial terminal pane height; user can resize with ctrl+↑/↓
 const termPaneHMin = 4
-const termPaneHMax = 60
 
 // watchPTYCmd reads one chunk from the PTY master fd and returns a ptyOutputMsg.
 // Re-scheduled after every ptyOutputMsg while termRunning is true.

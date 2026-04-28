@@ -1486,7 +1486,11 @@ func (m dashModel) openEditorCmd() tea.Cmd {
 	}
 	cmd := exec.Command(resolveEditor(), path)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return editorFinishedMsg{err: err}
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to launch editor %q for %q: %v\n", cmd.Path, path, err)
+			return nil
+		}
+		return editorFinishedMsg{}
 	})
 }
 

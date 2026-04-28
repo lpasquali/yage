@@ -2128,9 +2128,9 @@ func (m dashModel) renderConfigTab(w, h int) string {
 
 // resolveEditor returns the editor binary to use for in-place editing.
 // Priority: $VISUAL → $EDITOR → first hit in editorFallbacks (OS-specific).
-// Each candidate (including env-var values) is verified with exec.LookPath
-// so we never hand an absent binary to tea.ExecProcess.
-// It never returns an empty string.
+// Env-var values and fallback candidates are probed with exec.LookPath
+// where possible. If none are found, it returns a conventional fallback
+// name for exec to report on, so it never returns an empty string.
 func resolveEditor() string {
 	for _, env := range []string{"VISUAL", "EDITOR"} {
 		if v := strings.TrimSpace(os.Getenv(env)); v != "" {

@@ -64,6 +64,8 @@ func main() {
 	}
 	cli.Parse(cfg, os.Args[1:])
 
+	config.ClearCredentialEnvVars()
+
 	// Airgap completion (§17 / §21.4): install the operator's CA
 	// bundle on the Go HTTP transport + child-process env, register
 	// the kind --image override, and stash the Helm-repo mirror so

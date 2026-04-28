@@ -83,17 +83,14 @@ func (h *multiHandler) WithGroup(name string) slog.Handler {
 // [logs] tab.
 var globalLogRing = &logRing{}
 
-// installLogTee wraps the global obs.Logger with a multiHandler that also
-// writes plain-text lines to globalLogRing.
+// installLogTee wraps the global obs.Logger with a multiHandler that writes
+// plain-text lines to globalLogRing (visible in [logs] tab). stdout/stderr
+// are discarded: the TUI is running in alt-screen and any direct write to
+// those file descriptors would corrupt the rendered output.
 func installLogTee() {
-	existing := obs.Global()
-	// Retrieve the underlying slog.Handler via a slog.Logger adapter.
-	// obs.Logger wraps *slog.Logger; we create a new one from the current
-	// logger's handler (accessed by promoting through obs.NewLoggerFromHandler).
-	primary := obs.NewPrettyHandler()
+	primary := obs.NewPrettyHandlerWithWriters(io.Discard, io.Discard, true)
 	teeHandler := &multiHandler{primary: primary, ring: globalLogRing}
 	obs.SetGlobal(obs.NewLoggerFromHandler(teeHandler))
-	_ = existing // existing logger is replaced; its handler is superseded
 }
 
 // Run starts the interactive walkthrough. Returns the exit code

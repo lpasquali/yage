@@ -15,6 +15,7 @@ package xapiri
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -738,18 +739,45 @@ func (s *state) runSharedTail() error {
 	return s.step8_persistAndDecide()
 }
 
-// disableProvidersMissingCredentials appends to cfg.SkipProviders the names
-// of credential-requiring providers that have no key set. Azure, Linode, and
-// OCI use public APIs and are never auto-disabled here.
+// awsAnyCredentialsAvailable returns true when AWS credentials are available
+// in any form: explicit key/secret in cfg, AWS SDK env vars (AWS_ACCESS_KEY_ID,
+// AWS_PROFILE), or the standard ~/.aws/credentials / ~/.aws/config files.
+// newAWSPricingClient now falls back to the SDK default chain, so any of these
+// sources will allow a successful Pricing API call.
+func awsAnyCredentialsAvailable(cfg *config.Config) bool {
+	if cfg.Cost.Credentials.AWSAccessKeyID != "" && cfg.Cost.Credentials.AWSSecretAccessKey != "" {
+		return true
+	}
+	if os.Getenv("AWS_ACCESS_KEY_ID") != "" || os.Getenv("AWS_PROFILE") != "" {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, rel := range []string{".aws/credentials", ".aws/config"} {
+			if _, e := os.Stat(filepath.Join(home, rel)); e == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// disableProvidersMissingCredentials syncs cfg.SkipProviders with credential
+// availability. Azure, Linode, and OCI use public APIs and are never touched.
+// AWS is skipped only when no credentials exist in any form (explicit key/secret,
+// env vars, or ~/.aws/ files) — it falls back to the SDK credential chain.
 // When cfg.InfraProvider is set explicitly (non-defaulted), only that provider
-// is checked — others are left alone.
+// is checked; others are left alone.
+//
+// Critically, providers are also REMOVED from SkipProviders when credentials
+// become available mid-session (e.g. after the [costs] credential form is
+// submitted), so the live cost bar updates without requiring a restart.
 func disableProvidersMissingCredentials(cfg *config.Config) {
 	type check struct {
 		name    string
 		missing bool
 	}
 	checks := []check{
-		{"aws", cfg.Cost.Credentials.AWSAccessKeyID == "" || cfg.Cost.Credentials.AWSSecretAccessKey == ""},
+		{"aws", !awsAnyCredentialsAvailable(cfg)},
 		{"gcp", cfg.Cost.Credentials.GCPAPIKey == ""},
 		{"hetzner", cfg.Cost.Credentials.HetznerToken == ""},
 		{"digitalocean", cfg.Cost.Credentials.DigitalOceanToken == ""},
@@ -768,6 +796,8 @@ func disableProvidersMissingCredentials(cfg *config.Config) {
 		}
 		if c.missing {
 			skipped[c.name] = struct{}{}
+		} else {
+			delete(skipped, c.name) // credentials now available — restore provider
 		}
 	}
 	names := make([]string, 0, len(skipped))

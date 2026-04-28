@@ -1670,7 +1670,20 @@ func (m dashModel) kickRefreshCmd() tea.Cmd {
 		return nil
 	}
 	snap := m.buildSnapshotCfg()
+	// Capture credentials at dispatch time: pricing.SetCredentials is a
+	// process-global set by main.go before kind is connected, so it does
+	// not include credentials loaded later from the cost-compare-config
+	// Secret. Sync here to ensure every fetch uses the current values.
+	c := m.cfg.Cost.Credentials
 	return func() tea.Msg {
+		pricing.SetCredentials(pricing.Credentials{
+			AWSAccessKeyID:     c.AWSAccessKeyID,
+			AWSSecretAccessKey: c.AWSSecretAccessKey,
+			GCPAPIKey:          c.GCPAPIKey,
+			HetznerToken:       c.HetznerToken,
+			DigitalOceanToken:  c.DigitalOceanToken,
+			IBMCloudAPIKey:     c.IBMCloudAPIKey,
+		})
 		rows := cost.CompareWithFilter(&snap, cost.ScopeCloudOnly, nil)
 		return costMsg{rows: rows}
 	}

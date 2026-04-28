@@ -491,7 +491,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = config.ApplyYAMLFile(m.cfg, m.cfg.ConfigFile)
 			// Rebuild text inputs from reloaded cfg.
 			m2 := newDashModel(m.cfg, m.s)
-			m2.activeTab = m.activeTab
+			m2.activeTab = tabConfig
 			m2.costRows = m.costRows
 			m2.width = m.width
 			m2.height = m.height
@@ -522,22 +522,22 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (Only when not in a text input on the config tab.)
 		inTextField := m.activeTab == tabConfig && dashFields[m.focus].kind == fkText
 		switch {
-		case keyStr == "1":
+		case !inTextField && keyStr == "1":
 			m.activeTab = tabConfig
 			return m, nil
-		case keyStr == "2":
+		case !inTextField && keyStr == "2":
 			m.activeTab = tabEditor
 			return m, m.openEditorCmd()
-		case keyStr == "3":
+		case !inTextField && keyStr == "3":
 			m.activeTab = tabCosts
 			return m, nil
-		case keyStr == "4":
+		case !inTextField && keyStr == "4":
 			m.activeTab = tabLogs
 			return m, nil
-		case keyStr == "5":
+		case !inTextField && keyStr == "5":
 			m.activeTab = tabHelp
 			return m, nil
-		case keyStr == "6":
+		case !inTextField && keyStr == "6":
 			m.activeTab = tabAbout
 			return m, nil
 		case (key == tea.KeyLeft || key == tea.KeyRight) && !inTextField && m.activeTab != tabConfig:

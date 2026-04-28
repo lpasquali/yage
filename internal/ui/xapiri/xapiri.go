@@ -182,6 +182,7 @@ func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
 	kindsync.MergeBootstrapSecretsFromKind(cfg)
 	_ = kindsync.MergeBootstrapConfigFromKind(cfg)
 	_ = kindsync.ReadCostCompareSecret(cfg) // sets CostCompareEnabled + loads credentials when secret exists
+	disableProvidersMissingCredentials(cfg)
 	s.initFromConfig(cfg) // re-seed walkthrough state now that kind merges have run
 	if !skipKindPrelude() {
 		if err := kind.EnsureClusterUp(cfg, w); err != nil {

@@ -28,6 +28,9 @@ func TestAWSApplicationLBPricing_usEast1Live(t *testing.T) {
 	if testing.Short() {
 		t.Skip("live AWS pricing fetch")
 	}
+	if !PricingCredsConfigured("aws") {
+		t.Skip("no AWS credentials configured (set via pricing.SetCredentials or --cost-compare-config)")
+	}
 	h, lcu, err := AWSApplicationLBPricing("us-east-1")
 	if err != nil {
 		t.Fatal(err)

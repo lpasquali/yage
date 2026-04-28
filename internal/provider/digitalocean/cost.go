@@ -61,6 +61,12 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		items = append(items, mPG)
 	}
 
+	for _, svc := range []cost.ManagedService{cost.MSMessageQueue, cost.MSObjectStore, cost.MSCache} {
+		if item, fired, _ := cost.AddonCostItem(cfg, "digitalocean", region, svc); fired {
+			items = append(items, item)
+		}
+	}
+
 	total := 0.0
 	for _, it := range items {
 		total += it.SubtotalUSD

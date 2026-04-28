@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	awspricingsdk "github.com/aws/aws-sdk-go-v2/service/pricing"
 	awspricingtypes "github.com/aws/aws-sdk-go-v2/service/pricing/types"
 )
@@ -117,17 +118,24 @@ func awsBulkCachePath(service, region string) string {
 	return filepath.Join(d, fmt.Sprintf("aws-bulk-%s-%s.json", service, region))
 }
 
-// newAWSPricingClient creates a Pricing API client using the default
-// AWS credential chain. The HTTP client is set to &http.Client{} (nil
-// Transport) so requests inherit http.DefaultTransport at call time,
-// keeping the airgap shim effective.
+// newAWSPricingClient creates a Pricing API client using the explicit
+// key+secret stored in the package-level creds global (set via
+// pricing.SetCredentials). Returns ErrUnavailable when either field is
+// empty — the default AWS credential chain is intentionally NOT used to
+// avoid ambient-credential conflicts with the operator's shell profile.
 //
 // The AWS Pricing API endpoint is always in us-east-1 regardless of
 // the priced workload region.
 func newAWSPricingClient(ctx context.Context) (*awspricingsdk.Client, error) {
+	keyID := creds.AWSAccessKeyID
+	secret := creds.AWSSecretAccessKey
+	if keyID == "" || secret == "" {
+		return nil, fmt.Errorf("%w: aws credentials not configured — pass --cost-compare-config to set them", ErrUnavailable)
+	}
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion("us-east-1"),
 		config.WithHTTPClient(&http.Client{}),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(keyID, secret, "")),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("aws config: %w", err)

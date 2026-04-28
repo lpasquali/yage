@@ -12,6 +12,11 @@ package pricing
 //
 // See docs/abstraction-plan.md §16.
 type Credentials struct {
+	// AWS: explicit key+secret only. No ambient-credential fallback —
+	// AWS_ACCESS_KEY_ID / AWS_PROFILE from the operator's shell would
+	// silently price against the wrong account.
+	AWSAccessKeyID     string
+	AWSSecretAccessKey string
 	GCPAPIKey         string // Google Cloud Billing Catalog
 	HetznerToken      string // Hetzner Cloud project token
 	DigitalOceanToken string // DigitalOcean API token

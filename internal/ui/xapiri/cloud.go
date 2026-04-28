@@ -121,6 +121,14 @@ func (s *state) step4_cloud_budget() error {
 // when AbsoluteFloor > budget; otherwise prompts the user to pick
 // a provider from the feasible set and stamps cfg.InfraProvider.
 func (s *state) step5_cloud_costCompare() error {
+	if !s.cfg.CostCompareEnabled {
+		fmt.Fprintln(s.w, "  cost estimation disabled — pass --cost-compare-config to enable")
+		if s.cfg.InfraProvider == "" || s.cfg.InfraProviderDefaulted {
+			fmt.Fprintln(s.w, "  set --infra-provider to continue without a cost comparison")
+			return ErrUserExit
+		}
+		return nil // infra-provider already pinned; skip the compare
+	}
 	s.r.section("cost compare")
 	s.stampGeoRegions("filled blank Region/Location on every provider we can map, for live cost rows")
 	rows := compareCloudsForReview(s.cfg, s.w)

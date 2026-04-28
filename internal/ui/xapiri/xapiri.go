@@ -83,7 +83,14 @@ func Run(w io.Writer, cfg *config.Config) int {
 	// is not yet reachable (first-run case).
 	kindsync.MergeBootstrapSecretsFromKind(cfg)
 	_ = kindsync.MergeBootstrapConfigFromKind(cfg)
+	_ = kindsync.ReadCostCompareSecret(cfg) // sets CostCompareEnabled + loads credentials when secret exists
+	disableProvidersMissingCredentials(cfg)
 	s.initFromConfig(cfg) // re-seed walkthrough state now that kind merges have run
+	if cfg.CostCompareEnabled {
+		if err := s.stepCostCompareSetup(); err != nil {
+			return s.exit(err)
+		}
+	}
 	if err := s.stepKubernetesVersion(); err != nil {
 		return s.exit(err)
 	}
@@ -122,7 +129,14 @@ func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
 	}
 	kindsync.MergeBootstrapSecretsFromKind(cfg)
 	_ = kindsync.MergeBootstrapConfigFromKind(cfg)
+	_ = kindsync.ReadCostCompareSecret(cfg) // sets CostCompareEnabled + loads credentials when secret exists
+	disableProvidersMissingCredentials(cfg)
 	s.initFromConfig(cfg) // re-seed walkthrough state now that kind merges have run
+	if cfg.CostCompareEnabled {
+		if err := s.stepCostCompareSetup(); err != nil {
+			return s.exit(err)
+		}
+	}
 	if err := s.stepKubernetesVersion(); err != nil {
 		return s.exit(err)
 	}
@@ -133,7 +147,7 @@ func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
 			return 1
 		}
 	}
-	if rc := runHuhForm(w, cfg, s); rc != 0 {
+	if rc := runDashboard(w, cfg, s); rc != 0 {
 		return rc
 	}
 	if s.fork == forkOnPrem {

@@ -103,10 +103,12 @@ func main() {
 	// and env vars via config.Load. See docs/abstraction-plan.md
 	// §16.
 	pricing.SetCredentials(pricing.Credentials{
-		GCPAPIKey:         cfg.Cost.Credentials.GCPAPIKey,
-		HetznerToken:      cfg.Cost.Credentials.HetznerToken,
-		DigitalOceanToken: cfg.Cost.Credentials.DigitalOceanToken,
-		IBMCloudAPIKey:    cfg.Cost.Credentials.IBMCloudAPIKey,
+		AWSAccessKeyID:     cfg.Cost.Credentials.AWSAccessKeyID,
+		AWSSecretAccessKey: cfg.Cost.Credentials.AWSSecretAccessKey,
+		GCPAPIKey:          cfg.Cost.Credentials.GCPAPIKey,
+		HetznerToken:       cfg.Cost.Credentials.HetznerToken,
+		DigitalOceanToken:  cfg.Cost.Credentials.DigitalOceanToken,
+		IBMCloudAPIKey:     cfg.Cost.Credentials.IBMCloudAPIKey,
 	})
 	pricing.SetCurrency(pricing.Currency{
 		DisplayCurrency:    cfg.Cost.Currency.DisplayCurrency,

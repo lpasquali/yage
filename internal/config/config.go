@@ -514,12 +514,18 @@ type CostConfig struct {
 }
 
 // CostCredentials are the per-vendor pricing API tokens / keys.
-// AWS Bulk JSON, Azure Retail Prices, Linode catalog, OCI catalog
-// are anonymous — no entry here. Values persist to
-// Secret/yage-system/bootstrap-config under `cost.<key>` keys;
-// env vars are the first-run fallback before the kind cluster
-// exists.
+// Azure Retail Prices, Linode catalog, OCI catalog are anonymous — no entry
+// here. Values persist to yage-system/cost-compare-config Secret (see
+// kindsync.WriteCostCompareSecret); env vars are a first-run fallback before
+// the kind cluster exists.
+// NOTE: AWS credentials intentionally have no env-var fallback — using
+// AWS_ACCESS_KEY_ID / AWS_PROFILE from the operator's shell would silently
+// price against the wrong account.
 type CostCredentials struct {
+	// AWS Pricing API. No ambient-credential fallback — must be set
+	// explicitly via --cost-compare-config or the cost-compare-config Secret.
+	AWSAccessKeyID     string
+	AWSSecretAccessKey string
 	// GCP Cloud Billing Catalog (env: YAGE_GCP_API_KEY / GOOGLE_BILLING_API_KEY).
 	GCPAPIKey string
 	// Hetzner Cloud (env: YAGE_HCLOUD_TOKEN / HCLOUD_TOKEN). Same token also
@@ -695,15 +701,13 @@ type Config struct {
 	// active --infra-provider; only the comparison view filters them.
 	// Env: YAGE_SKIP_PROVIDERS.
 	SkipProviders               string
-	// AllowedProviders is the inverse of SkipProviders: a strict
-	// allowlist for the cost-compare table. When non-empty, only
-	// these registry names appear, and any others are silently
-	// dropped. Composes with SkipProviders (allowlist applies first;
-	// SkipProviders subtracts from the result). Useful when the
-	// operator already knows the short list of clouds they're
-	// evaluating ("just compare aws and hetzner for me"). Env:
-	// YAGE_ALLOWED_PROVIDERS.
-	AllowedProviders            string
+	// CostCompareEnabled, when true, enables live cost-estimation API
+	// calls in --xapiri and --cost-compare. Set by the presence of the
+	// yage-system/cost-compare-config Secret (loaded at xapiri startup)
+	// or by the --cost-compare-config flag (which also triggers the
+	// credential-setup step). When false, all live pricing calls are
+	// suppressed and the dashboard right panel shows a placeholder.
+	CostCompareEnabled          bool
 	// UseManagedPostgres controls whether the cluster relies on the
 	// vendor's SaaS Postgres (RDS / Aurora / Cloud SQL / Azure DB for
 	// PG / DO Managed DB / Linode Managed DB / OCI DB for PG / IBM
@@ -1585,7 +1589,7 @@ func Load() *Config {
 	c.Pivot.VerifyTimeout = getenv("PIVOT_VERIFY_TIMEOUT", "10m")
 	c.Pivot.StopBeforeWorkload = envBool("YAGE_STOP_BEFORE_WORKLOAD", false)
 	c.SkipProviders = getenv("YAGE_SKIP_PROVIDERS", "")
-	c.AllowedProviders = getenv("YAGE_ALLOWED_PROVIDERS", "")
+	c.CostCompareEnabled = envBool("YAGE_COST_COMPARE_CONFIG", false)
 	c.UseManagedPostgres = envBool("YAGE_USE_MANAGED_POSTGRES", true)
 	c.PostgresCPUMillicoresOverride = int(envFloat("YAGE_POSTGRES_CPU_MILLICORES", 0))
 	c.PostgresMemoryMiBOverride = int(envFloat("YAGE_POSTGRES_MEMORY_MIB", 0))

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/cost"
 	"github.com/lpasquali/yage/internal/pricing"
 	"github.com/lpasquali/yage/internal/provider"
 )
@@ -133,6 +134,12 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	items, err = addHetznerOverhead(items, cfg, region)
 	if err != nil {
 		return provider.CostEstimate{}, fmt.Errorf("%w: hetzner overhead: %v", provider.ErrNotApplicable, err)
+	}
+
+	for _, svc := range []cost.ManagedService{cost.MSMessageQueue, cost.MSObjectStore, cost.MSCache} {
+		if item, fired, _ := cost.AddonCostItem(cfg, "hetzner", region, svc); fired {
+			items = append(items, item)
+		}
 	}
 
 	// Grand total.

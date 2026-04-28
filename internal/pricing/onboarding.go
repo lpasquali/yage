@@ -30,34 +30,21 @@ import (
 // PricingCredsConfigured returns true when the program has what it
 // needs to call the *authenticated* pricing path for vendor.
 //
-//   aws          → ~/.aws/credentials, AWS_ACCESS_KEY_ID, AWS_PROFILE
-//                  (Bulk JSON works without creds; this checks the
-//                   SDK path that GetProducts will switch to.)
+//   aws          → creds.AWSAccessKeyID + creds.AWSSecretAccessKey (set via
+//                  pricing.SetCredentials). No ambient-credential fallback —
+//                  AWS_ACCESS_KEY_ID / AWS_PROFILE are intentionally ignored
+//                  to avoid shell-credential bleed.
 //   azure        → always true (Retail Prices API is anonymous)
-//   gcp          → YAGE_GCP_API_KEY / GOOGLE_BILLING_API_KEY
-//   hetzner      → HCLOUD_TOKEN / YAGE_HCLOUD_TOKEN
-//   digitalocean → DIGITALOCEAN_TOKEN / YAGE_DO_TOKEN
+//   gcp          → YAGE_GCP_API_KEY / GOOGLE_BILLING_API_KEY / creds.GCPAPIKey
+//   hetzner      → HCLOUD_TOKEN / YAGE_HCLOUD_TOKEN / creds.HetznerToken
+//   digitalocean → DIGITALOCEAN_TOKEN / YAGE_DO_TOKEN / creds.DigitalOceanToken
 //   linode       → always true (catalog is anonymous)
 //   oci          → always true (Cost Estimator JSON is anonymous)
-//   ibmcloud     → IBMCLOUD_API_KEY / YAGE_IBMCLOUD_API_KEY
+//   ibmcloud     → IBMCLOUD_API_KEY / YAGE_IBMCLOUD_API_KEY / creds.IBMCloudAPIKey
 func PricingCredsConfigured(vendor string) bool {
 	switch vendor {
 	case "aws":
-		if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
-			return true
-		}
-		if os.Getenv("AWS_PROFILE") != "" {
-			return true
-		}
-		home, err := os.UserHomeDir()
-		if err == nil {
-			for _, p := range []string{".aws/credentials", ".aws/config"} {
-				if _, e := os.Stat(filepath.Join(home, p)); e == nil {
-					return true
-				}
-			}
-		}
-		return false
+		return creds.AWSAccessKeyID != "" && creds.AWSSecretAccessKey != ""
 	case "azure", "linode", "oci":
 		return true
 	case "gcp":

@@ -221,7 +221,7 @@ func (r *renderer) cost(cfg *config.Config) {
 	r.flag("--data-center-location", cfg.Cost.Currency.DataCenterLocation)
 	r.flagBool("--cost-compare", cfg.CostCompare)
 	r.flagFloat("--budget-usd-month", cfg.BudgetUSDMonth)
-	r.flag("--allowed-providers", cfg.AllowedProviders)
+	r.flagBool("--cost-compare-config", cfg.CostCompareEnabled)
 	r.flag("--skip-providers", cfg.SkipProviders)
 	if !cfg.UseManagedPostgres {
 		r.lines = append(r.lines, "    --no-managed-postgres")

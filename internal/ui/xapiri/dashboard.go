@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"runtime/debug"
@@ -43,6 +44,7 @@ import (
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/cost"
+	"github.com/lpasquali/yage/internal/obs"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/pricing"
 )
@@ -361,9 +363,10 @@ type dashModel struct {
 
 func newDashModel(cfg *config.Config, s *state) dashModel {
 	m := dashModel{
-		cfg:   cfg,
-		s:     s,
-		focus: focKindName,
+		cfg:         cfg,
+		s:           s,
+		focus:       focKindName,
+		costLoading: cfg.CostCompareEnabled, // show "fetching…" from the first frame
 	}
 
 	// Build text inputs.
@@ -646,6 +649,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorResourcesMsg:
 		m.editorLoading = false
 		if msg.err != nil {
+			obs.Global().Error("editor: list resources", msg.err)
 			m.editorErr = msg.err.Error()
 		} else {
 			m.editorItems = msg.items
@@ -657,6 +661,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorSaveMsg:
 		m.editorSaving = false
 		if msg.err != nil {
+			obs.Global().Error("editor: save resource", msg.err)
 			m.editorErr = "save failed: " + msg.err.Error()
 		} else {
 			m.editorErr = ""
@@ -706,10 +711,16 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.saveKindLoading = false
 		m.saveKindDone = true
 		m.saveKindErr = msg.err
+		if msg.err != nil {
+			obs.Global().Error("save to kind", msg.err)
+		} else {
+			obs.Global().Info("saved config to kind", slog.String("cluster", m.cfg.KindClusterName))
+		}
 		return m, nil
 
 	case saveCostCredsMsg:
 		if msg.err != nil {
+			obs.Global().Error("save cost credentials to kind", msg.err)
 			m.costCredsStatus = "warning: could not save to kind: " + msg.err.Error()
 		} else {
 			m.costCredsStatus = "saved"
@@ -1152,7 +1163,9 @@ func (m dashModel) loadEditorResourcesCmd() tea.Cmd {
 		kctx := "kind-" + cfg.KindClusterName
 		cli, err := k8sclient.ForContext(kctx)
 		if err != nil {
-			return editorResourcesMsg{err: fmt.Errorf("connect to %s: %w", kctx, err)}
+			e := fmt.Errorf("connect to %s: %w", kctx, err)
+			obs.Global().Error("editor: kind connect", e)
+			return editorResourcesMsg{err: e}
 		}
 		bg := context.Background()
 		var items []editorResource
@@ -1685,6 +1698,20 @@ func (m dashModel) kickRefreshCmd() tea.Cmd {
 			IBMCloudAPIKey:     c.IBMCloudAPIKey,
 		})
 		rows := cost.CompareWithFilter(&snap, cost.ScopeCloudOnly, nil)
+		log := obs.Global()
+		ok := 0
+		for _, r := range rows {
+			if r.Err != nil {
+				log.Error("cost fetch", r.Err, slog.String("provider", r.ProviderName))
+			} else {
+				ok++
+			}
+		}
+		if len(rows) == 0 {
+			log.Error("cost fetch", fmt.Errorf("no providers matched (InfraProvider filter or airgap)"))
+		} else {
+			log.Info("cost fetch complete", slog.Int("ok", ok), slog.Int("total", len(rows)))
+		}
 		return costMsg{rows: rows}
 	}
 }
@@ -1795,6 +1822,13 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 	snap.WorkerMachineCount = strconv.Itoa(w)
 
 	syncWorkloadShapeToCfg(&snap, wl, resil, env, fork)
+
+	// The dashboard always compares all cloud providers — clearing
+	// InfraProvider prevents CompareWithFilter from narrowing to a single
+	// provider (which would produce zero rows when that provider is on-prem).
+	snap.InfraProvider = ""
+	snap.InfraProviderDefaulted = true
+
 	return snap
 }
 

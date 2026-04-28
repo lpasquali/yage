@@ -192,7 +192,7 @@ func (s *state) promptFloat(label string, cur float64) float64 {
 		}
 		f, err := strconv.ParseFloat(v, 64)
 		if err != nil || f < 0 {
-			s.r.info("    not a non-negative number; try again.")
+			s.r.errLine("not a non-negative number; try again.")
 			continue
 		}
 		return f

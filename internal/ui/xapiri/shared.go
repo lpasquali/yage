@@ -56,7 +56,7 @@ func (s *state) stepKubernetesVersion() error {
 			v = cur
 		}
 		if !semverRE.MatchString(v) {
-			fmt.Fprintf(s.w, "    not a valid version (expected vMAJOR.MINOR.PATCH, e.g. v1.35.0); try again.\n")
+			s.r.errLine("not a valid version (expected vMAJOR.MINOR.PATCH, e.g. v1.35.0); try again.")
 			continue
 		}
 		s.cfg.WorkloadKubernetesVersion = v

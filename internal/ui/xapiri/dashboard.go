@@ -606,6 +606,13 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.termPTY.Close()
 			m.termPTY = nil
 		}
+		if m.termCmd != nil {
+			cmd := m.termCmd
+			m.termCmd = nil
+			go func(cmd *exec.Cmd) {
+				_ = cmd.Wait()
+			}(cmd)
+		}
 		return m, nil
 
 	case saveKindMsg:

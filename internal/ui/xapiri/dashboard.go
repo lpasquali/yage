@@ -814,6 +814,7 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 	wl.HasQueue = m.toggles[toiQueue]
 	wl.HasObjStore = m.toggles[toiObjStore]
 	wl.HasCache = m.toggles[toiCache]
+	snap.Capacity.AllowOvercommit = m.toggles[toiOvercommit]
 
 	if apps := parseAppBuckets(m.textInputs[tiApps].Value()); len(apps) > 0 {
 		wl.Apps = apps

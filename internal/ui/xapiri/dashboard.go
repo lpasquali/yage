@@ -626,8 +626,8 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		key := msg.Type
 		keyStr := msg.String()
 
-		// ── Ctrl+S: always saves and quits ──
-		if key == tea.KeyCtrlS {
+		// ── Ctrl+S: global save+quit, except when the Costs tab handles it ──
+		if key == tea.KeyCtrlS && m.activeTab != tabCosts {
 			m.done = true
 			return m, tea.Quit
 		}

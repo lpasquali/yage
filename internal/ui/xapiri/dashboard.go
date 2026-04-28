@@ -352,6 +352,7 @@ type dashModel struct {
 	termCmd     *exec.Cmd
 	termRunning bool
 	termFocused bool
+	termH       int    // total pane height (border+title+content); ctrl+↑/↓ to resize
 	termRaw     []byte // raw PTY output ring buffer (last 64 KB)
 
 	width, height int
@@ -367,6 +368,7 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 		s:           s,
 		focus:       focKindName,
 		costLoading: cfg.CostCompareEnabled, // show "fetching…" from the first frame
+		termH:       termPaneHDefault,
 	}
 
 	// Build text inputs.
@@ -597,7 +599,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		if m.termRunning && m.termPTY != nil {
 			_ = pty.Setsize(m.termPTY, &pty.Winsize{
-				Rows: uint16(termPaneH - 2),
+				Rows: uint16(m.termH - 2),
 				Cols: uint16(msg.Width),
 			})
 		}
@@ -822,7 +824,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cols = 80
 			}
 			f, err := pty.StartWithSize(cmd, &pty.Winsize{
-				Rows: uint16(termPaneH - 2),
+				Rows: uint16(m.termH - 2),
 				Cols: cols,
 			})
 			if err != nil {
@@ -841,6 +843,37 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return nil
 				},
 			)
+		}
+
+		// ── Ctrl+↑/↓: resize terminal pane (works focused or not) ──
+		if m.termRunning && (key == tea.KeyCtrlUp || key == tea.KeyCtrlDown) {
+			prev := m.termH
+			if key == tea.KeyCtrlUp {
+				m.termH--
+			} else {
+				m.termH++
+			}
+			if m.termH < termPaneHMin {
+				m.termH = termPaneHMin
+			}
+			maxH := m.height / 2
+			if maxH < termPaneHMin {
+				maxH = termPaneHMin
+			}
+			if m.termH > maxH {
+				m.termH = maxH
+			}
+			if m.termH != prev && m.termPTY != nil {
+				cols := uint16(m.width)
+				if cols == 0 {
+					cols = 80
+				}
+				_ = pty.Setsize(m.termPTY, &pty.Winsize{
+					Rows: uint16(m.termH - 2),
+					Cols: cols,
+				})
+			}
+			return m, nil
 		}
 
 		// ── terminal focus: route all keys to PTY ──
@@ -1471,7 +1504,9 @@ func (m *dashModel) markDirty() tea.Cmd {
 
 // ─── embedded terminal helpers ───────────────────────────────────────────────
 
-const termPaneH = 12 // total pane height (border + title + content rows)
+const termPaneHDefault = 12 // initial terminal pane height; user can resize with ctrl+↑/↓
+const termPaneHMin = 4
+const termPaneHMax = 60
 
 // watchPTYCmd reads one chunk from the PTY master fd and returns a ptyOutputMsg.
 // Re-scheduled after every ptyOutputMsg while termRunning is true.
@@ -1661,19 +1696,19 @@ func (m dashModel) renderTermPane(w int) string {
 	sep := stMuted.Render(strings.Repeat("─", w))
 	if m.termFocused {
 		lines = append(lines, sep)
-		lines = append(lines, stAccent.Render("▸ Terminal")+stMuted.Render("  esc=unfocus  ctrl+t=unfocus"))
+		lines = append(lines, stAccent.Render("▸ Terminal")+stMuted.Render("  esc=unfocus  ctrl+↑/↓=resize"))
 	} else {
 		lines = append(lines, sep)
-		lines = append(lines, stMuted.Render("  Terminal")+stMuted.Render("  ctrl+t=focus"))
+		lines = append(lines, stMuted.Render("  Terminal")+stMuted.Render("  ctrl+t=focus  ctrl+↑/↓=resize"))
 	}
-	contentH := termPaneH - 2
+	contentH := m.termH - 2
 	for _, l := range m.termRawToLines(contentH) {
 		lines = append(lines, "  "+l)
 	}
-	for len(lines) < termPaneH {
+	for len(lines) < m.termH {
 		lines = append(lines, "")
 	}
-	return strings.Join(lines[:termPaneH], "\n")
+	return strings.Join(lines[:m.termH], "\n")
 }
 
 // kickRefreshCmd builds a cost compare against a snapshot cfg.

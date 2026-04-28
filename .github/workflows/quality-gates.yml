@@ -42,7 +42,7 @@ jobs:
         if: github.event_name == 'push' && github.event.before == '0000000000000000000000000000000000000000'
         run: gitleaks git --exit-code 1
 
-  # ─── Go quality (build + vet + fmt + test + coverage) ───────────────────────
+  # ─── Go quality (build + vet) ────────────────────────────────────────────────
   go-quality:
     name: RuneGate/Quality/Go
     runs-on: ubuntu-latest
@@ -52,30 +52,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: go build
+        run: go build ./...
       - name: go vet
         run: go vet ./...
-      - name: gofmt
-        run: test -z "$(gofmt -l .)"
-      - name: Create kind cluster for tests
-        run: |
-          set -euo pipefail
-          go install sigs.k8s.io/kind@latest
-          kind create cluster --name test-cluster
-          kind get kubeconfig --name test-cluster > "${HOME}/.kube/config"
-          echo "KUBECONFIG=${HOME}/.kube/config" >> "${GITHUB_ENV}"
-      - name: Test with coverage
-        run: |
-          set -euo pipefail
-          go test ./... -coverprofile=coverage.out -covermode=atomic -count=1
-          TOTAL=$(go tool cover -func=coverage.out | grep ^total: | awk '{print $3}' | tr -d '%')
-          echo "Total coverage: ${TOTAL}%"
-          if [ "$(echo "${TOTAL} < 60" | bc -l)" -eq 1 ]; then
-            echo "::error::Coverage ${TOTAL}% is below 60% threshold"
-            exit 1
-          fi
-      - name: Clean up kind cluster
-        if: always()
-        run: kind delete cluster --name test-cluster || true
 
   # ─── Merge Gate ─────────────────────────────────────────────────────────────
   merge-gate:

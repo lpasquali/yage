@@ -719,7 +719,14 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.termCmd = cmd
 			m.termRunning = true
 			m.termFocused = true
-			return m, m.watchPTYCmd()
+			return m, tea.Batch(
+				m.watchPTYCmd(),
+				func() tea.Msg {
+					_ = cmd.Wait()
+					_ = f.Close()
+					return nil
+				},
+			)
 		}
 
 		// ── terminal focus: route all keys to PTY ──

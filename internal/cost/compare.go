@@ -148,10 +148,11 @@ const (
 )
 
 // StreamWithFilter fans out provider cost fetches in parallel and sends each
-// CloudCost to ch as it completes, then closes ch. Callers should not read
-// ch on the same goroutine as the call — the function returns immediately
-// after launching the worker goroutines; ch is closed by an internal watcher
-// once all workers finish.
+// CloudCost to ch as it completes, then closes ch. The function returns
+// immediately after launching the worker goroutines, so callers may read from
+// ch on the same goroutine after the call returns. ch is closed by an
+// internal watcher once all workers finish; with an unbuffered channel, the
+// caller must ensure a receiver is available so worker sends can proceed.
 //
 // Progress is written before any goroutines launch (count header) and after
 // each result arrives (per-provider tick line).

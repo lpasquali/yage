@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"runtime/debug"
@@ -43,6 +44,7 @@ import (
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/cost"
+	"github.com/lpasquali/yage/internal/obs"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/pricing"
 )
@@ -258,6 +260,16 @@ type editorResourcesMsg struct {
 // editorSaveMsg is returned after a kind resource has been written back.
 type editorSaveMsg struct{ err error }
 
+// kindResourceReadyMsg is returned by openKindResourceEditorCmd after the
+// temp file has been written. Update() converts it into a tea.ExecProcess
+// command — the only correct way to hand off to an external process from
+// inside a goroutine (returning tea.ExecProcess directly from a Cmd goroutine
+// gives bubbletea a Cmd-as-Msg which it cannot execute).
+type kindResourceReadyMsg struct {
+	resource *editorResource
+	tempFile string
+}
+
 // editorResource describes a Secret or ConfigMap in the yage-system namespace.
 type editorResource struct {
 	Kind string // "Secret" or "ConfigMap"
@@ -339,6 +351,7 @@ type dashModel struct {
 	termCmd     *exec.Cmd
 	termRunning bool
 	termFocused bool
+	termH       int    // total pane height (border+title+content); ctrl+↑/↓ to resize
 	termRaw     []byte // raw PTY output ring buffer (last 64 KB)
 
 	width, height int
@@ -350,9 +363,11 @@ type dashModel struct {
 
 func newDashModel(cfg *config.Config, s *state) dashModel {
 	m := dashModel{
-		cfg:   cfg,
-		s:     s,
-		focus: focKindName,
+		cfg:         cfg,
+		s:           s,
+		focus:       focKindName,
+		costLoading: cfg.CostCompareEnabled, // show "fetching…" from the first frame
+		termH:       termPaneHDefault,
 	}
 
 	// Build text inputs.
@@ -583,7 +598,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		if m.termRunning && m.termPTY != nil {
 			_ = pty.Setsize(m.termPTY, &pty.Winsize{
-				Rows: uint16(termPaneH - 2),
+				Rows: uint16(m.termH - 2),
 				Cols: uint16(msg.Width),
 			})
 		}
@@ -635,6 +650,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorResourcesMsg:
 		m.editorLoading = false
 		if msg.err != nil {
+			obs.Global().Error("editor: list resources", msg.err)
 			m.editorErr = msg.err.Error()
 		} else {
 			m.editorItems = msg.items
@@ -646,6 +662,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorSaveMsg:
 		m.editorSaving = false
 		if msg.err != nil {
+			obs.Global().Error("editor: save resource", msg.err)
 			m.editorErr = "save failed: " + msg.err.Error()
 		} else {
 			m.editorErr = ""
@@ -654,6 +671,13 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadEditorResourcesCmd()
 		}
 		return m, nil
+
+	case kindResourceReadyMsg:
+		res := msg.resource
+		tmpFile := msg.tempFile
+		return m, tea.ExecProcess(exec.Command(resolveEditor(), tmpFile), func(err error) tea.Msg {
+			return editorFinishedMsg{err: err, resource: res, tempFile: tmpFile}
+		})
 
 	case ptyOutputMsg:
 		if len(msg.data) > 0 {
@@ -684,10 +708,16 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.saveKindLoading = false
 		m.saveKindDone = true
 		m.saveKindErr = msg.err
+		if msg.err != nil {
+			obs.Global().Error("save to kind", msg.err)
+		} else {
+			obs.Global().Info("saved config to kind", slog.String("cluster", m.cfg.KindClusterName))
+		}
 		return m, nil
 
 	case saveCostCredsMsg:
 		if msg.err != nil {
+			obs.Global().Error("save cost credentials to kind", msg.err)
 			m.costCredsStatus = "warning: could not save to kind: " + msg.err.Error()
 		} else {
 			m.costCredsStatus = "saved"
@@ -698,10 +728,19 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		key := msg.Type
 		keyStr := msg.String()
 
-		// ── Ctrl+S: global save+quit, except when the Costs tab handles it ──
+		// ── Ctrl+S: save config to kind without quitting ──
 		if key == tea.KeyCtrlS && m.activeTab != tabCosts {
-			m.done = true
-			return m, tea.Quit
+			if !m.saveKindLoading {
+				m.flushToCfg()
+				m.saveKindLoading = true
+				m.saveKindDone = false
+				m.saveKindErr = nil
+				cfg := m.cfg
+				return m, func() tea.Msg {
+					return saveKindMsg{err: kindsync.ApplyBootstrapConfigToManagementCluster(cfg)}
+				}
+			}
+			return m, nil
 		}
 
 		// ── Esc/q: quit, unless terminal is focused (Esc unfocuses instead) ──
@@ -780,7 +819,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cols = 80
 			}
 			f, err := pty.StartWithSize(cmd, &pty.Winsize{
-				Rows: uint16(termPaneH - 2),
+				Rows: uint16(m.termH - 2),
 				Cols: cols,
 			})
 			if err != nil {
@@ -799,6 +838,37 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return nil
 				},
 			)
+		}
+
+		// ── Ctrl+↑/↓: resize terminal pane (works focused or not) ──
+		if m.termRunning && (key == tea.KeyCtrlUp || key == tea.KeyCtrlDown) {
+			prev := m.termH
+			if key == tea.KeyCtrlUp {
+				m.termH--
+			} else {
+				m.termH++
+			}
+			if m.termH < termPaneHMin {
+				m.termH = termPaneHMin
+			}
+			maxH := m.height / 2
+			if maxH < termPaneHMin {
+				maxH = termPaneHMin
+			}
+			if m.termH > maxH {
+				m.termH = maxH
+			}
+			if m.termH != prev && m.termPTY != nil {
+				cols := uint16(m.width)
+				if cols == 0 {
+					cols = 80
+				}
+				_ = pty.Setsize(m.termPTY, &pty.Winsize{
+					Rows: uint16(m.termH - 2),
+					Cols: cols,
+				})
+			}
+			return m, nil
 		}
 
 		// ── terminal focus: route all keys to PTY ──
@@ -1121,7 +1191,9 @@ func (m dashModel) loadEditorResourcesCmd() tea.Cmd {
 		kctx := "kind-" + cfg.KindClusterName
 		cli, err := k8sclient.ForContext(kctx)
 		if err != nil {
-			return editorResourcesMsg{err: fmt.Errorf("connect to %s: %w", kctx, err)}
+			e := fmt.Errorf("connect to %s: %w", kctx, err)
+			obs.Global().Error("editor: kind connect", e)
+			return editorResourcesMsg{err: e}
 		}
 		bg := context.Background()
 		var items []editorResource
@@ -1222,12 +1294,8 @@ func (m dashModel) openKindResourceEditorCmd(res editorResource) tea.Cmd {
 		}
 		_ = tmp.Close()
 
-		cmd := exec.Command(resolveEditor(), tmp.Name())
 		resPtr := res
-		tmpName := tmp.Name()
-		return tea.ExecProcess(cmd, func(err error) tea.Msg {
-			return editorFinishedMsg{err: err, resource: &resPtr, tempFile: tmpName}
-		})
+		return kindResourceReadyMsg{resource: &resPtr, tempFile: tmp.Name()}
 	}
 }
 
@@ -1414,7 +1482,11 @@ func (m dashModel) openEditorCmd() tea.Cmd {
 	}
 	cmd := exec.Command(resolveEditor(), path)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return editorFinishedMsg{err: err}
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to launch editor %q for %q: %v\n", cmd.Path, path, err)
+			return nil
+		}
+		return editorFinishedMsg{}
 	})
 }
 
@@ -1431,7 +1503,8 @@ func (m *dashModel) markDirty() tea.Cmd {
 
 // ─── embedded terminal helpers ───────────────────────────────────────────────
 
-const termPaneH = 12 // total pane height (border + title + content rows)
+const termPaneHDefault = 12 // initial terminal pane height; user can resize with ctrl+↑/↓
+const termPaneHMin = 4
 
 // watchPTYCmd reads one chunk from the PTY master fd and returns a ptyOutputMsg.
 // Re-scheduled after every ptyOutputMsg while termRunning is true.
@@ -1491,6 +1564,8 @@ func keyMsgToBytes(msg tea.KeyMsg) []byte {
 		return []byte{'\x1b', '[', '5', '~'}
 	case tea.KeyPgDown:
 		return []byte{'\x1b', '[', '6', '~'}
+	case tea.KeySpace:
+		return []byte{' '}
 	case tea.KeyTab:
 		return []byte{'\t'}
 	case tea.KeyCtrlA:
@@ -1619,19 +1694,19 @@ func (m dashModel) renderTermPane(w int) string {
 	sep := stMuted.Render(strings.Repeat("─", w))
 	if m.termFocused {
 		lines = append(lines, sep)
-		lines = append(lines, stAccent.Render("▸ Terminal")+stMuted.Render("  esc=unfocus  ctrl+t=unfocus"))
+		lines = append(lines, stAccent.Render("▸ Terminal")+stMuted.Render("  esc=unfocus  ctrl+↑/↓=resize"))
 	} else {
 		lines = append(lines, sep)
-		lines = append(lines, stMuted.Render("  Terminal")+stMuted.Render("  ctrl+t=focus"))
+		lines = append(lines, stMuted.Render("  Terminal")+stMuted.Render("  ctrl+t=focus  ctrl+↑/↓=resize"))
 	}
-	contentH := termPaneH - 2
+	contentH := m.termH - 2
 	for _, l := range m.termRawToLines(contentH) {
 		lines = append(lines, "  "+l)
 	}
-	for len(lines) < termPaneH {
+	for len(lines) < m.termH {
 		lines = append(lines, "")
 	}
-	return strings.Join(lines[:termPaneH], "\n")
+	return strings.Join(lines[:m.termH], "\n")
 }
 
 // kickRefreshCmd builds a cost compare against a snapshot cfg.
@@ -1641,8 +1716,35 @@ func (m dashModel) kickRefreshCmd() tea.Cmd {
 		return nil
 	}
 	snap := m.buildSnapshotCfg()
+	// Capture credentials at dispatch time: pricing.SetCredentials is a
+	// process-global set by main.go before kind is connected, so it does
+	// not include credentials loaded later from the cost-compare-config
+	// Secret. Sync here to ensure every fetch uses the current values.
+	c := m.cfg.Cost.Credentials
 	return func() tea.Msg {
+		pricing.SetCredentials(pricing.Credentials{
+			AWSAccessKeyID:     c.AWSAccessKeyID,
+			AWSSecretAccessKey: c.AWSSecretAccessKey,
+			GCPAPIKey:          c.GCPAPIKey,
+			HetznerToken:       c.HetznerToken,
+			DigitalOceanToken:  c.DigitalOceanToken,
+			IBMCloudAPIKey:     c.IBMCloudAPIKey,
+		})
 		rows := cost.CompareWithFilter(&snap, cost.ScopeCloudOnly, nil)
+		log := obs.Global()
+		ok := 0
+		for _, r := range rows {
+			if r.Err != nil {
+				log.Error("cost fetch", r.Err, slog.String("provider", r.ProviderName))
+			} else {
+				ok++
+			}
+		}
+		if len(rows) == 0 {
+			log.Error("cost fetch", fmt.Errorf("no providers matched (InfraProvider filter or airgap)"))
+		} else {
+			log.Info("cost fetch complete", slog.Int("ok", ok), slog.Int("total", len(rows)))
+		}
 		return costMsg{rows: rows}
 	}
 }
@@ -1753,6 +1855,13 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 	snap.WorkerMachineCount = strconv.Itoa(w)
 
 	syncWorkloadShapeToCfg(&snap, wl, resil, env, fork)
+
+	// The dashboard always compares all cloud providers — clearing
+	// InfraProvider prevents CompareWithFilter from narrowing to a single
+	// provider (which would produce zero rows when that provider is on-prem).
+	snap.InfraProvider = ""
+	snap.InfraProviderDefaulted = true
+
 	return snap
 }
 
@@ -2012,21 +2121,27 @@ func (m dashModel) renderConfigTab(w, h int) string {
 	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
-// resolveEditor returns the editor to launch for in-place editing.
+// resolveEditor returns the editor binary to use for in-place editing.
 // Priority: $VISUAL → $EDITOR → first hit in editorFallbacks (OS-specific).
-// It never returns an empty string.
+// Env-var values and fallback candidates are probed with exec.LookPath
+// where possible. If none are found, it returns a conventional fallback
+// name for exec to report on, so it never returns an empty string.
 func resolveEditor() string {
 	for _, env := range []string{"VISUAL", "EDITOR"} {
 		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
-			return v
+			if p, err := exec.LookPath(v); err == nil {
+				return p
+			}
+			// Env var set but binary not in PATH — fall through to probe list.
 		}
 	}
 	for _, candidate := range editorFallbacks {
-		if _, err := exec.LookPath(candidate); err == nil {
-			return candidate
+		if p, err := exec.LookPath(candidate); err == nil {
+			return p
 		}
 	}
-	// editorFallbacks must always contain at least one entry, but be safe.
+	// Last resort: return the final fallback name even if not found —
+	// exec will produce a clear error message to the user.
 	if len(editorFallbacks) > 0 {
 		return editorFallbacks[len(editorFallbacks)-1]
 	}
@@ -2471,20 +2586,10 @@ func (m dashModel) renderAboutTab(w, h int) string {
 // ─── deploy tab ──────────────────────────────────────────────────────────────
 
 func (m dashModel) renderDeployTab(w, h int) string {
-	leftW := w * 40 / 100
-	rightW := w - leftW - 1
-	if leftW < 20 {
-		leftW = 20
-	}
-	if rightW < 20 {
-		rightW = 20
-	}
-
-	// Left: action buttons + status.
-	var leftLines []string
-	leftLines = append(leftLines, stHdr.Render(" Actions"))
-	leftLines = append(leftLines, stMuted.Render(strings.Repeat("─", leftW)))
-	leftLines = append(leftLines, "")
+	var lines []string
+	lines = append(lines, stHdr.Render(" Actions"))
+	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
+	lines = append(lines, "")
 
 	btnSave := "[Save to Kind]"
 	btnDeploy := "[Start Deploy]"
@@ -2495,10 +2600,10 @@ func (m dashModel) renderDeployTab(w, h int) string {
 		btnSave = stMuted.Render("  " + btnSave)
 		btnDeploy = stAccent.Render("▸ " + btnDeploy)
 	}
-	leftLines = append(leftLines, btnSave)
-	leftLines = append(leftLines, "")
-	leftLines = append(leftLines, btnDeploy)
-	leftLines = append(leftLines, "")
+	lines = append(lines, btnSave)
+	lines = append(lines, "")
+	lines = append(lines, btnDeploy)
+	lines = append(lines, "")
 
 	var statusLine string
 	switch {
@@ -2511,77 +2616,12 @@ func (m dashModel) renderDeployTab(w, h int) string {
 	default:
 		statusLine = stMuted.Render("  ● Ready")
 	}
-	leftLines = append(leftLines, "Status: "+statusLine)
+	lines = append(lines, "Status: "+statusLine)
 
-	// Right: cost preview.
-	var rightLines []string
-	rightLines = append(rightLines, stHdr.Render(" Live Cost Preview"))
-	rightLines = append(rightLines, stMuted.Render(strings.Repeat("─", rightW)))
-	rightLines = append(rightLines, "")
-
-	if !m.cfg.CostCompareEnabled {
-		rightLines = append(rightLines, stMuted.Render("  enter credentials in [costs] tab"))
-	} else if len(m.costRows) == 0 {
-		if m.costLoading {
-			rightLines = append(rightLines, stMuted.Render("  fetching…"))
-		} else {
-			rightLines = append(rightLines, stMuted.Render("  no cost data"))
-		}
-	} else {
-		hdr := fmt.Sprintf("  %-14s  %s", "Provider", "$/mo")
-		rightLines = append(rightLines, stHdr.Render(hdr))
-		rightLines = append(rightLines, stMuted.Render("  "+strings.Repeat("─", 22)))
-		sorted := m.sortedCostRows()
-		cheapest := 0.0
-		for _, r := range sorted {
-			if r.Err == nil {
-				cheapest = r.Estimate.TotalUSDMonthly
-				break
-			}
-		}
-		for _, r := range sorted {
-			if r.Err != nil {
-				rightLines = append(rightLines, stMuted.Render(fmt.Sprintf("  %-14s  n/a", r.ProviderName)))
-				continue
-			}
-			total := r.Estimate.TotalUSDMonthly
-			var style lipgloss.Style
-			switch {
-			case m.cfg.BudgetUSDMonth > 0 && total > m.cfg.BudgetUSDMonth:
-				style = stBad
-			case cheapest > 0 && total <= cheapest:
-				style = stOK
-			default:
-				style = lipgloss.NewStyle()
-			}
-			rightLines = append(rightLines, style.Render(fmt.Sprintf("  %-14s  $%.2f", r.ProviderName, total)))
-		}
+	for len(lines) < h {
+		lines = append(lines, "")
 	}
-
-	// Merge into columns.
-	maxRows := h
-	if len(leftLines) > maxRows {
-		maxRows = len(leftLines)
-	}
-	if len(rightLines) > maxRows {
-		maxRows = len(rightLines)
-	}
-	for len(leftLines) < maxRows {
-		leftLines = append(leftLines, "")
-	}
-	for len(rightLines) < maxRows {
-		rightLines = append(rightLines, "")
-	}
-
-	var out []string
-	for i := 0; i < maxRows && i < h; i++ {
-		l := fmt.Sprintf("%-*s", leftW, leftLines[i])
-		out = append(out, l+"│"+rightLines[i])
-	}
-	for len(out) < h {
-		out = append(out, "")
-	}
-	return strings.Join(out[:min(len(out), h)], "\n")
+	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
 // sortedCostRows returns the cost rows sorted cheapest-first (errors last).

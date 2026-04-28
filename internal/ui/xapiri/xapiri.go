@@ -199,24 +199,14 @@ func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
 	if s.fork == forkOnPrem {
 		return s.runOnPremFork()
 	}
-	if res.deployRequested {
-		// User pressed Start Deploy — proceed directly to the orchestrator.
-		if err := s.runSharedTail(); err != nil {
-			return s.exit(err)
-		}
+	if !res.deployRequested {
+		// User saved config but did not press Start Deploy — exit cleanly.
 		return 0
 	}
-	for {
-		err := s.step5_cloud_costCompare()
-		if err == nil {
-			break
-		}
-		if err == ErrUserExit {
-			return 0
-		}
-		fmt.Fprintf(w, "xapiri: cost-compare blocked: %v\n", err)
-		return 1
+	if strings.TrimSpace(cfg.InfraProvider) == "" {
+		return s.exit(fmt.Errorf("xapiri: no infrastructure provider selected for cloud deployment; choose a provider before continuing"))
 	}
+	// User pressed Start Deploy — proceed directly to the orchestrator.
 	if err := s.runSharedTail(); err != nil {
 		return s.exit(err)
 	}

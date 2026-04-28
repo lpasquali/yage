@@ -93,12 +93,24 @@ const (
 	tiDNSServers
 	tiMgmtCPEndpointIP   // mgmt control-plane VIP (on-prem)
 	tiMgmtNodeIPRanges   // mgmt node IP ranges (on-prem)
-	tiProxmoxDefaultTmpl // Proxmox default VM template ID
-	tiProxmoxWLCPTmpl    // Proxmox workload control-plane template ID
-	tiProxmoxWLWorkerTmpl // Proxmox workload worker template ID
-	tiProxmoxMgmtCPTmpl  // Proxmox mgmt control-plane template ID
-	tiProxmoxMgmtWorkerTmpl // Proxmox mgmt worker template ID
-	tiArgoURL            // AppOfApps git URL
+	tiProxmoxDefaultTmpl    // Proxmox default VM template ID
+	tiProxmoxWLCPTmpl       // Proxmox workload control-plane template ID
+	tiProxmoxWLCPCores      // Proxmox workload CP CPU cores
+	tiProxmoxWLCPMemMiB     // Proxmox workload CP memory MiB
+	tiProxmoxWLCPDiskGB     // Proxmox workload CP boot disk GB
+	tiProxmoxWLWorkerTmpl   // Proxmox workload worker template ID
+	tiProxmoxWLWorkerCores  // Proxmox workload worker CPU cores
+	tiProxmoxWLWorkerMemMiB // Proxmox workload worker memory MiB
+	tiProxmoxWLWorkerDiskGB // Proxmox workload worker boot disk GB
+	tiProxmoxMgmtCPTmpl     // Proxmox mgmt control-plane template ID
+	tiProxmoxMgmtCPCores    // Proxmox mgmt CP CPU cores
+	tiProxmoxMgmtCPMemMiB   // Proxmox mgmt CP memory MiB
+	tiProxmoxMgmtCPDiskGB   // Proxmox mgmt CP boot disk GB
+	tiProxmoxMgmtWorkerTmpl    // Proxmox mgmt worker template ID
+	tiProxmoxMgmtWorkerCores   // Proxmox mgmt worker CPU cores
+	tiProxmoxMgmtWorkerMemMiB  // Proxmox mgmt worker memory MiB
+	tiProxmoxMgmtWorkerDiskGB  // Proxmox mgmt worker boot disk GB
+	tiArgoURL               // AppOfApps git URL
 	tiArgoPath      // AppOfApps git path
 	tiArgoRef       // AppOfApps git ref
 	tiImgMirror     // image registry mirror
@@ -175,42 +187,54 @@ const (
 	focOvercommit             // 22
 	focProxmoxDefaultTmpl    // 23 — Proxmox default VM template ID
 	focProxmoxWLCPTmpl       // 24 — Proxmox workload CP template ID
-	focProxmoxWLWorkerTmpl   // 25 — Proxmox workload worker template ID
-	focProxmoxMgmtCPTmpl     // 26 — Proxmox mgmt CP template ID
-	focProxmoxMgmtWorkerTmpl // 27 — Proxmox mgmt worker template ID
-	focCPEndpointIP          // 28
-	focNodeIPRanges           // 29
-	focGateway                // 30
-	focIPPrefix               // 31
-	focDNSServers             // 32
-	focMgmtCPEndpointIP      // 33 — on-prem mgmt cluster VIP
-	focMgmtNodeIPRanges      // 34 — on-prem mgmt node IP ranges
-	focArgoURL                // 35
-	focArgoPath               // 36
-	focArgoRef                // 37
-	focAirgapped              // 38
-	focImgMirror              // 39
-	focCABundle               // 40
-	focHelmMirror             // 41
-	focKyverno                // 42
-	focCertMgr                // 43
-	focCNPG                   // 44
-	focCrossplane             // 45
-	focExtSecrets             // 46
-	focOTEL                   // 47
-	focGrafana                // 48
-	focVictoria               // 49
-	focMetrics                // 50
-	focSPIRE                  // 51
-	focDCLoc                  // 52
-	focBudget                 // 53
-	focHeadroom               // 54
-	focTCO                    // 55 — TCO toggle (on-prem only)
-	focHWCost                 // 56
-	focHWWatts                // 57
-	focHWKWH                  // 58
-	focHWSupport              // 59
-	focCount                  // 60 — must be last
+	focProxmoxWLCPCores      // 25
+	focProxmoxWLCPMemMiB     // 26
+	focProxmoxWLCPDiskGB     // 27
+	focProxmoxWLWorkerTmpl   // 28 — Proxmox workload worker template ID
+	focProxmoxWLWorkerCores  // 29
+	focProxmoxWLWorkerMemMiB // 30
+	focProxmoxWLWorkerDiskGB // 31
+	focProxmoxMgmtCPTmpl     // 32 — Proxmox mgmt CP template ID
+	focProxmoxMgmtCPCores    // 33
+	focProxmoxMgmtCPMemMiB   // 34
+	focProxmoxMgmtCPDiskGB   // 35
+	focProxmoxMgmtWorkerTmpl    // 36 — Proxmox mgmt worker template ID
+	focProxmoxMgmtWorkerCores   // 37
+	focProxmoxMgmtWorkerMemMiB  // 38
+	focProxmoxMgmtWorkerDiskGB  // 39
+	focCPEndpointIP             // 40
+	focNodeIPRanges             // 41
+	focGateway                  // 42
+	focIPPrefix                 // 43
+	focDNSServers               // 44
+	focMgmtCPEndpointIP         // 45 — on-prem mgmt cluster VIP
+	focMgmtNodeIPRanges         // 46 — on-prem mgmt node IP ranges
+	focArgoURL                  // 47
+	focArgoPath                 // 48
+	focArgoRef                  // 49
+	focAirgapped                // 50
+	focImgMirror                // 51
+	focCABundle                 // 52
+	focHelmMirror               // 53
+	focKyverno                  // 54
+	focCertMgr                  // 55
+	focCNPG                     // 56
+	focCrossplane               // 57
+	focExtSecrets               // 58
+	focOTEL                     // 59
+	focGrafana                  // 60
+	focVictoria                 // 61
+	focMetrics                  // 62
+	focSPIRE                    // 63
+	focDCLoc                    // 64
+	focBudget                   // 65
+	focHeadroom                 // 66
+	focTCO                      // 67 — TCO toggle (on-prem only)
+	focHWCost                   // 68
+	focHWWatts                  // 69
+	focHWKWH                    // 70
+	focHWSupport                // 71
+	focCount                    // 72 — must be last
 )
 
 // ─── per-field metadata ───────────────────────────────────────────────────────
@@ -262,13 +286,25 @@ var dashFields = []fieldMeta{
 	// ── Bootstrap (on-prem only) ─────────────────────────────────────────── fid 21-22
 	{fkSelect, siBootstrap, "bootstrap mode", "Bootstrap", false},
 	{fkToggle, toiOvercommit, "allow overcommit", "", false},
-	// ── Proxmox Templates (proxmox only) ─────────────────────────────────── fid 23-27
-	{fkText, tiProxmoxDefaultTmpl, "default tmpl ID", "Proxmox Templates", false},
-	{fkText, tiProxmoxWLCPTmpl, "  wl CP tmpl ID", "", false},
-	{fkText, tiProxmoxWLWorkerTmpl, "  wl worker tmpl ID", "", false},
-	{fkText, tiProxmoxMgmtCPTmpl, "  mgmt CP tmpl ID", "", false},
-	{fkText, tiProxmoxMgmtWorkerTmpl, "  mgmt worker tmpl ID", "", false},
-	// ── Workload Network (on-prem only) ──────────────────────────────────── fid 28-32
+	// ── Proxmox Config (proxmox only) ────────────────────────────────────── fid 23-39
+	{fkText, tiProxmoxDefaultTmpl, "default tmpl ID", "Proxmox Config", false},
+	{fkText, tiProxmoxWLCPTmpl, "wl CP tmpl ID", "", false},
+	{fkText, tiProxmoxWLCPCores, "  cores", "", false},
+	{fkText, tiProxmoxWLCPMemMiB, "  mem MiB", "", false},
+	{fkText, tiProxmoxWLCPDiskGB, "  disk GB", "", false},
+	{fkText, tiProxmoxWLWorkerTmpl, "wl worker tmpl ID", "", false},
+	{fkText, tiProxmoxWLWorkerCores, "  cores", "", false},
+	{fkText, tiProxmoxWLWorkerMemMiB, "  mem MiB", "", false},
+	{fkText, tiProxmoxWLWorkerDiskGB, "  disk GB", "", false},
+	{fkText, tiProxmoxMgmtCPTmpl, "mgmt CP tmpl ID", "", false},
+	{fkText, tiProxmoxMgmtCPCores, "  cores", "", false},
+	{fkText, tiProxmoxMgmtCPMemMiB, "  mem MiB", "", false},
+	{fkText, tiProxmoxMgmtCPDiskGB, "  disk GB", "", false},
+	{fkText, tiProxmoxMgmtWorkerTmpl, "mgmt worker tmpl ID", "", false},
+	{fkText, tiProxmoxMgmtWorkerCores, "  cores", "", false},
+	{fkText, tiProxmoxMgmtWorkerMemMiB, "  mem MiB", "", false},
+	{fkText, tiProxmoxMgmtWorkerDiskGB, "  disk GB", "", false},
+	// ── Workload Network (on-prem only) ──────────────────────────────────── fid 40-44
 	{fkText, tiCPEndpointIP, "CP endpoint IP", "Workload Network", false},
 	{fkText, tiNodeIPRanges, "node IP ranges", "", false},
 	{fkText, tiGateway, "gateway", "", false},
@@ -569,9 +605,21 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.textInputs[tiMgmtNodeIPRanges].SetValue(cfg.Mgmt.NodeIPRanges)
 	m.textInputs[tiProxmoxDefaultTmpl].SetValue(cfg.Providers.Proxmox.TemplateID)
 	m.textInputs[tiProxmoxWLCPTmpl].SetValue(cfg.WorkloadControlPlaneTemplateID)
+	m.textInputs[tiProxmoxWLCPCores].SetValue(cfg.Providers.Proxmox.ControlPlaneNumCores)
+	m.textInputs[tiProxmoxWLCPMemMiB].SetValue(cfg.Providers.Proxmox.ControlPlaneMemoryMiB)
+	m.textInputs[tiProxmoxWLCPDiskGB].SetValue(cfg.Providers.Proxmox.ControlPlaneBootVolumeSize)
 	m.textInputs[tiProxmoxWLWorkerTmpl].SetValue(cfg.WorkloadWorkerTemplateID)
+	m.textInputs[tiProxmoxWLWorkerCores].SetValue(cfg.Providers.Proxmox.WorkerNumCores)
+	m.textInputs[tiProxmoxWLWorkerMemMiB].SetValue(cfg.Providers.Proxmox.WorkerMemoryMiB)
+	m.textInputs[tiProxmoxWLWorkerDiskGB].SetValue(cfg.Providers.Proxmox.WorkerBootVolumeSize)
 	m.textInputs[tiProxmoxMgmtCPTmpl].SetValue(cfg.Providers.Proxmox.Mgmt.ControlPlaneTemplateID)
+	m.textInputs[tiProxmoxMgmtCPCores].SetValue(cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores)
+	m.textInputs[tiProxmoxMgmtCPMemMiB].SetValue(cfg.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB)
+	m.textInputs[tiProxmoxMgmtCPDiskGB].SetValue(cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize)
 	m.textInputs[tiProxmoxMgmtWorkerTmpl].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerTemplateID)
+	m.textInputs[tiProxmoxMgmtWorkerCores].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerNumCores)
+	m.textInputs[tiProxmoxMgmtWorkerMemMiB].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerMemoryMiB)
+	m.textInputs[tiProxmoxMgmtWorkerDiskGB].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerBootVolumeSize)
 	m.textInputs[tiArgoURL].SetValue(cfg.ArgoCD.AppOfAppsGitURL)
 	m.textInputs[tiArgoPath].SetValue(cfg.ArgoCD.AppOfAppsGitPath)
 	m.textInputs[tiArgoRef].SetValue(cfg.ArgoCD.AppOfAppsGitRef)
@@ -800,8 +848,11 @@ func (m *dashModel) isHidden(fid int) bool {
 	case focBootstrap, focOvercommit:
 		return isCloud
 	// Proxmox-specific: only when provider=proxmox.
-	case focProxmoxDefaultTmpl, focProxmoxWLCPTmpl, focProxmoxWLWorkerTmpl,
-		focProxmoxMgmtCPTmpl, focProxmoxMgmtWorkerTmpl:
+	case focProxmoxDefaultTmpl,
+		focProxmoxWLCPTmpl, focProxmoxWLCPCores, focProxmoxWLCPMemMiB, focProxmoxWLCPDiskGB,
+		focProxmoxWLWorkerTmpl, focProxmoxWLWorkerCores, focProxmoxWLWorkerMemMiB, focProxmoxWLWorkerDiskGB,
+		focProxmoxMgmtCPTmpl, focProxmoxMgmtCPCores, focProxmoxMgmtCPMemMiB, focProxmoxMgmtCPDiskGB,
+		focProxmoxMgmtWorkerTmpl, focProxmoxMgmtWorkerCores, focProxmoxMgmtWorkerMemMiB, focProxmoxMgmtWorkerDiskGB:
 		return m.selects[siProvider].value() != "proxmox"
 	// Workload network: on-prem only (cloud VPCs are fully managed).
 	case focCPEndpointIP, focNodeIPRanges, focGateway, focIPPrefix, focDNSServers:
@@ -2233,9 +2284,45 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 		snap.Providers.Proxmox.TemplateID = t
 	}
 	snap.WorkloadControlPlaneTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxWLCPTmpl].Value())
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLCPCores].Value()); v != "" {
+		snap.Providers.Proxmox.ControlPlaneNumCores = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLCPMemMiB].Value()); v != "" {
+		snap.Providers.Proxmox.ControlPlaneMemoryMiB = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLCPDiskGB].Value()); v != "" {
+		snap.Providers.Proxmox.ControlPlaneBootVolumeSize = v
+	}
 	snap.WorkloadWorkerTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxWLWorkerTmpl].Value())
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLWorkerCores].Value()); v != "" {
+		snap.Providers.Proxmox.WorkerNumCores = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLWorkerMemMiB].Value()); v != "" {
+		snap.Providers.Proxmox.WorkerMemoryMiB = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWLWorkerDiskGB].Value()); v != "" {
+		snap.Providers.Proxmox.WorkerBootVolumeSize = v
+	}
 	snap.Providers.Proxmox.Mgmt.ControlPlaneTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxMgmtCPTmpl].Value())
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtCPCores].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.ControlPlaneNumCores = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtCPMemMiB].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtCPDiskGB].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize = v
+	}
 	snap.Providers.Proxmox.Mgmt.WorkerTemplateID = strings.TrimSpace(m.textInputs[tiProxmoxMgmtWorkerTmpl].Value())
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtWorkerCores].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.WorkerNumCores = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtWorkerMemMiB].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.WorkerMemoryMiB = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtWorkerDiskGB].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.WorkerBootVolumeSize = v
+	}
 
 	// ArgoCD git coordinates.
 	if u := strings.TrimSpace(m.textInputs[tiArgoURL].Value()); u != "" {
@@ -2432,9 +2519,21 @@ func (m *dashModel) flushToCfg() {
 	m.cfg.Mgmt.NodeIPRanges = snap.Mgmt.NodeIPRanges
 	m.cfg.Providers.Proxmox.TemplateID = snap.Providers.Proxmox.TemplateID
 	m.cfg.WorkloadControlPlaneTemplateID = snap.WorkloadControlPlaneTemplateID
+	m.cfg.Providers.Proxmox.ControlPlaneNumCores = snap.Providers.Proxmox.ControlPlaneNumCores
+	m.cfg.Providers.Proxmox.ControlPlaneMemoryMiB = snap.Providers.Proxmox.ControlPlaneMemoryMiB
+	m.cfg.Providers.Proxmox.ControlPlaneBootVolumeSize = snap.Providers.Proxmox.ControlPlaneBootVolumeSize
 	m.cfg.WorkloadWorkerTemplateID = snap.WorkloadWorkerTemplateID
+	m.cfg.Providers.Proxmox.WorkerNumCores = snap.Providers.Proxmox.WorkerNumCores
+	m.cfg.Providers.Proxmox.WorkerMemoryMiB = snap.Providers.Proxmox.WorkerMemoryMiB
+	m.cfg.Providers.Proxmox.WorkerBootVolumeSize = snap.Providers.Proxmox.WorkerBootVolumeSize
 	m.cfg.Providers.Proxmox.Mgmt.ControlPlaneTemplateID = snap.Providers.Proxmox.Mgmt.ControlPlaneTemplateID
+	m.cfg.Providers.Proxmox.Mgmt.ControlPlaneNumCores = snap.Providers.Proxmox.Mgmt.ControlPlaneNumCores
+	m.cfg.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB = snap.Providers.Proxmox.Mgmt.ControlPlaneMemoryMiB
+	m.cfg.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize = snap.Providers.Proxmox.Mgmt.ControlPlaneBootVolumeSize
 	m.cfg.Providers.Proxmox.Mgmt.WorkerTemplateID = snap.Providers.Proxmox.Mgmt.WorkerTemplateID
+	m.cfg.Providers.Proxmox.Mgmt.WorkerNumCores = snap.Providers.Proxmox.Mgmt.WorkerNumCores
+	m.cfg.Providers.Proxmox.Mgmt.WorkerMemoryMiB = snap.Providers.Proxmox.Mgmt.WorkerMemoryMiB
+	m.cfg.Providers.Proxmox.Mgmt.WorkerBootVolumeSize = snap.Providers.Proxmox.Mgmt.WorkerBootVolumeSize
 	m.cfg.Airgapped = snap.Airgapped
 	m.cfg.ImageRegistryMirror = snap.ImageRegistryMirror
 	m.cfg.InternalCABundle = snap.InternalCABundle

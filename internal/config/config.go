@@ -346,6 +346,10 @@ type IBMCloudConfig struct {
 	Region              string
 	ControlPlaneProfile string // bx2-2x8, cx2-4x8, ...
 	NodeProfile         string
+	ResourceGroup       string // IBM Cloud resource group name
+	VPCName             string // existing VPC name; empty = CAPIBM creates one
+	Zone                string // availability zone, e.g. us-south-1
+	ImageID             string // VPC Gen2 image ID for worker nodes
 }
 
 // AWSConfig is the per-provider AWS configuration. Field names lose the
@@ -1293,6 +1297,10 @@ func Load() *Config {
 	c.Providers.IBMCloud.Region = getenv("IBMCLOUD_REGION", "us-south")
 	c.Providers.IBMCloud.ControlPlaneProfile = getenv("IBMCLOUD_CONTROL_PLANE_PROFILE", "bx2-2x8")
 	c.Providers.IBMCloud.NodeProfile = getenv("IBMCLOUD_NODE_PROFILE", "bx2-2x8")
+	c.Providers.IBMCloud.ResourceGroup = getenv("IBMCLOUD_RESOURCE_GROUP", "")
+	c.Providers.IBMCloud.VPCName = getenv("IBMCLOUD_VPC_NAME", "")
+	c.Providers.IBMCloud.Zone = getenv("IBMCLOUD_ZONE", "")
+	c.Providers.IBMCloud.ImageID = getenv("IBMCLOUD_VPC_IMAGE_ID", "")
 	c.Capacity.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
 	c.Capacity.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
 

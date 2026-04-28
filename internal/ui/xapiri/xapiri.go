@@ -29,8 +29,10 @@
 package xapiri
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"reflect"
 	"strings"
@@ -38,7 +40,57 @@ import (
 	"github.com/lpasquali/yage/internal/cluster/kind"
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/obs"
 )
+
+// multiHandler is a slog.Handler that fans out to two handlers: the
+// primary (existing) handler and a secondary ring-buffer handler.
+type multiHandler struct {
+	primary slog.Handler
+	ring    *logRing
+}
+
+func (h *multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.primary.Enabled(ctx, level)
+}
+
+func (h *multiHandler) Handle(ctx context.Context, r slog.Record) error {
+	// Write plain text (no ANSI) to the ring buffer.
+	line := r.Message
+	r.Attrs(func(a slog.Attr) bool {
+		line += "  " + a.Key + "=" + fmt.Sprintf("%v", a.Value.Any())
+		return true
+	})
+	_, _ = h.ring.Write([]byte(line + "\n"))
+	// Delegate to the primary handler.
+	return h.primary.Handle(ctx, r)
+}
+
+func (h *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &multiHandler{primary: h.primary.WithAttrs(attrs), ring: h.ring}
+}
+
+func (h *multiHandler) WithGroup(name string) slog.Handler {
+	return &multiHandler{primary: h.primary.WithGroup(name), ring: h.ring}
+}
+
+// globalLogRing is the process-wide log ring buffer installed before the
+// dashboard starts.  It is initialised by installLogTee and read by the
+// [logs] tab.
+var globalLogRing = &logRing{}
+
+// installLogTee wraps the global obs.Logger with a multiHandler that also
+// writes plain-text lines to globalLogRing.
+func installLogTee() {
+	existing := obs.Global()
+	// Retrieve the underlying slog.Handler via a slog.Logger adapter.
+	// obs.Logger wraps *slog.Logger; we create a new one from the current
+	// logger's handler (accessed by promoting through obs.NewLoggerFromHandler).
+	primary := obs.NewPrettyHandler()
+	teeHandler := &multiHandler{primary: primary, ring: globalLogRing}
+	obs.SetGlobal(obs.NewLoggerFromHandler(teeHandler))
+	_ = existing // existing logger is replaced; its handler is superseded
+}
 
 // Run starts the interactive walkthrough. Returns the exit code
 // main should propagate: 0 on a clean exit (whether persisted to
@@ -147,6 +199,7 @@ func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
 			return 1
 		}
 	}
+	installLogTee()
 	if rc := runDashboard(w, cfg, s); rc != 0 {
 		return rc
 	}

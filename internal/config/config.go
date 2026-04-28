@@ -316,28 +316,43 @@ type HetznerConfig struct {
 }
 
 // DigitalOceanConfig is the per-provider DigitalOcean (CAPDO) configuration.
-// API token comes from env DIGITALOCEAN_TOKEN — not from cfg.
+// API token comes from env DIGITALOCEAN_TOKEN — not from cfg (same as Hetzner
+// reading HCLOUD_TOKEN directly from the CAPI controller pod env).
 type DigitalOceanConfig struct {
 	Region           string
 	ControlPlaneSize string // s-2vcpu-4gb, s-4vcpu-8gb, ...
 	NodeSize         string
+	// VPCUUID optionally pins all droplets to a specific VPC. Empty = use
+	// the region default VPC (CAPDO's behaviour when the field is absent).
+	VPCUUID     string
+	OverheadTier string // "dev" | "prod" | "enterprise" — mirrors AWS/Azure
 }
 
 // LinodeConfig is the per-provider Linode/Akamai (CAPL) configuration.
-// Catalog is auth-free; provisioning needs LINODE_TOKEN.
+// Catalog is auth-free; provisioning needs LINODE_TOKEN from env.
 type LinodeConfig struct {
 	Region           string
 	ControlPlaneType string // g6-standard-2, g6-standard-4, ...
 	NodeType         string
+	OverheadTier     string // "dev" | "prod" | "enterprise"
 }
 
 // OCIConfig is the per-provider Oracle Cloud Infrastructure (CAPOCI)
 // configuration. Cost estimator JSON is auth-free; provisioning needs
-// OCI API key (not in cfg).
+// OCI API key credentials from env.
 type OCIConfig struct {
 	Region            string
 	ControlPlaneShape string // VM.Standard.E4.Flex, ...
 	NodeShape         string
+	// Provisioning-time fields — not secrets. OCI private key stays on-disk;
+	// only its path is tracked here (never the key material itself).
+	TenancyOCID      string
+	UserOCID         string
+	Fingerprint      string
+	CompartmentOCID  string
+	ImageID          string
+	PrivateKeyPath   string
+	OverheadTier     string // "dev" | "prod" | "enterprise"
 }
 
 // IBMCloudConfig is the per-provider IBM Cloud (CAPIBM) configuration.
@@ -346,6 +361,10 @@ type IBMCloudConfig struct {
 	Region              string
 	ControlPlaneProfile string // bx2-2x8, cx2-4x8, ...
 	NodeProfile         string
+	ResourceGroup       string // IBM Cloud resource group name
+	VPCName             string // existing VPC name; empty = CAPIBM creates one
+	Zone                string // availability zone, e.g. us-south-1
+	ImageID             string // VPC Gen2 image ID for worker nodes
 }
 
 // AWSConfig is the per-provider AWS configuration. Field names lose the
@@ -533,6 +552,9 @@ type CostCredentials struct {
 	HetznerToken string
 	// DigitalOcean (env: YAGE_DO_TOKEN / DIGITALOCEAN_TOKEN).
 	DigitalOceanToken string
+	// Linode/Akamai (env: YAGE_LINODE_TOKEN / LINODE_TOKEN).
+	// Catalog calls are auth-free; token is only needed for provisioning.
+	LinodeToken string
 	// IBM Cloud (env: YAGE_IBMCLOUD_API_KEY / IBMCLOUD_API_KEY).
 	IBMCloudAPIKey string
 }
@@ -1176,6 +1198,10 @@ func Load() *Config {
 		os.Getenv("YAGE_DO_TOKEN"),
 		os.Getenv("DIGITALOCEAN_TOKEN"),
 	)
+	c.Cost.Credentials.LinodeToken = firstNonEmpty(
+		os.Getenv("YAGE_LINODE_TOKEN"),
+		os.Getenv("LINODE_TOKEN"),
+	)
 	c.Cost.Credentials.IBMCloudAPIKey = firstNonEmpty(
 		os.Getenv("YAGE_IBMCLOUD_API_KEY"),
 		os.Getenv("IBMCLOUD_API_KEY"),
@@ -1284,15 +1310,29 @@ func Load() *Config {
 	c.Providers.DigitalOcean.Region = getenv("DIGITALOCEAN_REGION", "nyc3")
 	c.Providers.DigitalOcean.ControlPlaneSize = getenv("DIGITALOCEAN_CONTROL_PLANE_SIZE", "s-2vcpu-4gb")
 	c.Providers.DigitalOcean.NodeSize = getenv("DIGITALOCEAN_NODE_SIZE", "s-2vcpu-4gb")
+	c.Providers.DigitalOcean.VPCUUID = getenv("DIGITALOCEAN_VPC_UUID", "")
+	c.Providers.DigitalOcean.OverheadTier = getenv("DIGITALOCEAN_OVERHEAD_TIER", "prod")
 	c.Providers.Linode.Region = getenv("LINODE_REGION", "us-east")
 	c.Providers.Linode.ControlPlaneType = getenv("LINODE_CONTROL_PLANE_TYPE", "g6-standard-2")
 	c.Providers.Linode.NodeType = getenv("LINODE_NODE_TYPE", "g6-standard-2")
+	c.Providers.Linode.OverheadTier = getenv("LINODE_OVERHEAD_TIER", "prod")
 	c.Providers.OCI.Region = getenv("OCI_REGION", "us-ashburn-1")
 	c.Providers.OCI.ControlPlaneShape = getenv("OCI_CONTROL_PLANE_SHAPE", "VM.Standard.E4.Flex")
 	c.Providers.OCI.NodeShape = getenv("OCI_NODE_SHAPE", "VM.Standard.E4.Flex")
+	c.Providers.OCI.TenancyOCID = getenv("OCI_TENANCY_OCID", "")
+	c.Providers.OCI.UserOCID = getenv("OCI_USER_OCID", "")
+	c.Providers.OCI.Fingerprint = getenv("OCI_FINGERPRINT", "")
+	c.Providers.OCI.CompartmentOCID = getenv("OCI_COMPARTMENT_OCID", "")
+	c.Providers.OCI.ImageID = getenv("OCI_IMAGE_ID", "")
+	c.Providers.OCI.PrivateKeyPath = getenv("OCI_PRIVATE_KEY_PATH", "")
+	c.Providers.OCI.OverheadTier = getenv("OCI_OVERHEAD_TIER", "prod")
 	c.Providers.IBMCloud.Region = getenv("IBMCLOUD_REGION", "us-south")
 	c.Providers.IBMCloud.ControlPlaneProfile = getenv("IBMCLOUD_CONTROL_PLANE_PROFILE", "bx2-2x8")
 	c.Providers.IBMCloud.NodeProfile = getenv("IBMCLOUD_NODE_PROFILE", "bx2-2x8")
+	c.Providers.IBMCloud.ResourceGroup = getenv("IBMCLOUD_RESOURCE_GROUP", "")
+	c.Providers.IBMCloud.VPCName = getenv("IBMCLOUD_VPC_NAME", "")
+	c.Providers.IBMCloud.Zone = getenv("IBMCLOUD_ZONE", "")
+	c.Providers.IBMCloud.ImageID = getenv("IBMCLOUD_VPC_IMAGE_ID", "")
 	c.Capacity.SystemAppsCPUMillicores = int(envFloat("SYSTEM_APPS_CPU_MILLICORES", 2000))
 	c.Capacity.SystemAppsMemoryMiB = int64(envFloat("SYSTEM_APPS_MEMORY_MIB", 4096))
 

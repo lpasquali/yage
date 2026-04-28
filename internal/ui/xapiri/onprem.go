@@ -61,10 +61,16 @@ func (s *state) runOnPremFork() int {
 		if err := s.step6_5_proxmox_network(); err != nil {
 			return s.exit(err)
 		}
+		if err := s.step7_onprem_pivotSettings(); err != nil {
+			return s.exit(err)
+		}
 		if err := s.step7_review(); err != nil {
 			return s.exit(err)
 		}
 		return s.exit(s.step8_persistAndDecide())
+	}
+	if err := s.step7_onprem_pivotSettings(); err != nil {
+		return s.exit(err)
 	}
 	if err := s.runSharedTail(); err != nil {
 		return s.exit(err)
@@ -253,5 +259,59 @@ func (s *state) stepBootstrapMode() error {
 	default:
 		s.r.info("  kubeadm selected — standard upstream CAPI control-plane.")
 	}
+	return nil
+}
+
+// step7_onprem_pivotSettings prompts for the permanent management-cluster
+// (Phase-E pivot) settings. Pivot is already the default in yage — kind is
+// a launcher, not a long-term home. This step surfaces the mgmt-cluster name
+// and node count so the operator can tune them without reaching for flags.
+//
+// If the operator says no, Pivot.Enabled is set to false and the mgmt-cluster
+// fields are left at their config defaults (which the orchestrator ignores
+// when pivot is disabled).
+func (s *state) step7_onprem_pivotSettings() error {
+	s.r.section("pivot / management cluster")
+	s.r.info("yage pivots the workload cluster to a permanent CAPI management")
+	s.r.info("cluster after bootstrap. Skip if you want a temporary kind-only setup.")
+
+	enable := s.r.promptYesNo("enable pivot to permanent mgmt cluster?", s.cfg.Pivot.Enabled)
+	s.cfg.Pivot.Enabled = enable
+	if !enable {
+		s.r.info("  pivot disabled — kind cluster will remain the CAPI mgmt plane.")
+		return nil
+	}
+
+	// Mgmt cluster name.
+	cur := s.cfg.Mgmt.ClusterName
+	if cur == "" {
+		cur = "capi-management"
+	}
+	s.cfg.Mgmt.ClusterName = s.r.promptDNSLabel("mgmt cluster name", cur)
+
+	// Control-plane count — default 3 for HA, 1 for single-node.
+	cpDef := s.cfg.Mgmt.ControlPlaneMachineCount
+	if cpDef == "" {
+		switch s.resil {
+		case resilienceHA, resilienceHAMulti:
+			cpDef = "3"
+		default:
+			cpDef = "1"
+		}
+	}
+	s.cfg.Mgmt.ControlPlaneMachineCount = s.r.promptInt("mgmt control-plane nodes", cpDef)
+
+	// Worker count — default 0 (control-plane-only mgmt cluster is common
+	// for Proxmox/vSphere; they have plenty of headroom on the CP nodes).
+	wkDef := s.cfg.Mgmt.WorkerMachineCount
+	if wkDef == "" {
+		wkDef = "0"
+	}
+	s.cfg.Mgmt.WorkerMachineCount = s.r.promptInt("mgmt worker nodes (0 = cp-only)", wkDef)
+
+	s.r.info("  ✓ pivot configured: %s (%s cp + %s worker)",
+		s.cfg.Mgmt.ClusterName,
+		s.cfg.Mgmt.ControlPlaneMachineCount,
+		s.cfg.Mgmt.WorkerMachineCount)
 	return nil
 }

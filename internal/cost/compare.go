@@ -147,14 +147,16 @@ const (
 	ScopeOnPremOnly             // proxmox / vsphere / openstack / docker (CAPD)
 )
 
-// CompareWithFilter is CompareClouds with an explicit scope filter.
-// Cloud-fork callers pass ScopeCloudOnly so on-prem rows don't
-// pollute the cost compare (they'd all be (estimator error) without
-// --hardware-cost-usd anyway). CAPD (CAPI's Docker reference
-// provider) is dropped at every scope: it's an ephemeral test path,
-// not a deployment target — pricing it would just confuse the
-// table.
-func CompareWithFilter(cfg *config.Config, scope Scope, progress io.Writer) []CloudCost {
+// StreamWithFilter fans out provider cost fetches in parallel and sends each
+// CloudCost to ch as it completes, then closes ch. The function returns
+// immediately after launching the worker goroutines, so callers may read from
+// ch on the same goroutine after the call returns. ch is closed by an
+// internal watcher once all workers finish; with an unbuffered channel, the
+// caller must ensure a receiver is available so worker sends can proceed.
+//
+// Progress is written before any goroutines launch (count header) and after
+// each result arrives (per-provider tick line).
+func StreamWithFilter(cfg *config.Config, scope Scope, progress io.Writer, ch chan<- CloudCost) {
 	names := provider.AirgapFilter(provider.Registered(), cfg.Airgapped)
 	names = filterEphemeralTestProviders(names)
 	switch scope {
@@ -163,8 +165,6 @@ func CompareWithFilter(cfg *config.Config, scope Scope, progress io.Writer) []Cl
 	case ScopeOnPremOnly:
 		names = filterOnPremOnly(names)
 	}
-	// When --infra-provider is set explicitly (not defaulted), cost only
-	// that provider — it acts as the sole allowed provider for comparison.
 	if cfg.InfraProvider != "" && !cfg.InfraProviderDefaulted {
 		names = filterByInclusion(names, map[string]struct{}{cfg.InfraProvider: {}})
 	}
@@ -188,61 +188,46 @@ func CompareWithFilter(cfg *config.Config, scope Scope, progress io.Writer) []Cl
 			fmt.Fprintf(progress, "  live cost compare: %d provider(s)\n", len(names))
 		}
 	}
-
-	type result struct {
-		idx int
-		row CloudCost
-	}
-	results := make([]CloudCost, len(names))
-	have := make([]bool, len(names))
-	resCh := make(chan result, len(names))
-
 	var wg sync.WaitGroup
-	for i, name := range names {
-		i, name := i, name
+	for _, name := range names {
+		name := name
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			p, err := provider.Get(name)
 			if err != nil {
-				resCh <- result{idx: i}
-				return
+				return // skip unknown/unregistered — no send
 			}
 			est, estErr := p.EstimateMonthlyCostUSD(cfg)
 			storagePrice, storageErr := liveBlockStorageUSDPerGBMonth(name, cfg)
-			resCh <- result{idx: i, row: CloudCost{
+			ch <- CloudCost{
 				ProviderName:         name,
 				Estimate:             est,
 				Err:                  estErr,
 				StorageUSDPerGBMonth: storagePrice,
 				StorageErr:           storageErr,
-			}}
+			}
+			if progress != nil {
+				fmt.Fprintf(progress, "    ✓ %s\n", name)
+			}
 		}()
 	}
+	go func() { wg.Wait(); close(ch) }()
+}
 
-	go func() {
-		wg.Wait()
-		close(resCh)
-	}()
-
-	// Drain as vendors finish so progress reflects real wall-clock
-	// completion order; row 0 in `results` keeps the deterministic
-	// registration index for sort tiebreaks.
-	for r := range resCh {
-		if r.row.ProviderName != "" {
-			results[r.idx] = r.row
-			have[r.idx] = true
-			if progress != nil {
-				fmt.Fprintf(progress, "    ✓ %s\n", r.row.ProviderName)
-			}
-		}
-	}
-
-	out := make([]CloudCost, 0, len(names))
-	for i, ok := range have {
-		if ok {
-			out = append(out, results[i])
-		}
+// CompareWithFilter is CompareClouds with an explicit scope filter.
+// Cloud-fork callers pass ScopeCloudOnly so on-prem rows don't
+// pollute the cost compare (they'd all be (estimator error) without
+// --hardware-cost-usd anyway). CAPD (CAPI's Docker reference
+// provider) is dropped at every scope: it's an ephemeral test path,
+// not a deployment target — pricing it would just confuse the
+// table.
+func CompareWithFilter(cfg *config.Config, scope Scope, progress io.Writer) []CloudCost {
+	ch := make(chan CloudCost, 32)
+	StreamWithFilter(cfg, scope, progress, ch)
+	var out []CloudCost
+	for r := range ch {
+		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		ci, cj := out[i], out[j]

@@ -184,14 +184,6 @@ func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
 	_ = kindsync.ReadCostCompareSecret(cfg) // sets CostCompareEnabled + loads credentials when secret exists
 	disableProvidersMissingCredentials(cfg)
 	s.initFromConfig(cfg) // re-seed walkthrough state now that kind merges have run
-	if cfg.CostCompareEnabled {
-		if err := s.stepCostCompareSetup(); err != nil {
-			return s.exit(err)
-		}
-	}
-	if err := s.stepKubernetesVersion(); err != nil {
-		return s.exit(err)
-	}
 	if !skipKindPrelude() {
 		if err := kind.EnsureClusterUp(cfg, w); err != nil {
 			fmt.Fprintf(w, "xapiri: kind management cluster could not be brought up: %v\n", err)

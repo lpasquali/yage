@@ -29,13 +29,26 @@ import (
 // start and end with an alphanumeric. Length is capped at 63 chars.
 var dns1123label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
+// Solarized palette (24-bit ANSI). Used when the output is a real TTY
+// and NO_COLOR is not set. Each constant is the full SGR escape; the
+// caller appends ansiReset after the coloured span.
+const (
+	solBlue   = "\033[38;2;38;139;210m"  // #268bd2 — section banners
+	solGreen  = "\033[38;2;133;153;0m"   // #859900 — success / ✓
+	solYellow = "\033[38;2;181;137;0m"   // #b58900 — warnings / ⚠
+	solRed    = "\033[38;2;220;50;47m"   // #dc322f — errors / ✗
+	solBase1  = "\033[38;2;147;161;161m" // #93a1a1 — prompt labels (muted)
+	ansiReset = "\033[0m"
+)
+
 // reader bundles the io.Reader + io.Writer the walkthrough drives. We
 // keep the writer for prompts (so the spirits speak on stdout) and a
 // scanner for line-by-line input. Bufio is fine — interactive use is
 // human-paced.
 type reader struct {
-	in  *bufio.Scanner
-	out io.Writer
+	in      *bufio.Scanner
+	out     io.Writer
+	colored bool // true when out is a real TTY and NO_COLOR is unset
 }
 
 func newReader(in io.Reader, out io.Writer) *reader {
@@ -43,7 +56,24 @@ func newReader(in io.Reader, out io.Writer) *reader {
 	// Allow long lines (kubeconfig fragments, JSON tokens) without
 	// silently truncating.
 	s.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	return &reader{in: s, out: out}
+
+	// Enable color only when the writer is a real terminal and NO_COLOR
+	// is not set (https://no-color.org/).
+	colored := false
+	if f, ok := out.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		colored = os.Getenv("NO_COLOR") == ""
+	}
+
+	return &reader{in: s, out: out, colored: colored}
+}
+
+// col wraps s with an ANSI SGR code + reset when r.colored is true.
+// Returns s unchanged when color is off (pipe, test, NO_COLOR).
+func (r *reader) col(code, s string) string {
+	if !r.colored {
+		return s
+	}
+	return code + s + ansiReset
 }
 
 // readLine reads a single line of input. Empty input (EOF or blank
@@ -60,10 +90,11 @@ func (r *reader) readLine() string {
 // default. Empty input keeps cur. The trailing colon + space mirrors
 // the existing promptx style.
 func (r *reader) promptString(label, cur string) string {
+	lbl := r.col(solBase1, label)
 	if cur != "" {
-		fmt.Fprintf(r.out, "  %s [%s]: ", label, cur)
+		fmt.Fprintf(r.out, "  %s [%s]: ", lbl, cur)
 	} else {
-		fmt.Fprintf(r.out, "  %s: ", label)
+		fmt.Fprintf(r.out, "  %s: ", lbl)
 	}
 	v := r.readLine()
 	if v == "" {
@@ -82,7 +113,7 @@ func (r *reader) promptSecret(label, cur string) string {
 	if cur != "" {
 		display = "set"
 	}
-	fmt.Fprintf(r.out, "  %s (sensitive) [%s]: ", label, display)
+	fmt.Fprintf(r.out, "  %s (sensitive) [%s]: ", r.col(solBase1, label), display)
 	v := r.readLine()
 	if v == "" {
 		return cur
@@ -100,7 +131,7 @@ func (r *reader) promptSecretHidden(label, cur string) (string, error) {
 	if cur != "" {
 		display = "set"
 	}
-	fmt.Fprintf(r.out, "  %s (hidden) [%s]: ", label, display)
+	fmt.Fprintf(r.out, "  %s (hidden) [%s]: ", r.col(solBase1, label), display)
 
 	fd := int(os.Stdin.Fd())
 	if term.IsTerminal(fd) {
@@ -133,7 +164,7 @@ func (r *reader) promptInt(label, cur string) string {
 		}
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
-			fmt.Fprintf(r.out, "    not a non-negative integer; try again.\n")
+			fmt.Fprintf(r.out, "    %s\n", r.col(solRed, "not a non-negative integer; try again."))
 			continue
 		}
 		return strconv.Itoa(n)
@@ -149,7 +180,7 @@ func (r *reader) promptDNSLabel(label, cur string) string {
 			return cur
 		}
 		if len(v) > 63 || !dns1123label.MatchString(v) {
-			fmt.Fprintf(r.out, "    not a DNS-1123 label (lowercase alphanumeric + hyphens, max 63); try again.\n")
+			fmt.Fprintf(r.out, "    %s\n", r.col(solRed, "not a DNS-1123 label (lowercase alphanumeric + hyphens, max 63); try again."))
 			continue
 		}
 		return v
@@ -164,7 +195,7 @@ func (r *reader) promptYesNo(label string, def bool) bool {
 		hint = "Y/n"
 	}
 	for {
-		fmt.Fprintf(r.out, "  %s [%s]: ", label, hint)
+		fmt.Fprintf(r.out, "  %s [%s]: ", r.col(solBase1, label), hint)
 		v := strings.TrimSpace(r.readLine())
 		if v == "" {
 			return def
@@ -175,7 +206,7 @@ func (r *reader) promptYesNo(label string, def bool) bool {
 		case 'n':
 			return false
 		}
-		fmt.Fprintf(r.out, "    please answer yes or no.\n")
+		fmt.Fprintf(r.out, "    %s\n", r.col(solRed, "please answer yes or no."))
 	}
 }
 
@@ -185,11 +216,11 @@ func (r *reader) promptChoice(label string, choices []string, cur string) string
 	if len(choices) == 0 {
 		return cur
 	}
-	fmt.Fprintf(r.out, "  %s\n", label)
+	fmt.Fprintf(r.out, "  %s\n", r.col(solBase1, label))
 	for i, c := range choices {
 		marker := " "
 		if c == cur {
-			marker = "*"
+			marker = r.col(solGreen, "*")
 		}
 		fmt.Fprintf(r.out, "    %s %d) %s\n", marker, i+1, c)
 	}
@@ -213,19 +244,39 @@ func (r *reader) promptChoice(label string, choices []string, cur string) string
 		if err == nil && n >= 1 && n <= len(choices) {
 			return choices[n-1]
 		}
-		fmt.Fprintf(r.out, "    not a valid choice; try again.\n")
+		fmt.Fprintf(r.out, "    %s\n", r.col(solRed, "not a valid choice; try again."))
 	}
 }
 
 // section prints a small banner ahead of each walkthrough step. Quiet,
 // not corporate — matches the package doc tone.
 func (r *reader) section(title string) {
-	fmt.Fprintf(r.out, "\n— %s —\n", title)
+	fmt.Fprintf(r.out, "\n%s\n", r.col(solBlue, "— "+title+" —"))
 }
 
-// info prints a single informational line.
+// info prints a single informational line. When color is enabled the
+// first rune of the message determines the semantic colour: ✓ → green,
+// ⚠ → yellow, ✗ → red, anything else → default.
 func (r *reader) info(format string, args ...any) {
-	fmt.Fprintf(r.out, "  %s\n", fmt.Sprintf(format, args...))
+	msg := fmt.Sprintf(format, args...)
+	if r.colored {
+		switch {
+		case strings.HasPrefix(msg, "✓"):
+			msg = solGreen + msg + ansiReset
+		case strings.HasPrefix(msg, "⚠"):
+			msg = solYellow + msg + ansiReset
+		case strings.HasPrefix(msg, "✗"):
+			msg = solRed + msg + ansiReset
+		}
+	}
+	fmt.Fprintf(r.out, "  %s\n", msg)
+}
+
+// errLine prints an indented error message in solarized red (when color
+// is enabled). Used for re-prompt feedback outside the standard ✓/⚠/✗
+// info() path.
+func (r *reader) errLine(format string, args ...any) {
+	fmt.Fprintf(r.out, "    %s\n", r.col(solRed, fmt.Sprintf(format, args...)))
 }
 
 // promptSSHKeys collects one or more SSH public keys, one per line,

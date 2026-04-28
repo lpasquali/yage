@@ -2266,16 +2266,11 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 
 	syncWorkloadShapeToCfg(&snap, wl, resil, env, fork)
 
-	// For on-prem InfraProviders (proxmox, vsphere, openstack) clear the
-	// field so CompareWithFilter doesn't narrow to that provider via
-	// filterByInclusion — after filterCloudOnly it would produce zero rows.
-	// For cloud InfraProviders (aws, gcp, …) keep the filter; the user
-	// explicitly chose that cloud and wants the comparison scoped to it.
-	if snap.InfraProvider != "" && !snap.InfraProviderDefaulted &&
-		provider.AirgapCompatible(snap.InfraProvider) {
-		snap.InfraProvider = ""
-		snap.InfraProviderDefaulted = true
-	}
+	// Preserve the user-selected InfraProvider in the snapshot. Any
+	// compare-specific normalization (for example, clearing on-prem
+	// providers before a cloud-only cost comparison) must happen in the
+	// refresh/compare path, not while building the config snapshot that is
+	// also used for persistence.
 
 	// Recalculate SkipProviders from current credentials rather than using
 	// the snapshot captured at dashboard startup (which may have excluded

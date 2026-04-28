@@ -78,10 +78,11 @@ const (
 // ─── select slot indices ─────────────────────────────────────────────────────
 
 const (
-	siMode  = 0 // cloud | on-prem
-	siEnv   = 1 // dev | staging | prod
-	siResil = 2 // single-az | ha | ha-multi-region
-	siCount = 3
+	siMode      = 0 // cloud | on-prem
+	siEnv       = 1 // dev | staging | prod
+	siResil     = 2 // single-az | ha | ha-multi-region
+	siBootstrap = 3 // kubeadm | k3s  (on-prem only)
+	siCount     = 4
 )
 
 // ─── toggle (bool) slot indices ──────────────────────────────────────────────
@@ -115,10 +116,11 @@ const (
 	focHasCache           // 16
 	focCacheCPU           // 17
 	focCacheMem           // 18
-	focDCLoc              // 19
-	focBudget             // 20
-	focHeadroom           // 21
-	focCount              // 22 — must be last
+	focBootstrap          // 19
+	focDCLoc              // 20
+	focBudget             // 21
+	focHeadroom           // 22
+	focCount              // 23 — must be last
 )
 
 // ─── per-field metadata ───────────────────────────────────────────────────────
@@ -164,6 +166,8 @@ var dashFields = []fieldMeta{
 	{fkToggle, toiCache, "in-mem cache", "", true},
 	{fkText, tiCacheCPU, "  cache CPU (m)", "", true},
 	{fkText, tiCacheMem, "  cache mem (Mi)", "", true},
+	// ── Bootstrap (on-prem only) ──────────────────────────────────────
+	{fkSelect, siBootstrap, "bootstrap mode", "Bootstrap", false},
 	// ── Geo + Budget (cloud only) ─────────────────────────────────────
 	{fkText, tiDCLoc, "data-center loc", "Geo", false},
 	{fkText, tiBudget, "budget USD/mo", "Budget", false},
@@ -299,6 +303,11 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 		m.selects[siResil].cur = 2
 	}
 
+	m.selects[siBootstrap] = selectState{options: []string{"kubeadm", "k3s"}, cur: 0}
+	if cfg.BootstrapMode == "k3s" {
+		m.selects[siBootstrap].cur = 1
+	}
+
 	// Toggles.
 	m.toggles[toiQueue] = s.workload.HasQueue
 	m.toggles[toiObjStore] = s.workload.HasObjStore
@@ -331,6 +340,8 @@ func (m *dashModel) isHidden(fid int) bool {
 		focHasQueue, focHasObjStore, focHasCache,
 		focDCLoc, focBudget, focHeadroom:
 		return !isCloud
+	case focBootstrap:
+		return isCloud // only visible on on-prem
 	case focQueueCPU, focQueueMem, focQueueVol:
 		return !isCloud || !m.toggles[toiQueue]
 	case focObjCPU, focObjMem, focObjVol:
@@ -565,6 +576,8 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 		snap.ControlPlaneMachineCount = "1"
 	}
 
+	snap.BootstrapMode = m.selects[siBootstrap].value()
+
 	snap.Cost.Currency.DataCenterLocation = strings.ToUpper(strings.TrimSpace(m.textInputs[tiDCLoc].Value()))
 
 	if f, err := strconv.ParseFloat(strings.TrimSpace(m.textInputs[tiBudget].Value()), 64); err == nil && f > 0 {
@@ -648,6 +661,7 @@ func (m *dashModel) flushToCfg() {
 	m.cfg.ObjStoreVolumeGBOverride = snap.ObjStoreVolumeGBOverride
 	m.cfg.CacheCPUMillicoresOverride = snap.CacheCPUMillicoresOverride
 	m.cfg.CacheMemoryMiBOverride = snap.CacheMemoryMiBOverride
+	m.cfg.BootstrapMode = snap.BootstrapMode
 
 	// Derive s.fork / s.env / s.resil for the rest of the walkthrough.
 	if m.selects[siMode].value() == "on-prem" {

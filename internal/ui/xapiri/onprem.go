@@ -31,6 +31,9 @@ func (s *state) runOnPremFork() int {
 	if err := s.step3_workloadShape(); err != nil {
 		return s.exit(err)
 	}
+	if err := s.stepBootstrapMode(); err != nil {
+		return s.exit(err)
+	}
 	for {
 		err := s.step5_onprem_capacity()
 		if err == nil {
@@ -197,4 +200,52 @@ func orFloat(cur, def float64) float64 {
 		return cur
 	}
 	return def
+}
+
+// stepBootstrapMode prompts for the Kubernetes distribution:
+// kubeadm (upstream CAPI) or k3s (lightweight single-binary). Runs
+// only on the on-prem fork, after workload shape and before the
+// capacity feasibility gate — so the capacity check uses the right
+// per-node footprint (k3s uses ~1 vCPU / 1 GiB per node vs
+// kubeadm's higher baseline).
+//
+// Pre-selection heuristic: when the configured control-plane and
+// worker machine counts are all going on a single host, and that
+// host appears small (≤ SmallEnvCPUCores / SmallEnvMemoryGiB), k3s
+// is pre-selected and the reason is shown. In the xapiri context we
+// don't have live inventory, so we use cfg.ControlPlaneMachineCount
+// + cfg.WorkerMachineCount to estimate total VM count and compare
+// against the small-env thresholds via the provider's capacity
+// sizing constants.
+func (s *state) stepBootstrapMode() error {
+	s.r.section("bootstrap mode")
+
+	cur := s.cfg.BootstrapMode
+	if cur == "" {
+		cur = "kubeadm"
+	}
+
+	// Suggest k3s when the workload is small (≤4 total VMs or the
+	// user configured small machine types). This is a best-effort
+	// heuristic — the authoritative check is in the capacity gate.
+	cpCount := parseIntOrKeep(s.cfg.ControlPlaneMachineCount, 1)
+	wkCount := parseIntOrKeep(s.cfg.WorkerMachineCount, 0)
+	totalVMs := cpCount + wkCount
+	suggestK3s := totalVMs <= 4 && cur == "kubeadm"
+	if suggestK3s {
+		s.r.info("💡 small cluster (%d VM(s) total) — k3s uses ~1 vCPU / 1 GiB per node", totalVMs)
+		s.r.info("   vs kubeadm's higher control-plane baseline. Consider k3s.")
+		cur = "k3s"
+	}
+
+	chosen := s.r.promptChoice("bootstrap mode", []string{"kubeadm", "k3s"}, cur)
+	s.cfg.BootstrapMode = chosen
+
+	switch chosen {
+	case "k3s":
+		s.r.info("  k3s selected — CAPI will use KCP-K3s + CABK3s providers.")
+	default:
+		s.r.info("  kubeadm selected — standard upstream CAPI control-plane.")
+	}
+	return nil
 }

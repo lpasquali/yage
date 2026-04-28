@@ -552,6 +552,9 @@ func (s *state) step7_review() error {
 	pw.Bullet("environment:    %s", s.env)
 	pw.Bullet("resilience:     %s (control-plane=%s)", s.resil, s.cfg.ControlPlaneMachineCount)
 	pw.Bullet("provider:       %s", s.cfg.InfraProvider)
+	if s.fork == forkOnPrem {
+		pw.Bullet("bootstrap mode: %s", s.cfg.BootstrapMode)
+	}
 	pw.Bullet("workload apps:  %s", formatAppBuckets(s.workload.Apps))
 	pw.Bullet("database GB:    %d", s.workload.DBGB)
 	if s.fork == forkCloud {

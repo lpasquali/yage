@@ -268,7 +268,6 @@ type editorSaveMsg struct{ err error }
 type kindResourceReadyMsg struct {
 	resource *editorResource
 	tempFile string
-	err      error
 }
 
 // editorResource describes a Secret or ConfigMap in the yage-system namespace.

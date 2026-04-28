@@ -219,6 +219,7 @@ func (s *state) initFromConfig(cfg *config.Config) {
 	s.workload.ObjStoreVolGB = cfg.ObjStoreVolumeGBOverride
 	s.workload.CacheCPUMilli = cfg.CacheCPUMillicoresOverride
 	s.workload.CacheMemMiB = cfg.CacheMemoryMiBOverride
+	s.workload.Apps = make([]appBucket, 0, len(cfg.Workload.Apps))
 	for _, ag := range cfg.Workload.Apps {
 		s.workload.Apps = append(s.workload.Apps, appBucket{Count: ag.Count, Template: ag.Template})
 	}

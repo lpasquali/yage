@@ -44,87 +44,86 @@ func configYAMLHeader(cfg *config.Config) string {
 	)
 }
 
-// MergeBootstrapSecretsFromKind overlays kind Secret state
-// onto cfg in order:
+// MergeBootstrapSecretsFromKind overlays kind Secret state onto cfg
+// in two steps:
 //
-//  1. the config.yaml Secret — snapshot keys subject to *_EXPLICIT
-//     guards, other keys fill-if-empty.
-//  2. the CAPI/CSI credentials Secret(s): single Secret when
-//     PROXMOX_BOOTSTRAP_SECRET_NAME is set, otherwise split
-//     CAPMOX + CSI Secrets, with a fallback to the
-//     "proxmox-bootstrap-credentials" name.
-//  3. the admin Secret (proxmox-admin.yaml data key) when distinct
-//     from the credentials Secret.
-//  4. capmox-system/capmox-manager-credentials — last-chance fallback
-//     for PROXMOX_URL/TOKEN/SECRET.
+//  1. The config.yaml Secret — snapshot keys subject to *_EXPLICIT
+//     guards; other keys fill-if-empty. Always generic: the snapshot
+//     key set is provider-agnostic (see config.Snapshot()).
+//  2. Provider credential Secrets — via Provider.BootstrapSecrets()
+//     which returns an ordered list of (namespace, name, key-filter)
+//     refs. For each ref the generic dispatcher fetches the Secret,
+//     decodes all data entries, applies the optional KeyFilter, and
+//     calls Provider.AbsorbConfigYAML. Any ref whose Secret is absent
+//     on the kind cluster is silently skipped.
 //
-// Sets Providers.Proxmox.BootstrapKindSecretUsed=true when any Secret contributed
-// data, and Providers.Proxmox.KindCAPMOXActive=true when the capmox-system
-// Secret was the one that filled URL/token/secret.
+// The Proxmox provider's BootstrapSecrets() covers the CAPMOX / CSI /
+// admin / legacy-combined Secrets plus the capmox-system live copy.
+// Non-Proxmox providers return nil and step 2 is a no-op.
 func MergeBootstrapSecretsFromKind(cfg *config.Config) {
 	ctx, ok := kubectl.ResolveBootstrapContext(cfg)
 	if !ok {
 		return
 	}
 
-	// --- 1. config.yaml ---
+	// --- 1. config.yaml (generic snapshot) ---
 	if applyConfigYAML(cfg, ctx) {
-		logx.Log("Merged bootstrap state from %s/%s (config.yaml: snapshot keys overlay in-cluster; CLI --*-explicit take precedence) on %s.",
-			cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapConfigSecretName, ctx)
-		cfg.Providers.Proxmox.BootstrapKindSecretUsed = true
+		logx.Log("Merged bootstrap state from kind bootstrap-config Secret (config.yaml: snapshot keys overlay; CLI --*-explicit take precedence) on %s.", ctx)
 	}
 
-	// --- 2. credentials ---
-	var capmoxJSON, csiJSON, legacyJSON string
-	if cfg.Providers.Proxmox.BootstrapSecretName != "" {
-		legacyJSON = getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapSecretName)
-	} else {
-		capmoxJSON = getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapCAPMOXSecretName)
-		csiJSON = getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapCSISecretName)
-		if capmoxJSON == "" && csiJSON == "" {
-			// Fallback to the pre-split Secret name.
-			legacyJSON = getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, "proxmox-bootstrap-credentials")
-		}
+	// --- 2. provider credential Secrets ---
+	prov, err := provider.For(cfg)
+	if err != nil {
+		// No provider resolved (e.g. InfraProvider still empty after
+		// config.yaml overlay). Continue — the tail cleanup still runs.
+		cfg.ReapplyWorkloadGitDefaults()
+		cfg.SyncCAPIControllerImagesToClusterctlVersion()
+		return
 	}
-	if legacyJSON != "" {
-		if fillFromCredsJSON(cfg, legacyJSON, true) {
-			logx.Log("Filled unset values from cluster API secrets on %s (combined Secret).", ctx)
-			cfg.Providers.Proxmox.BootstrapKindSecretUsed = true
+	refs := prov.BootstrapSecrets(cfg)
+	for _, ref := range refs {
+		if ref.Namespace == "" || ref.Name == "" {
+			continue
 		}
-	}
-	if cfg.Providers.Proxmox.BootstrapSecretName == "" && capmoxJSON != "" {
-		if fillFromCredsJSON(cfg, capmoxJSON, true) {
-			logx.Log("Filled unset values from %s/%s on %s.",
-				cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapCAPMOXSecretName, ctx)
-			cfg.Providers.Proxmox.BootstrapKindSecretUsed = true
+		secJSON := getSecretJSON(ctx, ref.Namespace, ref.Name)
+		if secJSON == "" {
+			continue
 		}
-	}
-	if cfg.Providers.Proxmox.BootstrapSecretName == "" && csiJSON != "" {
-		if fillFromCSIJSON(cfg, csiJSON) {
-			logx.Log("Filled unset values from %s/%s on %s.",
-				cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapCSISecretName, ctx)
-			cfg.Providers.Proxmox.BootstrapKindSecretUsed = true
+		// Decode all Secret data entries.
+		data := decodeAllSecretData(secJSON)
+		if len(data) == 0 {
+			continue
 		}
-	}
-
-	// --- 3. admin Secret (skip when same as the credentials Secret already merged) ---
-	if cfg.Providers.Proxmox.BootstrapAdminSecretName != "" &&
-		(cfg.Providers.Proxmox.BootstrapSecretName == "" ||
-			cfg.Providers.Proxmox.BootstrapAdminSecretName != cfg.Providers.Proxmox.BootstrapSecretName) {
-		j := getSecretJSON(ctx, cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName)
-		if j != "" && fillFromAdminJSON(cfg, j) {
-			logx.Log("Filled unset values from %s/%s (OpenTofu / admin) on %s.",
-				cfg.Providers.Proxmox.BootstrapSecretNamespace, cfg.Providers.Proxmox.BootstrapAdminSecretName, ctx)
-			cfg.Providers.Proxmox.BootstrapKindSecretUsed = true
+		// Also merge embedded sub-YAML blobs (e.g. proxmox-admin.yaml
+		// key inside the admin Secret) into the flat map.
+		for _, yamlKey := range []string{"proxmox-admin.yaml"} {
+			if blob := decodeSecretDataKey(secJSON, yamlKey); blob != "" {
+				for k, v := range parseFlatYAMLOrJSON(blob) {
+					if v != "" && data[k] == "" {
+						data[k] = v
+					}
+				}
+			}
 		}
-	}
-
-	// --- 4. capmox-system/capmox-manager-credentials fallback ---
-	if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.CAPIToken == "" || cfg.Providers.Proxmox.CAPISecret == "" {
-		j := getSecretJSON(ctx, "capmox-system", "capmox-manager-credentials")
-		if j != "" && fillFromCapmoxManagerJSON(cfg, j) {
-			logx.Log("Filled unset CAPI Proxmox API values from capmox-system/capmox-manager-credentials on %s.", ctx)
-			cfg.Providers.Proxmox.KindCAPMOXActive = true
+		// Apply optional key filter.
+		if len(ref.KeyFilter) > 0 {
+			allowed := make(map[string]struct{}, len(ref.KeyFilter))
+			for _, k := range ref.KeyFilter {
+				allowed[k] = struct{}{}
+			}
+			filtered := make(map[string]string, len(ref.KeyFilter))
+			for k, v := range data {
+				if _, ok := allowed[k]; ok {
+					filtered[k] = v
+				}
+			}
+			data = filtered
+		}
+		if prov.AbsorbConfigYAML(cfg, data) {
+			logx.Log("Filled unset values from %s/%s on %s.", ref.Namespace, ref.Name, ctx)
+			if ref.OnAbsorbed != nil {
+				ref.OnAbsorbed(cfg)
+			}
 		}
 	}
 
@@ -180,140 +179,11 @@ func migrateLegacyKeys(kv map[string]string) {
 	delete(kv, "TEMPLATE_VMID")
 }
 
-// fillFromCredsJSON decodes a combined CAPI-ish Secret (url/token/secret
-// + any embedded proxmox-admin.yaml) and fills matching cfg fields
-// that are currently empty. The same alias map covers both the
-// single-Secret and the default-split CAPMOX Secret paths. Returns
-// true when any field was actually set.
-func fillFromCredsJSON(cfg *config.Config, secJSON string, _ bool) bool {
-	data := decodeAllSecretData(secJSON)
-	if len(data) == 0 {
-		return false
-	}
-	// Merge embedded proxmox-admin.yaml lines into the top-level
-	// key map.
-	ak := stringOrDefault(decodeSecretDataKey(secJSON, "proxmox-admin.yaml"), data["proxmox-admin.yaml"])
-	if ak != "" {
-		for k, v := range parseFlatYAMLOrJSON(ak) {
-			if v != "" {
-				data[k] = v
-			}
-		}
-	}
-	aliases := map[string]string{
-		"url":               "PROXMOX_URL",
-		"capi_token":        "PROXMOX_CAPI_TOKEN",
-		"capi_secret":       "PROXMOX_CAPI_SECRET",
-		// backward compat: Secrets written before the rename
-		"token":             "PROXMOX_CAPI_TOKEN",
-		"secret":            "PROXMOX_CAPI_SECRET",
-		"capi_token_id":     "PROXMOX_CAPI_TOKEN",
-		"capi_token_secret": "PROXMOX_CAPI_SECRET",
-		"csi_token_id":      "PROXMOX_CSI_TOKEN_ID",
-		"csi_token_secret":  "PROXMOX_CSI_TOKEN_SECRET",
-		"admin_username":    "PROXMOX_ADMIN_USERNAME",
-		"admin_token":       "PROXMOX_ADMIN_TOKEN",
-	}
-	for old, newKey := range aliases {
-		if v := data[old]; v != "" {
-			if _, ok := data[newKey]; !ok {
-				data[newKey] = v
-			}
-		}
-	}
-	return fillEmptyFromMap(cfg, data)
-}
-
-// fillFromCSIJSON handles the default-split CSI Secret.
-func fillFromCSIJSON(cfg *config.Config, secJSON string) bool {
-	data := decodeAllSecretData(secJSON)
-	if len(data) == 0 {
-		return false
-	}
-	aliases := map[string]string{
-		"url":              "PROXMOX_URL",
-		"csi_token_id":     "PROXMOX_CSI_TOKEN_ID",
-		"csi_token_secret": "PROXMOX_CSI_TOKEN_SECRET",
-	}
-	for old, newKey := range aliases {
-		if v := data[old]; v != "" {
-			if _, ok := data[newKey]; !ok {
-				data[newKey] = v
-			}
-		}
-	}
-	return fillEmptyFromMap(cfg, data)
-}
-
-// fillFromAdminJSON handles the distinct admin Secret: restricts to the
-// four admin keys.
-func fillFromAdminJSON(cfg *config.Config, secJSON string) bool {
-	data := decodeAllSecretData(secJSON)
-	if len(data) == 0 {
-		return false
-	}
-	// Merge embedded proxmox-admin.yaml (the key from cfg; default).
-	ak := decodeSecretDataKey(secJSON, "proxmox-admin.yaml")
-	if ak != "" {
-		for k, v := range parseFlatYAMLOrJSON(ak) {
-			if v != "" {
-				data[k] = v
-			}
-		}
-	}
-	aliases := map[string]string{
-		"url":            "PROXMOX_URL",
-		"admin_username": "PROXMOX_ADMIN_USERNAME",
-		"admin_token":    "PROXMOX_ADMIN_TOKEN",
-		"insecure":       "PROXMOX_ADMIN_INSECURE",
-	}
-	for old, newKey := range aliases {
-		if v := data[old]; v != "" {
-			if _, ok := data[newKey]; !ok {
-				data[newKey] = v
-			}
-		}
-	}
-	adminKeys := map[string]struct{}{
-		"PROXMOX_URL":            {},
-		"PROXMOX_ADMIN_USERNAME": {},
-		"PROXMOX_ADMIN_TOKEN":    {},
-		"PROXMOX_ADMIN_INSECURE": {},
-	}
-	out := map[string]string{}
-	for k, v := range data {
-		if _, ok := adminKeys[k]; ok {
-			out[k] = v
-		}
-	}
-	return fillEmptyFromMap(cfg, out)
-}
-
-// fillFromCapmoxManagerJSON handles capmox-system/capmox-manager-credentials
-// (url/token/secret only).
-func fillFromCapmoxManagerJSON(cfg *config.Config, secJSON string) bool {
-	data := decodeAllSecretData(secJSON)
-	out := map[string]string{}
-	for k, v := range map[string]string{
-		"PROXMOX_URL":        data["url"],
-		"PROXMOX_CAPI_TOKEN": data["token"],
-		"PROXMOX_CAPI_SECRET": data["secret"],
-	} {
-		if v != "" {
-			out[k] = v
-		}
-	}
-	return fillEmptyFromMap(cfg, out)
-}
-
 // fillEmptyFromMap dispatches to the active provider's
-// AbsorbConfigYAML method (§11).
-//
-// Per-provider absorber implementations populate empty cfg fields
-// from non-empty kv values; the orchestrator's callers (config.go,
-// creds-JSON, csi-JSON, admin-JSON envelope readers) hand the
-// merged map here regardless of which provider is active. Cost-
-// only providers inherit a no-op via MinStub.
+// AbsorbConfigYAML method (§11). Used by TryLoadBootstrapConfigFromKind
+// to absorb the config.yaml snapshot into empty cfg fields after the
+// generic ApplySnapshotKV pass. Cost-only providers inherit a no-op
+// via MinStub.
 //
 // Returns true when at least one assignment happened.
 func fillEmptyFromMap(cfg *config.Config, kv map[string]string) bool {
@@ -538,9 +408,3 @@ func parseFlatYAMLOrJSON(text string) map[string]string {
 	return out
 }
 
-func stringOrDefault(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}

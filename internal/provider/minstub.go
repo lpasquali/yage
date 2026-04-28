@@ -57,6 +57,13 @@ func (MinStub) AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bool {
 	return false
 }
 
+// BootstrapSecrets default: no credential Secrets beyond the generic
+// config.yaml snapshot. Cost-only and not-yet-implemented providers
+// return nil and the kindsync layer skips the credential-fetch step.
+func (MinStub) BootstrapSecrets(cfg *config.Config) []BootstrapSecretRef {
+	return nil
+}
+
 // Purger default: no cleanup needed. Returns nil (NOT
 // ErrNotApplicable) — the orchestrator's --purge flow can call
 // this safely on every provider.

@@ -556,9 +556,23 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	if cfg.HardwareSupportUSDMonth != 0 {
 		m.textInputs[tiHWSupport].SetValue(strconv.FormatFloat(cfg.HardwareSupportUSDMonth, 'f', 2, 64))
 	}
-	for _, i := range []int{tiHWCost, tiHWWatts, tiHWKWH, tiHWSupport} {
-		m.textInputs[i].Validate = validateNonNegativeIntOptional
+	validateNonNegativeFloatOptional := func(v string) error {
+		if strings.TrimSpace(v) == "" {
+			return nil
+		}
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return fmt.Errorf("must be a non-negative number")
+		}
+		if f < 0 {
+			return fmt.Errorf("must be >= 0")
+		}
+		return nil
 	}
+	m.textInputs[tiHWCost].Validate = validateNonNegativeFloatOptional
+	m.textInputs[tiHWWatts].Validate = validateNonNegativeIntOptional
+	m.textInputs[tiHWKWH].Validate = validateNonNegativeFloatOptional
+	m.textInputs[tiHWSupport].Validate = validateNonNegativeFloatOptional
 
 	// Selects.
 	m.selects[siMode] = selectState{options: []string{"cloud", "on-prem"}, cur: 0}

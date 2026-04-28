@@ -35,6 +35,7 @@ import (
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	"github.com/lpasquali/yage/internal/platform/secmem"
 	opcost "github.com/lpasquali/yage/internal/operator/cost"
 
 	// Provider self-registration — every provider that calls
@@ -54,6 +55,9 @@ import (
 )
 
 func main() {
+	if err := secmem.DisableDump(); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: prctl PR_SET_DUMPABLE failed:", err)
+	}
 	var (
 		metricsAddr    string
 		probeAddr      string

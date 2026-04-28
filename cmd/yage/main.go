@@ -20,6 +20,8 @@ import (
 	"github.com/lpasquali/yage/internal/obs"
 	"github.com/lpasquali/yage/internal/orchestrator"
 	"github.com/lpasquali/yage/internal/platform/airgap"
+	syskeyring "github.com/lpasquali/yage/internal/platform/keyring"
+	"github.com/lpasquali/yage/internal/platform/secmem"
 	"github.com/lpasquali/yage/internal/platform/shell"
 	"github.com/lpasquali/yage/internal/pricing"
 	"github.com/lpasquali/yage/internal/ui/cli"
@@ -53,6 +55,9 @@ import (
 )
 
 func main() {
+	if err := secmem.DisableDump(); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: prctl PR_SET_DUMPABLE failed:", err)
+	}
 	cfg := config.Load()
 	// Apply YAML config file before CLI flags so CLI wins over everything.
 	if path := config.ConfigFilePath(os.Args[1:]); path != "" {
@@ -63,6 +68,15 @@ func main() {
 		cfg.ConfigFile = path
 	}
 	cli.Parse(cfg, os.Args[1:])
+
+	// --clear-keyring: remove Proxmox credentials from the OS keychain and exit.
+	if cfg.ClearKeyring {
+		_ = syskeyring.Delete(syskeyring.KeyProxmoxCAPIToken)
+		_ = syskeyring.Delete(syskeyring.KeyProxmoxCAPISecret)
+		_ = syskeyring.Delete(syskeyring.KeyProxmoxAdminToken)
+		fmt.Fprintln(os.Stdout, "Proxmox credentials removed from keyring.")
+		os.Exit(0)
+	}
 
 	config.ClearCredentialEnvVars()
 

@@ -21,6 +21,9 @@ package xapiri
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -35,10 +38,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/creack/pty"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/cost"
+	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/pricing"
 )
 
@@ -238,7 +243,26 @@ type tickMsg time.Time
 type logUpdateMsg struct{}
 
 // editorFinishedMsg is returned by the ExecProcess callback after the editor exits.
-type editorFinishedMsg struct{ err error }
+type editorFinishedMsg struct {
+	err      error
+	resource *editorResource // non-nil when editing a kind resource (not the yage config)
+	tempFile string          // path to the temp file to read and apply back
+}
+
+// editorResourcesMsg carries the result of listing yage-system resources.
+type editorResourcesMsg struct {
+	items []editorResource
+	err   error
+}
+
+// editorSaveMsg is returned after a kind resource has been written back.
+type editorSaveMsg struct{ err error }
+
+// editorResource describes a Secret or ConfigMap in the yage-system namespace.
+type editorResource struct {
+	Kind string // "Secret" or "ConfigMap"
+	Name string
+}
 
 // ptyOutputMsg carries a chunk of raw output from the embedded PTY.
 type ptyOutputMsg struct{ data []byte }
@@ -302,6 +326,13 @@ type dashModel struct {
 	saveKindDone    bool
 	saveKindErr     error
 	deployRequested bool
+
+	// editor tab — kind resource browser
+	editorItems    []editorResource // listed Secrets+ConfigMaps in yage-system
+	editorSelected int              // index into editorItems
+	editorLoading  bool             // listing in progress
+	editorErr      string           // last list/save error
+	editorSaving   bool             // save-back in progress
 
 	// embedded terminal pane (Ctrl+T)
 	termPTY     *os.File
@@ -576,10 +607,21 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.watchLogsCmd()
 
 	case editorFinishedMsg:
-		// Reload config from YAML if ConfigFile is set.
+		if msg.resource != nil {
+			// Kind resource editor: read the edited temp file and apply back.
+			m.editorSaving = true
+			res := msg.resource
+			tmpFile := msg.tempFile
+			cfg := m.cfg
+			return m, func() tea.Msg {
+				err := applyEditedResourceToKind(cfg, res, tmpFile)
+				_ = os.Remove(tmpFile)
+				return editorSaveMsg{err: err}
+			}
+		}
+		// yage config editor: reload config from YAML if ConfigFile is set.
 		if m.cfg.ConfigFile != "" {
 			_ = config.ApplyYAMLFile(m.cfg, m.cfg.ConfigFile)
-			// Rebuild text inputs from reloaded cfg.
 			m2 := newDashModel(m.cfg, m.s)
 			m2.activeTab = tabConfig
 			m2.costRows = m.costRows
@@ -588,6 +630,29 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m2, tea.Batch(textinput.Blink, m2.kickRefreshCmd())
 		}
 		m.activeTab = tabConfig
+		return m, nil
+
+	case editorResourcesMsg:
+		m.editorLoading = false
+		if msg.err != nil {
+			m.editorErr = msg.err.Error()
+		} else {
+			m.editorItems = msg.items
+			m.editorSelected = 0
+			m.editorErr = ""
+		}
+		return m, nil
+
+	case editorSaveMsg:
+		m.editorSaving = false
+		if msg.err != nil {
+			m.editorErr = "save failed: " + msg.err.Error()
+		} else {
+			m.editorErr = ""
+			// Reload the resource list to reflect any changes.
+			m.editorLoading = true
+			return m, m.loadEditorResourcesCmd()
+		}
 		return m, nil
 
 	case ptyOutputMsg:
@@ -660,7 +725,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "alt+2":
 			m.activeTab = tabEditor
-			return m, m.openEditorCmd()
+			return m, m.switchToEditorTab()
 		case "alt+3":
 			m.activeTab = tabCosts
 			return m, nil
@@ -682,14 +747,14 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key == tea.KeyCtrlLeft {
 			m.activeTab = (m.activeTab - 1 + tabCount) % tabCount
 			if m.activeTab == tabEditor {
-				return m, m.openEditorCmd()
+				return m, m.switchToEditorTab()
 			}
 			return m, nil
 		}
 		if key == tea.KeyCtrlRight {
 			m.activeTab = (m.activeTab + 1) % tabCount
 			if m.activeTab == tabEditor {
-				return m, m.openEditorCmd()
+				return m, m.switchToEditorTab()
 			}
 			return m, nil
 		}
@@ -757,7 +822,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case !inTextField && keyStr == "2":
 			m.activeTab = tabEditor
-			return m, m.openEditorCmd()
+			return m, m.switchToEditorTab()
 		case !inTextField && keyStr == "3":
 			m.activeTab = tabCosts
 			return m, nil
@@ -781,7 +846,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeTab = (m.activeTab + 1) % tabCount
 			}
 			if m.activeTab == tabEditor {
-				return m, m.openEditorCmd()
+				return m, m.switchToEditorTab()
 			}
 			return m, nil
 		}
@@ -791,6 +856,9 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tabConfig:
 			return m.updateConfigTab(msg)
+
+		case tabEditor:
+			return m.updateEditorTab(msg)
 
 		case tabLogs:
 			return m.updateLogsTab(msg)
@@ -1033,6 +1101,301 @@ func (m *dashModel) saveCostCredsCmd() tea.Cmd {
 			return saveCostCredsMsg{err: kindsync.WriteCostCompareSecret(cfg, creds)}
 		},
 	)
+}
+
+// ─── editor tab ───────────────────────────────────────────────────────────────
+
+// switchToEditorTab transitions to the editor tab and kicks a resource list load.
+func (m dashModel) switchToEditorTab() tea.Cmd {
+	if !m.editorLoading && len(m.editorItems) == 0 {
+		return m.loadEditorResourcesCmd()
+	}
+	return nil
+}
+
+// loadEditorResourcesCmd lists Secrets and ConfigMaps in the yage-system
+// namespace on the kind management cluster.
+func (m dashModel) loadEditorResourcesCmd() tea.Cmd {
+	cfg := m.cfg
+	return func() tea.Msg {
+		kctx := "kind-" + cfg.KindClusterName
+		cli, err := k8sclient.ForContext(kctx)
+		if err != nil {
+			return editorResourcesMsg{err: fmt.Errorf("connect to %s: %w", kctx, err)}
+		}
+		bg := context.Background()
+		var items []editorResource
+
+		secrets, err := cli.Typed.CoreV1().Secrets(kindsync.BootstrapConfigNamespace).List(bg, metav1.ListOptions{})
+		if err != nil {
+			return editorResourcesMsg{err: fmt.Errorf("list secrets: %w", err)}
+		}
+		for _, s := range secrets.Items {
+			items = append(items, editorResource{Kind: "Secret", Name: s.Name})
+		}
+
+		cms, err := cli.Typed.CoreV1().ConfigMaps(kindsync.BootstrapConfigNamespace).List(bg, metav1.ListOptions{})
+		if err == nil {
+			for _, cm := range cms.Items {
+				items = append(items, editorResource{Kind: "ConfigMap", Name: cm.Name})
+			}
+		}
+
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].Kind != items[j].Kind {
+				return items[i].Kind < items[j].Kind
+			}
+			return items[i].Name < items[j].Name
+		})
+		return editorResourcesMsg{items: items}
+	}
+}
+
+// updateEditorTab handles key events on the editor tab.
+func (m dashModel) updateEditorTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.Type
+	keyStr := msg.String()
+	if m.editorLoading || m.editorSaving {
+		return m, nil
+	}
+	switch {
+	case key == tea.KeyUp || keyStr == "k":
+		if m.editorSelected > 0 {
+			m.editorSelected--
+		}
+	case key == tea.KeyDown || keyStr == "j":
+		if m.editorSelected < len(m.editorItems)-1 {
+			m.editorSelected++
+		}
+	case keyStr == "r":
+		m.editorLoading = true
+		m.editorErr = ""
+		return m, m.loadEditorResourcesCmd()
+	case key == tea.KeyEnter:
+		if len(m.editorItems) == 0 {
+			return m, nil
+		}
+		res := m.editorItems[m.editorSelected]
+		return m, m.openKindResourceEditorCmd(res)
+	}
+	return m, nil
+}
+
+// openKindResourceEditorCmd fetches a Secret or ConfigMap from kind, decodes
+// its data into a cleartext temp file, and opens $EDITOR on it.
+func (m dashModel) openKindResourceEditorCmd(res editorResource) tea.Cmd {
+	cfg := m.cfg
+	return func() tea.Msg {
+		kctx := "kind-" + cfg.KindClusterName
+		cli, err := k8sclient.ForContext(kctx)
+		if err != nil {
+			return editorResourcesMsg{err: fmt.Errorf("connect to %s: %w", kctx, err)}
+		}
+		bg := context.Background()
+
+		var body string
+		switch res.Kind {
+		case "Secret":
+			sec, err := cli.Typed.CoreV1().Secrets(kindsync.BootstrapConfigNamespace).Get(bg, res.Name, metav1.GetOptions{})
+			if err != nil {
+				return editorResourcesMsg{err: fmt.Errorf("get secret %s: %w", res.Name, err)}
+			}
+			body = secretToEditableYAML(sec.Data, res)
+		case "ConfigMap":
+			cm, err := cli.Typed.CoreV1().ConfigMaps(kindsync.BootstrapConfigNamespace).Get(bg, res.Name, metav1.GetOptions{})
+			if err != nil {
+				return editorResourcesMsg{err: fmt.Errorf("get configmap %s: %w", res.Name, err)}
+			}
+			body = configMapToEditableYAML(cm.Data, res)
+		default:
+			return editorResourcesMsg{err: fmt.Errorf("unknown kind %s", res.Kind)}
+		}
+
+		tmp, err := os.CreateTemp("", "yage-kind-*.yaml")
+		if err != nil {
+			return editorResourcesMsg{err: err}
+		}
+		if _, err := tmp.WriteString(body); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+			return editorResourcesMsg{err: err}
+		}
+		_ = tmp.Close()
+
+		editor := os.Getenv("EDITOR")
+		if editor == "" {
+			editor = "vi"
+		}
+		cmd := exec.Command(editor, tmp.Name())
+		resPtr := res
+		tmpName := tmp.Name()
+		return tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return editorFinishedMsg{err: err, resource: &resPtr, tempFile: tmpName}
+		})
+	}
+}
+
+// secretToEditableYAML converts Secret data to a cleartext YAML for editing.
+// Values are base64-decoded and JSON-quoted.
+func secretToEditableYAML(data map[string][]byte, res editorResource) string {
+	var sb strings.Builder
+	sb.WriteString("# ⚠️  🔓  🎥  WARNING: CLEARTEXT SECRETS VISIBLE ON SCREEN  🎥  🔓  ⚠️\n")
+	sb.WriteString("# This file contains the decoded contents of Secret: ")
+	sb.WriteString(kindsync.BootstrapConfigNamespace + "/" + res.Name + "\n")
+	sb.WriteString("# Anyone watching your screen can see these values!\n")
+	sb.WriteString("# The temp file is deleted automatically after you close the editor.\n")
+	sb.WriteString("#\n# Format: key: \"json-quoted-value\"  (one entry per line)\n\n")
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		q, _ := json.Marshal(string(data[k]))
+		sb.WriteString(k + ": " + string(q) + "\n")
+	}
+	return sb.String()
+}
+
+// configMapToEditableYAML converts ConfigMap data to a simple YAML for editing.
+func configMapToEditableYAML(data map[string]string, res editorResource) string {
+	var sb strings.Builder
+	sb.WriteString("# ConfigMap: ")
+	sb.WriteString(kindsync.BootstrapConfigNamespace + "/" + res.Name + "\n\n")
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		q, _ := json.Marshal(data[k])
+		sb.WriteString(k + ": " + string(q) + "\n")
+	}
+	return sb.String()
+}
+
+// applyEditedResourceToKind reads the edited temp file and patches the Secret
+// or ConfigMap back to kind, re-encoding string values to base64 for Secrets.
+func applyEditedResourceToKind(cfg *config.Config, res *editorResource, tmpFile string) error {
+	raw, err := os.ReadFile(tmpFile)
+	if err != nil {
+		return err
+	}
+	kv := parseEditableYAML(string(raw))
+	if len(kv) == 0 {
+		return nil
+	}
+	kctx := "kind-" + cfg.KindClusterName
+	cli, err := k8sclient.ForContext(kctx)
+	if err != nil {
+		return err
+	}
+	bg := context.Background()
+	ns := kindsync.BootstrapConfigNamespace
+
+	switch res.Kind {
+	case "Secret":
+		data := make(map[string][]byte, len(kv))
+		for k, v := range kv {
+			data[k] = []byte(v)
+		}
+		sec, err := cli.Typed.CoreV1().Secrets(ns).Get(bg, res.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		sec.Data = data
+		_, err = cli.Typed.CoreV1().Secrets(ns).Update(bg, sec, metav1.UpdateOptions{})
+		return err
+	case "ConfigMap":
+		cm, err := cli.Typed.CoreV1().ConfigMaps(ns).Get(bg, res.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		cm.Data = kv
+		_, err = cli.Typed.CoreV1().ConfigMaps(ns).Update(bg, cm, metav1.UpdateOptions{})
+		return err
+	}
+	return fmt.Errorf("unknown kind %s", res.Kind)
+}
+
+// parseEditableYAML parses the editable YAML format (key: "json-quoted-value")
+// skipping comment lines. Returns the decoded key-value map.
+func parseEditableYAML(text string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, " \t\r")
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.IndexByte(line, ':')
+		if idx < 0 {
+			continue
+		}
+		k := strings.TrimSpace(line[:idx])
+		v := strings.TrimSpace(line[idx+1:])
+		if k == "" {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal([]byte(v), &s); err == nil {
+			out[k] = s
+		} else {
+			// Plain unquoted value — try as base64 (for round-tripping raw binary).
+			if dec, err2 := base64.StdEncoding.DecodeString(v); err2 == nil {
+				out[k] = string(dec)
+			} else {
+				out[k] = v
+			}
+		}
+	}
+	return out
+}
+
+// renderEditorTab renders the kind resource browser.
+func (m dashModel) renderEditorTab(w, h int) string {
+	var lines []string
+	lines = append(lines, stHdr.Render(" yage-system resources  (enter=edit, r=refresh)"))
+	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
+
+	if m.editorLoading {
+		lines = append(lines, stMuted.Render("  loading…"))
+	} else if m.editorSaving {
+		lines = append(lines, stWarn.Render("  saving…"))
+	} else if m.editorErr != "" {
+		lines = append(lines, stBad.Render("  "+m.editorErr))
+		lines = append(lines, stMuted.Render("  r = retry"))
+	} else if len(m.editorItems) == 0 {
+		lines = append(lines, stMuted.Render("  no resources found in "+kindsync.BootstrapConfigNamespace))
+		lines = append(lines, stMuted.Render("  r = refresh"))
+	} else {
+		for i, res := range m.editorItems {
+			var kindBadge string
+			if res.Kind == "Secret" {
+				kindBadge = stWarn.Render("🔑 Secret    ")
+			} else {
+				kindBadge = stMuted.Render("📄 ConfigMap ")
+			}
+			name := res.Name
+			if i == m.editorSelected {
+				lines = append(lines, stAccent.Render("▸ ")+kindBadge+stBold.Render(name))
+			} else {
+				lines = append(lines, "  "+kindBadge+stMuted.Render(name))
+			}
+		}
+		lines = append(lines, "")
+		lines = append(lines, stMuted.Render("  ↑/↓  navigate    enter  edit in $EDITOR    r  refresh"))
+		if m.editorSelected < len(m.editorItems) &&
+			m.editorItems[m.editorSelected].Kind == "Secret" {
+			lines = append(lines, "")
+			lines = append(lines, stWarn.Render("  ⚠️  🎥  Editing a Secret writes values in CLEARTEXT to a temp file."))
+			lines = append(lines, stWarn.Render("     Anyone who can see your screen will see the secret values."))
+		}
+	}
+
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
 // openEditorCmd launches $EDITOR (or vi) on cfg.ConfigFile (or a temp file).
@@ -1477,8 +1840,7 @@ func (m dashModel) View() string {
 	case tabConfig:
 		content = m.renderConfigTab(m.width, usable)
 	case tabEditor:
-		// Editor launches via ExecProcess; show a brief message while waiting.
-		content = m.renderEditorPlaceholder(m.width, usable)
+		content = m.renderEditorTab(m.width, usable)
 	case tabCosts:
 		content = m.renderCostsTab(m.width, usable)
 	case tabLogs:

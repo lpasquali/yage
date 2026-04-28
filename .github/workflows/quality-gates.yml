@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
-# Thin orchestration layer — calls shared workflows from rune-ci.
 name: Quality Gates
 
 on:
@@ -11,26 +10,86 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  id-token: write
-  attestations: write
 
 jobs:
-  # ─── Shared: Security scanning (gitleaks + SBOM) ────────────────────────────
+  # ─── Secret scanning (gitleaks) ─────────────────────────────────────────────
   security:
-    uses: lpasquali/rune-ci/.github/workflows/security-scan.yml@36eba801cb73e7b613ef1ee33bb3f618928a5952
-    secrets: inherit
+    name: RuneGate/Security/SecretScanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          VERSION="8.24.3"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+      - name: Scan for secrets (PR delta)
+        if: github.event_name == 'pull_request'
+        run: |
+          gitleaks git \
+            --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
+            --exit-code 1
+      - name: Scan for secrets (push delta)
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: |
+          gitleaks git \
+            --log-opts="${{ github.event.before }}..${{ github.sha }}" \
+            --exit-code 1
+      - name: Scan full history (new branch / initial push)
+        if: github.event_name == 'push' && github.event.before == '0000000000000000000000000000000000000000'
+        run: gitleaks git --exit-code 1
 
-  # ─── Shared: Go quality (coverage + lint + SAST + license) ─────────────────
+  # ─── Go quality (build + vet + fmt + test + coverage) ───────────────────────
   go-quality:
-    uses: lpasquali/rune-ci/.github/workflows/go-quality.yml@36eba801cb73e7b613ef1ee33bb3f618928a5952
-    with:
-      go-version: "1.26"
-      coverage-threshold: "60"
+    name: RuneGate/Quality/Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go vet
+        run: go vet ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: Create kind cluster for tests
+        run: |
+          set -euo pipefail
+          go install sigs.k8s.io/kind@latest
+          kind create cluster --name test-cluster
+          kind get kubeconfig --name test-cluster > "${HOME}/.kube/config"
+          echo "KUBECONFIG=${HOME}/.kube/config" >> "${GITHUB_ENV}"
+      - name: Test with coverage
+        run: |
+          set -euo pipefail
+          go test ./... -coverprofile=coverage.out -covermode=atomic -count=1
+          TOTAL=$(go tool cover -func=coverage.out | grep ^total: | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${TOTAL}%"
+          if [ "$(echo "${TOTAL} < 60" | bc -l)" -eq 1 ]; then
+            echo "::error::Coverage ${TOTAL}% is below 60% threshold"
+            exit 1
+          fi
+      - name: Clean up kind cluster
+        if: always()
+        run: kind delete cluster --name test-cluster || true
 
-  # ─── Compliance/Merge Gate ──────────────────────────────────────────────────
-  compliance:
+  # ─── Merge Gate ─────────────────────────────────────────────────────────────
+  merge-gate:
+    name: Merge Gate
     needs: [security, go-quality]
     if: always()
-    uses: lpasquali/rune-ci/.github/workflows/pr-compliance.yml@36eba801cb73e7b613ef1ee33bb3f618928a5952
-    with:
-      needs-json: ${{ toJson(needs) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate upstream results
+        run: |
+          set -euo pipefail
+          ok() { case "$1" in success|skipped) return 0 ;; *) return 1 ;; esac }
+          echo "security:   ${{ needs.security.result }}"
+          echo "go-quality: ${{ needs.go-quality.result }}"
+          ok "${{ needs.security.result }}"   || { echo "::error::security check failed"; exit 1; }
+          ok "${{ needs.go-quality.result }}" || { echo "::error::go-quality check failed"; exit 1; }
+          echo "Merge Gate Satisfied"

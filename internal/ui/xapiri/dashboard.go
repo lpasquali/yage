@@ -340,8 +340,9 @@ func (m *dashModel) isCloud() bool { return m.selects[siMode].value() == "cloud"
 func (m *dashModel) isHidden(fid int) bool {
 	isCloud := m.isCloud()
 	switch fid {
-	case focEnv, focResil, focApps, focDBGB, focEgressGB,
-		focHasQueue, focHasObjStore, focHasCache,
+	case focEnv, focResil, focApps, focDBGB, focEgressGB:
+		return false // visible on both cloud and on-prem
+	case focHasQueue, focHasObjStore, focHasCache,
 		focDCLoc, focBudget, focHeadroom:
 		return !isCloud
 	case focBootstrap, focOvercommit:

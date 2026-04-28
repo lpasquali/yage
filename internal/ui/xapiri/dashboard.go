@@ -38,7 +38,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -139,17 +138,18 @@ const (
 	toiVictoria   = 12
 	toiMetrics    = 13
 	toiSPIRE      = 14
-	toiCount      = 15
+	toiTCO        = 15 // on-prem TCO fields enabled
+	toiCount      = 16
 )
 
 // ─── logical focus IDs (tab order) ───────────────────────────────────────────
 
 const (
-	focKindName     = iota // 0
-	focK8sVer              // 1
-	focWorkloadName        // 2
-	focProvider            // 3
-	focMode                // 4
+	focMode                = iota // 0
+	focProvider                   // 1
+	focKindName            // 2
+	focK8sVer              // 3
+	focWorkloadName        // 4
 	focEnv                 // 5
 	focResil               // 6
 	focApps                // 7
@@ -195,11 +195,12 @@ const (
 	focDCLoc               // 47
 	focBudget              // 48
 	focHeadroom            // 49
-	focHWCost              // 50
-	focHWWatts             // 51
-	focHWKWH               // 52
-	focHWSupport           // 53
-	focCount               // 54 — must be last
+	focTCO                 // 50 — TCO toggle (on-prem only)
+	focHWCost              // 51
+	focHWWatts             // 52
+	focHWKWH               // 53
+	focHWSupport           // 54
+	focCount               // 55 — must be last
 )
 
 // ─── per-field metadata ───────────────────────────────────────────────────────
@@ -221,13 +222,14 @@ type fieldMeta struct {
 }
 
 var dashFields = []fieldMeta{
-	// ── Cluster ──────────────────────────────────────────────────────────── fid 0-3
+	// ── Mode ─────────────────────────────────────────────────────────────── fid 0
+	{fkSelect, siMode, "mode", "Mode", false},
+	// ── Provider ─────────────────────────────────────────────────────────── fid 1
+	{fkSelect, siProvider, "provider", "Provider", false},
+	// ── Cluster ──────────────────────────────────────────────────────────── fid 2-4
 	{fkText, tiKindName, "kind name", "Cluster", false},
 	{fkText, tiK8sVer, "k8s version", "", false},
 	{fkText, tiWorkloadName, "workload name", "", false},
-	{fkSelect, siProvider, "provider", "", false},
-	// ── Mode ─────────────────────────────────────────────────────────────── fid 4
-	{fkSelect, siMode, "mode", "Mode", false},
 	// ── Tier ─────────────────────────────────────────────────────────────── fid 5-6
 	{fkSelect, siEnv, "environment", "Tier", true},
 	{fkSelect, siResil, "resilience", "", true},
@@ -283,11 +285,12 @@ var dashFields = []fieldMeta{
 	{fkText, tiDCLoc, "data-center loc", "Geo", false},
 	{fkText, tiBudget, "budget USD/mo", "Budget", false},
 	{fkText, tiHeadroom, "headroom %", "", false},
-	// ── TCO (on-prem only) ───────────────────────────────────────────────── fid 48-51
-	{fkText, tiHWCost, "HW cost USD", "TCO", false},
-	{fkText, tiHWWatts, "HW watts", "", false},
-	{fkText, tiHWKWH, "kWh rate USD", "", false},
-	{fkText, tiHWSupport, "support USD/mo", "", false},
+	// ── TCO (on-prem only) ───────────────────────────────────────────────── fid 50-54
+	{fkToggle, toiTCO, "TCO enabled", "TCO", false},
+	{fkText, tiHWCost, "  HW cost USD", "", false},
+	{fkText, tiHWWatts, "  HW watts", "", false},
+	{fkText, tiHWKWH, "  kWh rate USD", "", false},
+	{fkText, tiHWSupport, "  support USD/mo", "", false},
 }
 
 // ─── tab IDs ─────────────────────────────────────────────────────────────────
@@ -642,6 +645,7 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.toggles[toiVictoria] = cfg.VictoriaMetricsEnabled
 	m.toggles[toiMetrics] = cfg.EnableMetricsServer
 	m.toggles[toiSPIRE] = cfg.SPIREEnabled
+	m.toggles[toiTCO] = cfg.HardwareCostUSD != 0 || cfg.HardwareWatts != 0 || cfg.HardwareKWHRateUSD != 0 || cfg.HardwareSupportUSDMonth != 0
 
 	// Cost-tab credential inputs — seeded from saved credentials.
 	credsInit := [ccCount]string{
@@ -759,8 +763,8 @@ func (m *dashModel) isHidden(fid int) bool {
 	isCloud := m.isCloud()
 	switch fid {
 	// Always visible.
-	case focKindName, focK8sVer, focWorkloadName, focProvider,
-		focMode, focEnv, focResil, focApps, focDBGB, focEgressGB:
+	case focMode, focProvider, focKindName, focK8sVer, focWorkloadName,
+		focEnv, focResil, focApps, focDBGB, focEgressGB:
 		return false
 	// Cloud sizing add-ons.
 	case focHasQueue, focHasObjStore, focHasCache:
@@ -795,9 +799,11 @@ func (m *dashModel) isHidden(fid int) bool {
 	// Geo + Budget: cloud only.
 	case focDCLoc, focBudget, focHeadroom:
 		return !isCloud
-	// TCO: on-prem only.
-	case focHWCost, focHWWatts, focHWKWH, focHWSupport:
+	// TCO: on-prem only; detail fields gated by the toggle.
+	case focTCO:
 		return isCloud
+	case focHWCost, focHWWatts, focHWKWH, focHWSupport:
+		return isCloud || !m.toggles[toiTCO]
 	}
 	return false
 }
@@ -2527,49 +2533,99 @@ func (m dashModel) renderBottomStrip() string {
 		return line + suffix
 	}
 	sorted := m.sortedCostRows()
-	var parts []string
-	for _, r := range sorted {
-		if r.Err != nil {
-			parts = append(parts, stMuted.Render(r.ProviderName+" n/a"))
-			continue
+
+	// Find cheapest once.
+	cheapest := 0.0
+	for _, rr := range sorted {
+		if rr.Err == nil && rr.Estimate.TotalUSDMonthly > 0 {
+			cheapest = rr.Estimate.TotalUSDMonthly
+			break
 		}
-		total := r.Estimate.TotalUSDMonthly
-		var style lipgloss.Style
-		cheapest := 0.0
-		for _, rr := range sorted {
-			if rr.Err == nil && rr.Estimate.TotalUSDMonthly > 0 {
-				cheapest = rr.Estimate.TotalUSDMonthly
-				break
-			}
-		}
-		budget := m.cfg.BudgetUSDMonth
-		switch {
-		case budget > 0 && total > budget:
-			style = stBad
-		case cheapest > 0 && total <= cheapest:
-			style = stOK
-		case cheapest > 0 && total > cheapest*1.5:
-			style = stWarn
-		default:
-			style = lipgloss.NewStyle()
-		}
-		parts = append(parts, style.Render(fmt.Sprintf("%s $%.0f", r.ProviderName, total)))
 	}
+	budget := m.cfg.BudgetUSDMonth
+
+	// Build fixed suffix first so we know how much room is left.
 	suffix := ""
 	if m.costLoading {
-		suffix = stMuted.Render("  (fetching…)")
+		suffix = "  (fetching…)"
 	}
 	if m.termRunning {
 		if m.termFocused {
-			suffix += stAccent.Render("  [term:active]")
+			suffix += "  [term:active]"
 		} else {
-			suffix += stMuted.Render("  [term:bg]")
+			suffix += "  [term:bg]"
 		}
 	}
-	content := "  " + strings.Join(parts, stMuted.Render("  ")) + suffix
-	// Hard-cap to terminal width so the bar never wraps onto a second line.
-	if m.width > 0 && lipgloss.Width(content) > m.width {
-		content = ansi.Truncate(content, m.width-1, "…")
+
+	// Greedy-fit: add provider tokens one by one until they no longer fit.
+	// Each token is "  provider $NNN". Width budget = terminal width - 2
+	// (leading indent) - suffix width. When a token doesn't fit we stop and
+	// show "+N more" so the bar is always exactly one line.
+	avail := m.width
+	if avail <= 0 {
+		avail = 120 // safe default before WindowSizeMsg
+	}
+	avail -= 2 // leading "  "
+	avail -= len(suffix)
+
+	var kept []string
+	skipped := 0
+	sep := "  "
+	for _, r := range sorted {
+		var token string
+		if r.Err != nil {
+			token = r.ProviderName + " n/a"
+		} else {
+			token = fmt.Sprintf("%s $%.0f", r.ProviderName, r.Estimate.TotalUSDMonthly)
+		}
+		need := len(token)
+		if len(kept) > 0 {
+			need += len(sep)
+		}
+		if need > avail {
+			skipped++
+			continue
+		}
+		avail -= need
+		kept = append(kept, token)
+	}
+
+	// Render kept tokens with colour.
+	var renderedParts []string
+	for _, tok := range kept {
+		name := strings.Fields(tok)[0]
+		// Find the original row to apply colour.
+		var style lipgloss.Style
+		for _, r := range sorted {
+			if r.ProviderName != name {
+				continue
+			}
+			if r.Err != nil {
+				style = stMuted
+			} else {
+				total := r.Estimate.TotalUSDMonthly
+				switch {
+				case budget > 0 && total > budget:
+					style = stBad
+				case cheapest > 0 && total <= cheapest:
+					style = stOK
+				case cheapest > 0 && total > cheapest*1.5:
+					style = stWarn
+				default:
+					style = lipgloss.NewStyle()
+				}
+			}
+			break
+		}
+		renderedParts = append(renderedParts, style.Render(tok))
+	}
+
+	content := "  " + strings.Join(renderedParts, stMuted.Render(sep))
+	if skipped > 0 {
+		content += stMuted.Render(fmt.Sprintf("  +%d more", skipped))
+	}
+	if suffix != "" {
+		content += stMuted.Render(suffix)
 	}
 	return line + content
 }

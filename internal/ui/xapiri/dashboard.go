@@ -86,12 +86,14 @@ const (
 	tiObjVol
 	tiCacheCPU
 	tiCacheMem
-	tiCPEndpointIP // control-plane VIP
-	tiNodeIPRanges // node IP range
+	tiCPEndpointIP     // workload control-plane VIP
+	tiNodeIPRanges     // workload node IP range
 	tiGateway
 	tiIPPrefix
 	tiDNSServers
-	tiArgoURL       // AppOfApps git URL
+	tiMgmtCPEndpointIP // mgmt control-plane VIP (on-prem)
+	tiMgmtNodeIPRanges // mgmt node IP ranges (on-prem)
+	tiArgoURL          // AppOfApps git URL
 	tiArgoPath      // AppOfApps git path
 	tiArgoRef       // AppOfApps git ref
 	tiImgMirror     // image registry mirror
@@ -170,31 +172,33 @@ const (
 	focGateway             // 25
 	focIPPrefix            // 26
 	focDNSServers          // 27
-	focArgoURL             // 28
-	focArgoPath            // 29
-	focArgoRef             // 30
-	focAirgapped           // 31
-	focImgMirror           // 32
-	focCABundle            // 33
-	focHelmMirror          // 34
-	focKyverno             // 35
-	focCertMgr             // 36
-	focCNPG                // 37
-	focCrossplane          // 38
-	focExtSecrets          // 39
-	focOTEL                // 40
-	focGrafana             // 41
-	focVictoria            // 42
-	focMetrics             // 43
-	focSPIRE               // 44
-	focDCLoc               // 45
-	focBudget              // 46
-	focHeadroom            // 47
-	focHWCost              // 48
-	focHWWatts             // 49
-	focHWKWH               // 50
-	focHWSupport           // 51
-	focCount               // 52 — must be last
+	focMgmtCPEndpointIP   // 28 — on-prem mgmt cluster VIP
+	focMgmtNodeIPRanges   // 29 — on-prem mgmt node IP ranges
+	focArgoURL             // 30
+	focArgoPath            // 31
+	focArgoRef             // 32
+	focAirgapped           // 33
+	focImgMirror           // 34
+	focCABundle            // 35
+	focHelmMirror          // 36
+	focKyverno             // 37
+	focCertMgr             // 38
+	focCNPG                // 39
+	focCrossplane          // 40
+	focExtSecrets          // 41
+	focOTEL                // 42
+	focGrafana             // 43
+	focVictoria            // 44
+	focMetrics             // 45
+	focSPIRE               // 46
+	focDCLoc               // 47
+	focBudget              // 48
+	focHeadroom            // 49
+	focHWCost              // 50
+	focHWWatts             // 51
+	focHWKWH               // 52
+	focHWSupport           // 53
+	focCount               // 54 — must be last
 )
 
 // ─── per-field metadata ───────────────────────────────────────────────────────
@@ -245,13 +249,16 @@ var dashFields = []fieldMeta{
 	// ── Bootstrap (on-prem only) ─────────────────────────────────────────── fid 21-22
 	{fkSelect, siBootstrap, "bootstrap mode", "Bootstrap", false},
 	{fkToggle, toiOvercommit, "allow overcommit", "", false},
-	// ── Network ──────────────────────────────────────────────────────────── fid 23-27
-	{fkText, tiCPEndpointIP, "CP endpoint IP", "Network", false},
+	// ── Workload Network (on-prem only) ──────────────────────────────────── fid 23-27
+	{fkText, tiCPEndpointIP, "CP endpoint IP", "Workload Network", false},
 	{fkText, tiNodeIPRanges, "node IP ranges", "", false},
 	{fkText, tiGateway, "gateway", "", false},
 	{fkText, tiIPPrefix, "IP prefix", "", false},
 	{fkText, tiDNSServers, "DNS servers", "", false},
-	// ── ArgoCD ───────────────────────────────────────────────────────────── fid 28-30
+	// ── Mgmt Network (on-prem only) ───────────────────────────────────────── fid 28-29
+	{fkText, tiMgmtCPEndpointIP, "CP endpoint IP", "Mgmt Network", false},
+	{fkText, tiMgmtNodeIPRanges, "node IP ranges", "", false},
+	// ── ArgoCD ───────────────────────────────────────────────────────────── fid 30-32
 	{fkText, tiArgoURL, "app-of-apps URL", "ArgoCD", false},
 	{fkText, tiArgoPath, "app-of-apps path", "", false},
 	{fkText, tiArgoRef, "app-of-apps ref", "", false},
@@ -538,6 +545,8 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.textInputs[tiGateway].SetValue(cfg.Gateway)
 	m.textInputs[tiIPPrefix].SetValue(cfg.IPPrefix)
 	m.textInputs[tiDNSServers].SetValue(cfg.DNSServers)
+	m.textInputs[tiMgmtCPEndpointIP].SetValue(cfg.Mgmt.ControlPlaneEndpointIP)
+	m.textInputs[tiMgmtNodeIPRanges].SetValue(cfg.Mgmt.NodeIPRanges)
 	m.textInputs[tiArgoURL].SetValue(cfg.ArgoCD.AppOfAppsGitURL)
 	m.textInputs[tiArgoPath].SetValue(cfg.ArgoCD.AppOfAppsGitPath)
 	m.textInputs[tiArgoRef].SetValue(cfg.ArgoCD.AppOfAppsGitRef)
@@ -601,7 +610,12 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 		m.selects[siBootstrap].cur = 1
 	}
 
-	provOptions := append([]string{"auto"}, provider.Registered()...)
+	// Build the initial provider list filtered to the resolved mode.
+	initialMode := "cloud"
+	if s.fork == forkOnPrem {
+		initialMode = "on-prem"
+	}
+	provOptions := providerListForMode(initialMode)
 	provCur := 0
 	for i, p := range provOptions {
 		if p == cfg.InfraProvider {
@@ -698,6 +712,48 @@ func (m dashModel) watchLogsCmd() tea.Cmd {
 
 func (m *dashModel) isCloud() bool { return m.selects[siMode].value() == "cloud" }
 
+// onPremProviders is the set of provider IDs that only make sense for bare-metal / VM deployments.
+var onPremProviders = map[string]bool{
+	"proxmox":   true,
+	"vsphere":   true,
+	"openstack": true,
+	"docker":    true,
+}
+
+// providerListForMode returns ["auto", ...] filtered to the providers that
+// match mode ("cloud" or "on-prem"). "auto" is always first.
+func providerListForMode(mode string) []string {
+	all := provider.Registered()
+	out := make([]string, 1, len(all)+1)
+	out[0] = "auto"
+	onPrem := mode == "on-prem"
+	for _, p := range all {
+		if onPremProviders[p] == onPrem {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// rebuildProviderList refreshes m.selects[siProvider].options for the current
+// mode. If the previously selected provider is still valid it is preserved;
+// otherwise the select resets to "auto". Also clears stale cost rows since the
+// affordable provider set may have changed.
+func (m dashModel) rebuildProviderList() dashModel {
+	newOpts := providerListForMode(m.selects[siMode].value())
+	cur := m.selects[siProvider].value()
+	newCur := 0
+	for i, p := range newOpts {
+		if p == cur {
+			newCur = i
+			break
+		}
+	}
+	m.selects[siProvider] = selectState{options: newOpts, cur: newCur}
+	m.costRows = nil // stale rows belong to the old mode
+	return m
+}
+
 func (m *dashModel) isHidden(fid int) bool {
 	isCloud := m.isCloud()
 	switch fid {
@@ -717,9 +773,12 @@ func (m *dashModel) isHidden(fid int) bool {
 	// On-prem only.
 	case focBootstrap, focOvercommit:
 		return isCloud
-	// Network: always visible.
+	// Workload network: on-prem only (cloud VPCs are fully managed).
 	case focCPEndpointIP, focNodeIPRanges, focGateway, focIPPrefix, focDNSServers:
-		return false
+		return isCloud
+	// Mgmt cluster network: on-prem only.
+	case focMgmtCPEndpointIP, focMgmtNodeIPRanges:
+		return isCloud
 	// ArgoCD: hidden when env=dev (ArgoCD is not installed in dev tier).
 	case focArgoURL, focArgoPath, focArgoRef:
 		return m.selects[siEnv].value() == "dev"
@@ -1308,11 +1367,17 @@ func (m dashModel) updateConfigTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case key == tea.KeyRight || key == tea.KeyEnter || keyStr == "l":
 			m.selects[meta.subIdx].next()
+			if meta.subIdx == siMode {
+				m = m.rebuildProviderList()
+			}
 			if meta.costKey {
 				return m, m.markDirty()
 			}
 		case key == tea.KeyLeft || keyStr == "h":
 			m.selects[meta.subIdx].prev()
+			if meta.subIdx == siMode {
+				m = m.rebuildProviderList()
+			}
 			if meta.costKey {
 				return m, m.markDirty()
 			}
@@ -2118,12 +2183,14 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 		snap.InfraProviderDefaulted = false
 	}
 
-	// Network.
+	// Network (on-prem only; cloud fields are managed by the cloud provider).
 	snap.ControlPlaneEndpointIP = strings.TrimSpace(m.textInputs[tiCPEndpointIP].Value())
 	snap.NodeIPRanges = strings.TrimSpace(m.textInputs[tiNodeIPRanges].Value())
 	snap.Gateway = strings.TrimSpace(m.textInputs[tiGateway].Value())
 	snap.IPPrefix = strings.TrimSpace(m.textInputs[tiIPPrefix].Value())
 	snap.DNSServers = strings.TrimSpace(m.textInputs[tiDNSServers].Value())
+	snap.Mgmt.ControlPlaneEndpointIP = strings.TrimSpace(m.textInputs[tiMgmtCPEndpointIP].Value())
+	snap.Mgmt.NodeIPRanges = strings.TrimSpace(m.textInputs[tiMgmtNodeIPRanges].Value())
 
 	// ArgoCD git coordinates.
 	if u := strings.TrimSpace(m.textInputs[tiArgoURL].Value()); u != "" {
@@ -2316,6 +2383,8 @@ func (m *dashModel) flushToCfg() {
 	m.cfg.Gateway = snap.Gateway
 	m.cfg.IPPrefix = snap.IPPrefix
 	m.cfg.DNSServers = snap.DNSServers
+	m.cfg.Mgmt.ControlPlaneEndpointIP = snap.Mgmt.ControlPlaneEndpointIP
+	m.cfg.Mgmt.NodeIPRanges = snap.Mgmt.NodeIPRanges
 	m.cfg.Airgapped = snap.Airgapped
 	m.cfg.ImageRegistryMirror = snap.ImageRegistryMirror
 	m.cfg.InternalCABundle = snap.InternalCABundle

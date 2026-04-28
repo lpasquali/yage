@@ -288,11 +288,6 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 			}
 		}
 		if found {
-			if cli, err := k8sclient.ForContext("kind-" + cfg.KindClusterName); err == nil {
-				bg := context.Background()
-				_ = cli.Typed.CoreV1().Namespaces().
-					Delete(bg, cfg.Providers.Proxmox.BootstrapSecretNamespace, metav1.DeleteOptions{})
-			}
 			DeleteWorkloadClusterBeforeKindDeletion(cfg)
 			DeleteCAPIManifestSecret(cfg)
 		} else {

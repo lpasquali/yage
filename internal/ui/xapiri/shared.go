@@ -56,7 +56,7 @@ func (s *state) stepKubernetesVersion() error {
 			v = cur
 		}
 		if !semverRE.MatchString(v) {
-			fmt.Fprintf(s.w, "    not a valid version (expected vMAJOR.MINOR.PATCH, e.g. v1.35.0); try again.\n")
+			s.r.errLine("not a valid version (expected vMAJOR.MINOR.PATCH, e.g. v1.35.0); try again.")
 			continue
 		}
 		s.cfg.WorkloadKubernetesVersion = v
@@ -554,6 +554,9 @@ func (s *state) step7_review() error {
 	pw.Bullet("provider:       %s", s.cfg.InfraProvider)
 	if s.fork == forkOnPrem {
 		pw.Bullet("bootstrap mode: %s", s.cfg.BootstrapMode)
+		if s.cfg.Capacity.AllowOvercommit {
+			pw.Bullet("overcommit:     allowed")
+		}
 	}
 	pw.Bullet("workload apps:  %s", formatAppBuckets(s.workload.Apps))
 	pw.Bullet("database GB:    %d", s.workload.DBGB)

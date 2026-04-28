@@ -12,14 +12,19 @@ package xapiri
 //
 // Implementation:
 //   - tea.WithAltScreen() for ncurses-style full-screen entry/exit.
-//   - Left panel (60%): all config fields always visible, tab to move.
-//   - Right panel (40%): live cost bill, color-coded, j/k scrolls.
+//   - Tab bar: [config] [editor] [costs] [logs] [help] [about]
+//   - Bottom strip: live cost tally, always visible.
 //   - 400 ms debounce → cost.CompareWithFilter goroutine on change.
 //   - ctrl+s commits and exits; esc aborts without writing cfg.
+//   - ctrl+t spawns $SHELL via tea.ExecProcess (config tab only).
+//   - ctrl+l switches to the logs tab (config tab only).
 
 import (
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -118,7 +123,7 @@ const (
 	focCacheCPU           // 17
 	focCacheMem           // 18
 	focBootstrap          // 19
-	focOvercommit         // 20 — on-prem only: allow resource overcommit
+	focOvercommit         // 20
 	focDCLoc              // 21
 	focBudget             // 22
 	focHeadroom           // 23
@@ -177,6 +182,22 @@ var dashFields = []fieldMeta{
 	{fkText, tiHeadroom, "headroom %", "", false},
 }
 
+// ─── tab IDs ─────────────────────────────────────────────────────────────────
+
+type dashTab int
+
+const (
+	tabConfig dashTab = iota // 0 — interactive config form
+	tabEditor                // 1 — opens $EDITOR on the YAML config file
+	tabCosts                 // 2 — full provider comparison table + bar chart
+	tabLogs                  // 3 — scrollable ring buffer
+	tabHelp                  // 4 — keyboard shortcuts reference
+	tabAbout                 // 5 — version / license / URL
+	tabCount                 // must be last
+)
+
+var tabLabels = [tabCount]string{"config", "editor", "costs", "logs", "help", "about"}
+
 // ─── messages ────────────────────────────────────────────────────────────────
 
 type costMsg struct {
@@ -184,6 +205,15 @@ type costMsg struct {
 }
 
 type tickMsg time.Time
+
+// logUpdateMsg signals that new lines are available in globalLogRing.
+type logUpdateMsg struct{}
+
+// editorFinishedMsg is returned by the ExecProcess callback after the editor exits.
+type editorFinishedMsg struct{ err error }
+
+// shellFinishedMsg is returned by the ExecProcess callback after the shell exits.
+type shellFinishedMsg struct{ err error }
 
 // ─── select state ────────────────────────────────────────────────────────────
 
@@ -211,12 +241,20 @@ type dashModel struct {
 
 	focus int // current logical focus ID (focKindName … focHeadroom)
 
+	// tab state
+	activeTab dashTab
+
 	// cost preview
 	costRows       []cost.CloudCost
 	costLoading    bool
 	costVendor     int // which vendor's detail block is shown (index into costRows)
 	refreshPending bool
 	lastDirty      time.Time
+
+	// logs tab
+	logLines   []string // snapshot from globalLogRing
+	logScroll  int      // scroll offset (lines from bottom; 0 = pinned to bottom)
+	logSub     <-chan struct{}
 
 	width, height int
 	errMsg        string
@@ -317,6 +355,10 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.toggles[toiCache] = s.workload.HasCache
 	m.toggles[toiOvercommit] = cfg.Capacity.AllowOvercommit
 
+	// Subscribe to log ring for the [logs] tab.
+	m.logSub = globalLogRing.Subscribe()
+	m.logLines = globalLogRing.Lines()
+
 	// Focus the first visible input.
 	cmd := m.textInputs[tiKindName].Focus()
 	_ = cmd // will be returned from Init
@@ -330,7 +372,21 @@ func (m dashModel) Init() tea.Cmd {
 		textinput.Blink,
 		m.textInputs[tiKindName].Focus(),
 		m.kickRefreshCmd(),
+		m.watchLogsCmd(),
 	)
+}
+
+// watchLogsCmd returns a command that waits for a log-ring notification and
+// fires a logUpdateMsg.  Called from Init and re-scheduled after each msg.
+func (m dashModel) watchLogsCmd() tea.Cmd {
+	if m.logSub == nil {
+		return nil
+	}
+	sub := m.logSub
+	return func() tea.Msg {
+		<-sub
+		return logUpdateMsg{}
+	}
 }
 
 // ─── visibility ──────────────────────────────────────────────────────────────
@@ -340,8 +396,9 @@ func (m *dashModel) isCloud() bool { return m.selects[siMode].value() == "cloud"
 func (m *dashModel) isHidden(fid int) bool {
 	isCloud := m.isCloud()
 	switch fid {
-	case focEnv, focResil, focApps, focDBGB, focEgressGB,
-		focHasQueue, focHasObjStore, focHasCache,
+	case focEnv, focResil, focApps, focDBGB, focEgressGB:
+		return false // visible on both cloud and on-prem
+	case focHasQueue, focHasObjStore, focHasCache,
 		focDCLoc, focBudget, focHeadroom:
 		return !isCloud
 	case focBootstrap, focOvercommit:
@@ -423,94 +480,254 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		if time.Since(m.lastDirty) < 380*time.Millisecond {
-			// Still in debounce window — check again soon.
 			return m, tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 		}
 		m.refreshPending = false
 		m.costLoading = true
 		return m, m.kickRefreshCmd()
 
+	case logUpdateMsg:
+		m.logLines = globalLogRing.Lines()
+		return m, m.watchLogsCmd()
+
+	case editorFinishedMsg:
+		// Reload config from YAML if ConfigFile is set.
+		if m.cfg.ConfigFile != "" {
+			_ = config.ApplyYAMLFile(m.cfg, m.cfg.ConfigFile)
+			// Rebuild text inputs from reloaded cfg.
+			m2 := newDashModel(m.cfg, m.s)
+			m2.activeTab = tabConfig
+			m2.costRows = m.costRows
+			m2.width = m.width
+			m2.height = m.height
+			return m2, tea.Batch(textinput.Blink, m2.kickRefreshCmd())
+		}
+		m.activeTab = tabConfig
+		return m, nil
+
+	case shellFinishedMsg:
+		// Shell exited — just resume.
+		return m, nil
+
 	case tea.KeyMsg:
 		key := msg.Type
 		keyStr := msg.String()
 
-		// ── global navigation ──
+		// ── global quit / save (always available) ──
 		switch {
 		case key == tea.KeyCtrlS || keyStr == "ctrl+s":
-			// Save and exit.
 			m.done = true
 			return m, tea.Quit
-
 		case key == tea.KeyEsc || keyStr == "q":
-			// Abort.
 			m.done = false
 			return m, tea.Quit
-
-		case key == tea.KeyTab:
-			m = m.moveFocus(true)
-			return m, textinput.Blink
-
-		case key == tea.KeyShiftTab:
-			m = m.moveFocus(false)
-			return m, textinput.Blink
-
-		case key == tea.KeyUp || keyStr == "k":
-			// Scroll vendor list up if not in a text input.
-			curMeta := dashFields[m.focus]
-			if curMeta.kind != fkText && len(m.costRows) > 0 {
-				m.costVendor = (m.costVendor - 1 + len(m.costRows)) % len(m.costRows)
-				return m, nil
-			}
-
-		case key == tea.KeyDown || keyStr == "j":
-			curMeta := dashFields[m.focus]
-			if curMeta.kind != fkText && len(m.costRows) > 0 {
-				m.costVendor = (m.costVendor + 1) % len(m.costRows)
-				return m, nil
-			}
 		}
 
-		// ── per-field-kind handling ──
-		meta := dashFields[m.focus]
-		switch meta.kind {
-
-		case fkToggle:
-			if key == tea.KeySpace || key == tea.KeyEnter {
-				m.toggles[meta.subIdx] = !m.toggles[meta.subIdx]
-				if meta.costKey {
-					return m, m.markDirty()
-				}
+		// ── tab switching: left/right arrows or number keys 1-6 ──
+		// (Only when not in a text input on the config tab.)
+		inTextField := m.activeTab == tabConfig && dashFields[m.focus].kind == fkText
+		switch {
+		case !inTextField && keyStr == "1":
+			m.activeTab = tabConfig
+			return m, nil
+		case !inTextField && keyStr == "2":
+			m.activeTab = tabEditor
+			return m, m.openEditorCmd()
+		case !inTextField && keyStr == "3":
+			m.activeTab = tabCosts
+			return m, nil
+		case !inTextField && keyStr == "4":
+			m.activeTab = tabLogs
+			return m, nil
+		case !inTextField && keyStr == "5":
+			m.activeTab = tabHelp
+			return m, nil
+		case !inTextField && keyStr == "6":
+			m.activeTab = tabAbout
+			return m, nil
+		case (key == tea.KeyLeft || key == tea.KeyRight) && !inTextField && m.activeTab != tabConfig:
+			// Only cycle tabs with arrows when not on config (config uses arrows for fields).
+			if key == tea.KeyLeft {
+				m.activeTab = (m.activeTab - 1 + tabCount) % tabCount
+			} else {
+				m.activeTab = (m.activeTab + 1) % tabCount
 			}
+			if m.activeTab == tabEditor {
+				return m, m.openEditorCmd()
+			}
+			return m, nil
+		}
 
-		case fkSelect:
+		// ── per-tab key handling ──
+		switch m.activeTab {
+
+		case tabConfig:
+			return m.updateConfigTab(msg)
+
+		case tabLogs:
+			return m.updateLogsTab(msg)
+
+		case tabCosts:
 			switch {
-			case key == tea.KeyRight || key == tea.KeyEnter || keyStr == "l":
-				m.selects[meta.subIdx].next()
-				if meta.costKey {
-					return m, m.markDirty()
+			case key == tea.KeyUp || keyStr == "k":
+				if len(m.costRows) > 0 {
+					m.costVendor = (m.costVendor - 1 + len(m.costRows)) % len(m.costRows)
 				}
-			case key == tea.KeyLeft || keyStr == "h":
-				m.selects[meta.subIdx].prev()
-				if meta.costKey {
-					return m, m.markDirty()
+			case key == tea.KeyDown || keyStr == "j":
+				if len(m.costRows) > 0 {
+					m.costVendor = (m.costVendor + 1) % len(m.costRows)
 				}
 			}
-
-		case fkText:
-			// Forward to the focused text input; suppress tab so we handle it above.
-			if key == tea.KeyTab || key == tea.KeyShiftTab {
-				return m, nil
-			}
-			ti, cmd := m.textInputs[meta.subIdx].Update(msg)
-			m.textInputs[meta.subIdx] = ti
-			if meta.costKey {
-				return m, tea.Batch(cmd, m.markDirty())
-			}
-			return m, cmd
+			return m, nil
 		}
 	}
 
 	return m, nil
+}
+
+// updateConfigTab handles key events while the config tab is active.
+func (m dashModel) updateConfigTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.Type
+	keyStr := msg.String()
+
+	switch {
+	case key == tea.KeyTab:
+		m = m.moveFocus(true)
+		return m, textinput.Blink
+
+	case key == tea.KeyShiftTab:
+		m = m.moveFocus(false)
+		return m, textinput.Blink
+
+	case keyStr == "ctrl+l":
+		m.activeTab = tabLogs
+		return m, nil
+
+	case keyStr == "ctrl+t":
+		return m, m.spawnShellCmd()
+
+	case key == tea.KeyUp || keyStr == "k":
+		curMeta := dashFields[m.focus]
+		if curMeta.kind != fkText && len(m.costRows) > 0 {
+			m.costVendor = (m.costVendor - 1 + len(m.costRows)) % len(m.costRows)
+			return m, nil
+		}
+
+	case key == tea.KeyDown || keyStr == "j":
+		curMeta := dashFields[m.focus]
+		if curMeta.kind != fkText && len(m.costRows) > 0 {
+			m.costVendor = (m.costVendor + 1) % len(m.costRows)
+			return m, nil
+		}
+	}
+
+	// Per-field-kind handling.
+	meta := dashFields[m.focus]
+	switch meta.kind {
+	case fkToggle:
+		if key == tea.KeySpace || key == tea.KeyEnter {
+			m.toggles[meta.subIdx] = !m.toggles[meta.subIdx]
+			if meta.costKey {
+				return m, m.markDirty()
+			}
+		}
+
+	case fkSelect:
+		switch {
+		case key == tea.KeyRight || key == tea.KeyEnter || keyStr == "l":
+			m.selects[meta.subIdx].next()
+			if meta.costKey {
+				return m, m.markDirty()
+			}
+		case key == tea.KeyLeft || keyStr == "h":
+			m.selects[meta.subIdx].prev()
+			if meta.costKey {
+				return m, m.markDirty()
+			}
+		}
+
+	case fkText:
+		if key == tea.KeyTab || key == tea.KeyShiftTab {
+			return m, nil
+		}
+		ti, cmd := m.textInputs[meta.subIdx].Update(msg)
+		m.textInputs[meta.subIdx] = ti
+		if meta.costKey {
+			return m, tea.Batch(cmd, m.markDirty())
+		}
+		return m, cmd
+	}
+
+	return m, nil
+}
+
+// updateLogsTab handles key events on the logs tab (scroll).
+func (m dashModel) updateLogsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.Type
+	keyStr := msg.String()
+	switch {
+	case key == tea.KeyUp || keyStr == "k":
+		m.logScroll++
+	case key == tea.KeyDown || keyStr == "j":
+		if m.logScroll > 0 {
+			m.logScroll--
+		}
+	case key == tea.KeyPgUp:
+		m.logScroll += 10
+	case key == tea.KeyPgDown:
+		if m.logScroll > 10 {
+			m.logScroll -= 10
+		} else {
+			m.logScroll = 0
+		}
+	case keyStr == "g":
+		// Top.
+		m.logScroll = len(m.logLines)
+	case keyStr == "G":
+		// Bottom (follow).
+		m.logScroll = 0
+	}
+	return m, nil
+}
+
+// openEditorCmd launches $EDITOR (or vi) on cfg.ConfigFile (or a temp file).
+func (m dashModel) openEditorCmd() tea.Cmd {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	path := m.cfg.ConfigFile
+	if path == "" {
+		// No config file set — open a temp file so the user can see/edit the
+		// current values in YAML form. (We write the snapshot first.)
+		tmp, err := os.CreateTemp("", "yage-config-*.yaml")
+		if err != nil {
+			return nil
+		}
+		snap := m.buildSnapshotCfg()
+		data, merr := marshalConfigYAML(&snap)
+		if merr == nil {
+			_, _ = tmp.Write(data)
+		}
+		tmp.Close()
+		path = tmp.Name()
+	}
+	cmd := exec.Command(editor, path)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return editorFinishedMsg{err: err}
+	})
+}
+
+// spawnShellCmd launches $SHELL (or sh) in the current terminal via ExecProcess.
+func (m dashModel) spawnShellCmd() tea.Cmd {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "sh"
+	}
+	cmd := exec.Command(shell)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return shellFinishedMsg{err: err}
+	})
 }
 
 // markDirty stamps lastDirty and schedules a debounce tick if none is pending.
@@ -581,6 +798,7 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 	}
 
 	snap.BootstrapMode = m.selects[siBootstrap].value()
+	snap.Capacity.AllowOvercommit = m.toggles[toiOvercommit]
 
 	snap.Cost.Currency.DataCenterLocation = strings.ToUpper(strings.TrimSpace(m.textInputs[tiDCLoc].Value()))
 
@@ -667,6 +885,7 @@ func (m *dashModel) flushToCfg() {
 	m.cfg.CacheCPUMillicoresOverride = snap.CacheCPUMillicoresOverride
 	m.cfg.CacheMemoryMiBOverride = snap.CacheMemoryMiBOverride
 	m.cfg.BootstrapMode = snap.BootstrapMode
+	m.cfg.Capacity.AllowOvercommit = snap.Capacity.AllowOvercommit
 
 	// Derive s.fork / s.env / s.resil for the rest of the walkthrough.
 	if m.selects[siMode].value() == "on-prem" {
@@ -703,70 +922,146 @@ func (m dashModel) View() string {
 		return "loading…"
 	}
 
-	header := m.renderHeader()
+	tabBar := m.renderTabBar()
+	bottomStrip := m.renderBottomStrip()
 	footer := m.renderFooter()
 
-	// Panel widths: left 60%, divider "|", right fills rest.
-	usable := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - 1
+	// Compute usable height for tab content.
+	usable := m.height - lipgloss.Height(tabBar) - lipgloss.Height(bottomStrip) - lipgloss.Height(footer)
 	if usable < 1 {
 		usable = 1
 	}
-	leftW := m.width * 60 / 100
-	rightW := m.width - leftW - 1
 
-	if m.width < 100 {
-		// Narrow: stack vertically.
-		left := m.renderLeft(m.width, usable*2/3)
-		right := m.renderRight(m.width, usable/3)
-		return lipgloss.JoinVertical(lipgloss.Left, header, left, right, footer)
+	var content string
+	switch m.activeTab {
+	case tabConfig:
+		content = m.renderConfigTab(m.width, usable)
+	case tabEditor:
+		// Editor launches via ExecProcess; show a brief message while waiting.
+		content = m.renderEditorPlaceholder(m.width, usable)
+	case tabCosts:
+		content = m.renderCostsTab(m.width, usable)
+	case tabLogs:
+		content = m.renderLogsTab(m.width, usable)
+	case tabHelp:
+		content = m.renderHelpTab(m.width, usable)
+	case tabAbout:
+		content = m.renderAboutTab(m.width, usable)
 	}
 
-	left := m.renderLeft(leftW, usable)
-	right := m.renderRight(rightW, usable)
-
-	divStyle := stMuted.Copy()
-	div := divStyle.Render(strings.Repeat("│\n", usable))
-
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, div, right)
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, tabBar, content, bottomStrip, footer)
 }
 
-func (m dashModel) renderHeader() string {
-	mode := m.selects[siMode].value()
-	env := m.selects[siEnv].value()
-	resil := m.selects[siResil].value()
-	title := stBold.Render("yage xapiri") + "  " + stMuted.Render("dashboard")
-	var crumbs string
-	if mode == "cloud" {
-		crumbs = stMuted.Render(fmt.Sprintf(" │ mode: %s │ env: %s │ resil: %s",
-			stAccent.Render(mode), stAccent.Render(env), stAccent.Render(resil)))
-	} else {
-		crumbs = stMuted.Render(" │ mode: ") + stAccent.Render(mode)
+// renderTabBar renders the tab strip at the top.
+func (m dashModel) renderTabBar() string {
+	var parts []string
+	for i := dashTab(0); i < tabCount; i++ {
+		label := "[" + tabLabels[i] + "]"
+		if i == m.activeTab {
+			parts = append(parts, lipgloss.NewStyle().Bold(true).Underline(true).Foreground(colAccent).Render(label))
+		} else {
+			parts = append(parts, stMuted.Render(label))
+		}
 	}
-	return lipgloss.NewStyle().Width(m.width).Render(title+crumbs) + "\n" +
+	bar := strings.Join(parts, "  ")
+	title := stBold.Render("yage xapiri") + "  "
+	line := title + bar
+	return lipgloss.NewStyle().Width(m.width).Render(line) + "\n" +
 		stMuted.Render(strings.Repeat("─", m.width))
 }
 
-func (m dashModel) renderFooter() string {
-	keys := stMuted.Render("tab/⇧tab") + " navigate  " +
-		stMuted.Render("space") + " toggle  " +
-		stMuted.Render("◄ ►") + " select  " +
-		stMuted.Render("j/k") + " vendor  " +
-		stAccent.Render("ctrl+s") + " save & continue  " +
-		stMuted.Render("esc/q") + " abort"
-	line := stMuted.Render(strings.Repeat("─", m.width))
-	if m.errMsg != "" {
-		return line + "\n" + stBad.Render("  "+m.errMsg) + "\n" + keys
+// renderBottomStrip renders the live cost tally always visible below tab content.
+func (m dashModel) renderBottomStrip() string {
+	line := stMuted.Render(strings.Repeat("─", m.width)) + "\n"
+	if !m.cfg.CostCompareEnabled {
+		return line + stMuted.Render("  cost estimation disabled")
 	}
-	return line + "\n" + keys
+	if len(m.costRows) == 0 {
+		var suffix string
+		if m.costLoading {
+			suffix = stMuted.Render("  fetching…")
+		} else {
+			suffix = stMuted.Render("  no cost data")
+		}
+		return line + suffix
+	}
+	sorted := m.sortedCostRows()
+	var parts []string
+	for _, r := range sorted {
+		if r.Err != nil {
+			parts = append(parts, stMuted.Render(r.ProviderName+" n/a"))
+			continue
+		}
+		total := r.Estimate.TotalUSDMonthly
+		var style lipgloss.Style
+		cheapest := 0.0
+		for _, rr := range sorted {
+			if rr.Err == nil && rr.Estimate.TotalUSDMonthly > 0 {
+				cheapest = rr.Estimate.TotalUSDMonthly
+				break
+			}
+		}
+		budget := m.cfg.BudgetUSDMonth
+		switch {
+		case budget > 0 && total > budget:
+			style = stBad
+		case cheapest > 0 && total <= cheapest:
+			style = stOK
+		case cheapest > 0 && total > cheapest*1.5:
+			style = stWarn
+		default:
+			style = lipgloss.NewStyle()
+		}
+		parts = append(parts, style.Render(fmt.Sprintf("%s $%.0f", r.ProviderName, total)))
+	}
+	suffix := ""
+	if m.costLoading {
+		suffix = stMuted.Render("  (fetching…)")
+	}
+	return line + "  " + strings.Join(parts, stMuted.Render("  ")) + suffix
 }
 
-// ─── left panel ──────────────────────────────────────────────────────────────
+func (m dashModel) renderFooter() string {
+	var keys string
+	switch m.activeTab {
+	case tabConfig:
+		keys = stMuted.Render("tab/⇧tab") + " navigate  " +
+			stMuted.Render("space") + " toggle  " +
+			stMuted.Render("◄ ►") + " select  " +
+			stMuted.Render("ctrl+t") + " shell  " +
+			stMuted.Render("ctrl+l") + " logs  " +
+			stAccent.Render("ctrl+s") + " save  " +
+			stMuted.Render("esc/q") + " abort"
+	case tabLogs:
+		keys = stMuted.Render("j/k") + " scroll  " +
+			stMuted.Render("g/G") + " top/bottom  " +
+			stMuted.Render("1-6") + " switch tabs  " +
+			stAccent.Render("ctrl+s") + " save  " +
+			stMuted.Render("esc/q") + " abort"
+	case tabCosts:
+		keys = stMuted.Render("j/k") + " scroll  " +
+			stMuted.Render("1-6") + " switch tabs  " +
+			stAccent.Render("ctrl+s") + " save  " +
+			stMuted.Render("esc/q") + " abort"
+	default:
+		keys = stMuted.Render("1-6") + " switch tabs  " +
+			stAccent.Render("ctrl+s") + " save  " +
+			stMuted.Render("esc/q") + " abort"
+	}
+	sep := stMuted.Render(strings.Repeat("─", m.width))
+	if m.errMsg != "" {
+		return sep + "\n" + stBad.Render("  "+m.errMsg) + "\n" + keys
+	}
+	return sep + "\n" + keys
+}
+
+// ─── config tab ──────────────────────────────────────────────────────────────
 
 const labelW = 18
 const inputW = 13
 
-func (m dashModel) renderLeft(w, h int) string {
+// renderConfigTab renders the full-width interactive config form.
+func (m dashModel) renderConfigTab(w, h int) string {
 	var lines []string
 	lastSection := ""
 
@@ -794,6 +1089,20 @@ func (m dashModel) renderLeft(w, h int) string {
 	}
 
 	return strings.Join(lines[:min(len(lines), h)], "\n")
+}
+
+// renderEditorPlaceholder shows while waiting for the editor to launch.
+func (m dashModel) renderEditorPlaceholder(w, h int) string {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	msg := stMuted.Render(fmt.Sprintf("  Opening %s…  (press any key after it exits)", editor))
+	lines := []string{"", msg}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m dashModel) renderField(fid int, focused bool, w int) string {
@@ -849,14 +1158,15 @@ func (m dashModel) renderField(fid int, focused bool, w int) string {
 	return focGlyph + lbl + " " + valStr
 }
 
-// ─── right panel ─────────────────────────────────────────────────────────────
+// ─── costs tab ───────────────────────────────────────────────────────────────
 
-func (m dashModel) renderRight(w, h int) string {
+// renderCostsTab renders the full comparison table + ASCII bar chart.
+func (m dashModel) renderCostsTab(w, h int) string {
 	var lines []string
 
-	title := stHdr.Render(" Live cost / mo")
+	title := stHdr.Render(" Provider cost comparison ($/mo)")
 	if m.costLoading {
-		title += stMuted.Render("  (refreshing…)")
+		title += stMuted.Render("  refreshing…")
 	}
 	lines = append(lines, title)
 	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
@@ -865,23 +1175,25 @@ func (m dashModel) renderRight(w, h int) string {
 		lines = append(lines, stMuted.Render("  cost estimation disabled"))
 		lines = append(lines, "")
 		lines = append(lines, stMuted.Render("  pass --cost-compare-config to enable"))
-		return strings.Join(lines, "\n")
-	}
-
-	if len(m.costRows) == 0 {
+	} else if len(m.costRows) == 0 {
 		lines = append(lines, stMuted.Render("  computing…"))
 	} else {
-		// Sort rows by total (ascending), errors last.
 		sorted := m.sortedCostRows()
 
-		// Cheapest non-error total for color thresholds.
+		// Find max and cheapest for bar-chart normalization.
+		maxTotal := 0.0
 		cheapest := 0.0
 		for _, r := range sorted {
-			if r.Err == nil && r.Estimate.TotalUSDMonthly > 0 {
-				cheapest = r.Estimate.TotalUSDMonthly
-				break
+			if r.Err == nil {
+				if cheapest == 0 {
+					cheapest = r.Estimate.TotalUSDMonthly
+				}
+				if r.Estimate.TotalUSDMonthly > maxTotal {
+					maxTotal = r.Estimate.TotalUSDMonthly
+				}
 			}
 		}
+
 		budget := m.cfg.BudgetUSDMonth
 		if budget == 0 {
 			if f, err := strconv.ParseFloat(strings.TrimSpace(m.textInputs[tiBudget].Value()), 64); err == nil && f > 0 {
@@ -893,7 +1205,7 @@ func (m dashModel) renderRight(w, h int) string {
 			}
 		}
 
-		// Clamp selected vendor to valid range.
+		// Clamp selected vendor.
 		if m.costVendor >= len(sorted) {
 			m.costVendor = len(sorted) - 1
 		}
@@ -901,9 +1213,18 @@ func (m dashModel) renderRight(w, h int) string {
 			m.costVendor = 0
 		}
 
+		// Table header.
+		hdr := fmt.Sprintf("  %-14s %10s  %s", "provider", "$/mo", "bar chart")
+		lines = append(lines, stHdr.Render(hdr))
+
+		barW := w - 32 // chars available for bar
+		if barW < 10 {
+			barW = 10
+		}
+
 		for i, r := range sorted {
 			selected := i == m.costVendor
-			lines = append(lines, m.renderVendorRow(r, selected, cheapest, budget, w))
+			lines = append(lines, m.renderCostRow(r, selected, cheapest, maxTotal, budget, barW))
 		}
 
 		// Detail block for selected vendor.
@@ -916,14 +1237,17 @@ func (m dashModel) renderRight(w, h int) string {
 			} else {
 				for _, it := range sel.Estimate.Items {
 					name := it.Name
-					if len(name) > w-14 {
-						name = name[:w-14] + "…"
+					maxNameW := w - 16
+					if maxNameW < 10 {
+						maxNameW = 10
 					}
-					lineStr := fmt.Sprintf("  %-*s %8.2f", w-14, name, it.SubtotalUSD)
+					if len(name) > maxNameW {
+						name = name[:maxNameW] + "…"
+					}
+					lineStr := fmt.Sprintf("  %-*s %8.2f", maxNameW, name, it.SubtotalUSD)
 					lines = append(lines, lineStr)
 				}
 			}
-			// Budget check.
 			if budget > 0 && sel.Err == nil {
 				lines = append(lines, "")
 				total := sel.Estimate.TotalUSDMonthly
@@ -936,13 +1260,63 @@ func (m dashModel) renderRight(w, h int) string {
 		}
 	}
 
-	// Pad to height.
 	for len(lines) < h {
 		lines = append(lines, "")
 	}
 	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
+// renderCostRow renders a single provider row with bar chart.
+func (m dashModel) renderCostRow(r cost.CloudCost, selected bool, cheapest, maxTotal, budget float64, barW int) string {
+	prefix := "  "
+	if selected {
+		prefix = stAccent.Render("▌ ")
+	}
+
+	if r.Err != nil {
+		row := prefix + stMuted.Render(fmt.Sprintf("%-14s  n/a", r.ProviderName))
+		return row
+	}
+
+	total := r.Estimate.TotalUSDMonthly
+	totalStr := fmt.Sprintf("$%8.2f", total)
+
+	var style lipgloss.Style
+	switch {
+	case budget > 0 && total > budget:
+		style = stBad
+	case cheapest > 0 && total <= cheapest:
+		style = stOK
+	case cheapest > 0 && total > cheapest*1.5:
+		style = stWarn
+	default:
+		style = lipgloss.NewStyle()
+	}
+
+	// ASCII bar chart using █.
+	barLen := 0
+	if maxTotal > 0 {
+		barLen = int(float64(barW) * total / maxTotal)
+	}
+	if barLen < 1 && total > 0 {
+		barLen = 1
+	}
+	bar := strings.Repeat("█", barLen)
+	bar = style.Render(bar)
+
+	name := fmt.Sprintf("%-14s", r.ProviderName)
+	if selected {
+		name = stAccent.Render(name)
+		totalStr = style.Bold(true).Render(totalStr)
+	} else {
+		name = style.Render(name)
+		totalStr = style.Render(totalStr)
+	}
+
+	return prefix + name + " " + totalStr + "  " + bar
+}
+
+// renderVendorRow is kept for backward compatibility (used by bottom strip logic).
 func (m dashModel) renderVendorRow(r cost.CloudCost, selected bool, cheapest, budget float64, w int) string {
 	prefix := "  "
 	if selected {
@@ -985,6 +1359,133 @@ func (m dashModel) renderVendorRow(r cost.CloudCost, selected bool, cheapest, bu
 	}
 
 	return prefix + name + " " + totalStr + badge
+}
+
+// ─── logs tab ────────────────────────────────────────────────────────────────
+
+func (m dashModel) renderLogsTab(w, h int) string {
+	lines := m.logLines
+
+	// Available content lines (reserve 2 for header).
+	contentH := h - 2
+	if contentH < 1 {
+		contentH = 1
+	}
+
+	// Apply scroll: logScroll=0 means pinned to bottom.
+	total := len(lines)
+	end := total - m.logScroll
+	if end > total {
+		end = total
+	}
+	if end < 0 {
+		end = 0
+	}
+	start := end - contentH
+	if start < 0 {
+		start = 0
+	}
+
+	var out []string
+	hdrText := fmt.Sprintf(" Logs  [%d lines]", total)
+	if m.logScroll > 0 {
+		hdrText += fmt.Sprintf("  scroll↑ %d", m.logScroll)
+	} else {
+		hdrText += "  (following)"
+	}
+	out = append(out, stHdr.Render(hdrText))
+	out = append(out, stMuted.Render(strings.Repeat("─", w)))
+
+	if total == 0 {
+		out = append(out, stMuted.Render("  no log output yet"))
+	} else {
+		for _, l := range lines[start:end] {
+			if len(l) > w-2 {
+				l = l[:w-2] + "…"
+			}
+			out = append(out, "  "+l)
+		}
+	}
+
+	for len(out) < h {
+		out = append(out, "")
+	}
+	return strings.Join(out[:min(len(out), h)], "\n")
+}
+
+// ─── help tab ────────────────────────────────────────────────────────────────
+
+func (m dashModel) renderHelpTab(w, h int) string {
+	lines := []string{
+		stHdr.Render(" Keyboard shortcuts"),
+		stMuted.Render(strings.Repeat("─", w)),
+		"",
+		stBold.Render("  Tab switching"),
+		"  " + stAccent.Render("1") + "              switch to [config] tab",
+		"  " + stAccent.Render("2") + "              switch to [editor] tab (opens $EDITOR)",
+		"  " + stAccent.Render("3") + "              switch to [costs] tab",
+		"  " + stAccent.Render("4") + "              switch to [logs] tab",
+		"  " + stAccent.Render("5") + "              switch to [help] tab",
+		"  " + stAccent.Render("6") + "              switch to [about] tab",
+		"  " + stAccent.Render("← →") + "            cycle tabs (when not in text field)",
+		"",
+		stBold.Render("  Config tab"),
+		"  " + stAccent.Render("tab / shift+tab") + "  move between fields",
+		"  " + stAccent.Render("space / enter") + "   toggle booleans",
+		"  " + stAccent.Render("← →") + "            cycle select options",
+		"  " + stAccent.Render("j / k") + "          scroll vendor list",
+		"  " + stAccent.Render("ctrl+t") + "         spawn $SHELL in terminal",
+		"  " + stAccent.Render("ctrl+l") + "         switch to logs tab",
+		"",
+		stBold.Render("  Logs tab"),
+		"  " + stAccent.Render("j / k") + "          scroll down / up",
+		"  " + stAccent.Render("PgUp / PgDn") + "    scroll by 10 lines",
+		"  " + stAccent.Render("g / G") + "          jump to top / bottom (follow)",
+		"",
+		stBold.Render("  Global"),
+		"  " + stAccent.Render("ctrl+s") + "         save config and continue",
+		"  " + stAccent.Render("esc / q") + "        abort (no changes written)",
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:min(len(lines), h)], "\n")
+}
+
+// ─── about tab ───────────────────────────────────────────────────────────────
+
+func (m dashModel) renderAboutTab(w, h int) string {
+	version := "unknown"
+	commit := "unknown"
+	if info, ok := debug.ReadBuildInfo(); ok {
+		version = info.Main.Version
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+				commit = s.Value[:7]
+			}
+		}
+	}
+
+	lines := []string{
+		stHdr.Render(" About yage xapiri"),
+		stMuted.Render(strings.Repeat("─", w)),
+		"",
+		"  " + stBold.Render("yage") + "  — Yet Another GitOps Engine",
+		"",
+		"  " + stMuted.Render("version:") + "  " + stAccent.Render(version),
+		"  " + stMuted.Render("commit: ") + "  " + stAccent.Render(commit),
+		"",
+		"  " + stMuted.Render("license:") + "  Apache-2.0",
+		"  " + stMuted.Render("project:") + "  https://github.com/lpasquali/yage",
+		"",
+		stMuted.Render("  xapiri are sacred spirits in the Yanomami people's cosmology."),
+		stMuted.Render("  yage runs xapiri to get help from the spirits to create a"),
+		stMuted.Render("  visionary deployment."),
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
 // sortedCostRows returns the cost rows sorted cheapest-first (errors last).
@@ -1051,9 +1552,14 @@ func dashIntOrEmpty(n int) string {
 	return strconv.Itoa(n)
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// marshalConfigYAML marshals a config snapshot to YAML bytes for the editor tab.
+// Uses the same flat KEY: "value" format that ApplyYAMLFile reads.
+func marshalConfigYAML(cfg *config.Config) ([]byte, error) {
+	snap := cfg.Snapshot()
+	lines := make([]string, 0, len(snap))
+	for _, f := range snap {
+		v := f.Get()
+		lines = append(lines, fmt.Sprintf("%s: %q", f.EnvName, v))
 	}
-	return b
+	return []byte(strings.Join(lines, "\n") + "\n"), nil
 }

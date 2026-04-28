@@ -408,3 +408,21 @@ func parseFlatYAMLOrJSON(text string) map[string]string {
 	return out
 }
 
+// LoadConfigFromSecretData deserialises a bootstrap-config Secret's
+// Data map into a *config.Config. Pure transformation — no network
+// calls, no kubectl shell-outs. Used by yage-operator to populate
+// config from a Secret read via controller-runtime client.Client.
+func LoadConfigFromSecretData(data map[string][]byte) *config.Config {
+	cfg := &config.Config{}
+	body := string(data["config.yaml"])
+	if body == "" {
+		body = string(data["config.json"])
+	}
+	if strings.TrimSpace(body) == "" {
+		return cfg
+	}
+	kv := parseFlatYAMLOrJSON(body)
+	migrateLegacyKeys(kv)
+	cfg.ApplySnapshotKV(kv)
+	return cfg
+}

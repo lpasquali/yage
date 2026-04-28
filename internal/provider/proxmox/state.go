@@ -283,27 +283,36 @@ func (p *Provider) BootstrapSecrets(cfg *config.Config) []provider.BootstrapSecr
 		"insecure",
 	}
 
+	// markKindSecretUsed sets BootstrapKindSecretUsed so bootstrap.go:514
+	// skips reading a local clusterctl config file when kind already provided creds.
+	markKindSecretUsed := func(c *config.Config) {
+		c.Providers.Proxmox.BootstrapKindSecretUsed = true
+	}
+
 	// capmox-system/capmox-manager-credentials: last-chance fallback.
-	// OnAbsorbed sets the KindCAPMOXActive flag so callers know the live
-	// controller Secret was the source.
+	// OnAbsorbed sets KindCAPMOXActive (live controller was the source)
+	// and BootstrapKindSecretUsed so bootstrap.go:514 triggers correctly.
 	capmoxManagerRef := provider.BootstrapSecretRef{
 		Namespace: "capmox-system",
 		Name:      "capmox-manager-credentials",
 		OnAbsorbed: func(c *config.Config) {
 			c.Providers.Proxmox.KindCAPMOXActive = true
+			c.Providers.Proxmox.BootstrapKindSecretUsed = true
 		},
 	}
 
 	// Single-Secret branch
 	if cfg.Providers.Proxmox.BootstrapSecretName != "" {
 		refs := []provider.BootstrapSecretRef{
-			{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapSecretName},
+			{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapSecretName, OnAbsorbed: markKindSecretUsed},
 		}
 		if cfg.Providers.Proxmox.BootstrapAdminSecretName != "" &&
 			cfg.Providers.Proxmox.BootstrapAdminSecretName != cfg.Providers.Proxmox.BootstrapSecretName {
 			refs = append(refs, provider.BootstrapSecretRef{
-				Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapAdminSecretName,
-				KeyFilter: adminKeys,
+				Namespace:  ns,
+				Name:       cfg.Providers.Proxmox.BootstrapAdminSecretName,
+				KeyFilter:  adminKeys,
+				OnAbsorbed: markKindSecretUsed,
 			})
 		}
 		refs = append(refs, capmoxManagerRef)
@@ -312,15 +321,17 @@ func (p *Provider) BootstrapSecrets(cfg *config.Config) []provider.BootstrapSecr
 
 	// Default split branch
 	refs := []provider.BootstrapSecretRef{
-		{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapCAPMOXSecretName},
-		{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapCSISecretName},
+		{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapCAPMOXSecretName, OnAbsorbed: markKindSecretUsed},
+		{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapCSISecretName, OnAbsorbed: markKindSecretUsed},
 		// Fallback to the pre-split Secret name (legacy)
-		{Namespace: ns, Name: "proxmox-bootstrap-credentials"},
+		{Namespace: ns, Name: "proxmox-bootstrap-credentials", OnAbsorbed: markKindSecretUsed},
 	}
 	if cfg.Providers.Proxmox.BootstrapAdminSecretName != "" {
 		refs = append(refs, provider.BootstrapSecretRef{
-			Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapAdminSecretName,
-			KeyFilter: adminKeys,
+			Namespace:  ns,
+			Name:       cfg.Providers.Proxmox.BootstrapAdminSecretName,
+			KeyFilter:  adminKeys,
+			OnAbsorbed: markKindSecretUsed,
 		})
 	}
 	refs = append(refs, capmoxManagerRef)

@@ -313,8 +313,9 @@ func (c *Client) EnsureNamespaceWithLabels(ctx context.Context, name string, lab
 		for k, v := range labels {
 			sb.WriteString("\n    ")
 			sb.WriteString(k)
-			sb.WriteString(": ")
+			sb.WriteString(": \"")
 			sb.WriteString(v)
+			sb.WriteString("\"")
 		}
 	}
 	sb.WriteByte('\n')

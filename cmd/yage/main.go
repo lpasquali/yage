@@ -93,24 +93,26 @@ func main() {
 	airgap.RewriteConfigChartURLs(cfg)
 	shell.SetKindNodeImage(cfg.NodeImage)
 
-	// §16 c2: read cfg.Cost.Credentials + per-provider state from
-	// Secret/yage-system/bootstrap-config when the kind cluster is
-	// reachable. Best-effort: if the Secret doesn't exist (first
-	// run) or the kind cluster isn't up yet, the call is a silent
-	// no-op and cfg keeps what config.Load got from env.
+	// §16 c2: read cfg.Cost.Credentials + per-provider state from the
+	// per-config bootstrap-config Secret (<ConfigName>-bootstrap-config
+	// in yage-system). Best-effort: first run and offline modes are
+	// silent no-ops.
 	//
-	// Fill-empty-only semantics: env values that were explicitly
-	// set survive the merge.
-	//
-	// When no cluster name was provided (no env var, no flag), scan
-	// every running kind cluster for a yage-system/bootstrap-config
-	// Secret and use the first match. This lets `yage` start from
-	// saved config regardless of the cluster name chosen at xapiri
-	// time, without requiring the user to pass --kind-cluster-name.
-	if cfg.KindClusterName == "" {
-		kindsync.MergeBootstrapConfigFromFirstKindCluster(cfg)
-	} else {
+	// Three branches correspond to the three supported modes:
+	//   • KindClusterName set + ConfigNameExplicit (--config-name passed)
+	//     → deterministic get: exactly one Secret targeted.
+	//   • KindClusterName set, ConfigName defaulted from WorkloadClusterName
+	//     → huh picker across all Secrets on that kind cluster so the user
+	//       can choose among profiles / drafts for the same workload.
+	//   • Neither set → scan every running kind cluster for labeled Secrets
+	//     and let the user pick across all of them.
+	switch {
+	case cfg.KindClusterName != "" && cfg.ConfigNameExplicit:
 		_ = kindsync.MergeBootstrapConfigFromKind(cfg)
+	case cfg.KindClusterName != "":
+		kindsync.MergeBootstrapConfigFromKindCluster(cfg)
+	default:
+		kindsync.MergeBootstrapConfigFromFirstKindCluster(cfg)
 	}
 
 	// Hand cost-estimation credentials + currency preferences to

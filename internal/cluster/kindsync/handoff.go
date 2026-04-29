@@ -202,61 +202,66 @@ func HandOffBootstrapSecretsToManagement(cfg *config.Config, kindCtx, mgmtKubeco
 			tgt.Namespace, tgt.Name, tgt.Description, kindCtx)
 	}
 
-	// Also hand off all per-config bootstrap-config Secrets in yage-system
-	// (labeled app.kubernetes.io/component=bootstrap-config). These are the
-	// orchestrator-state Secrets written by xapiri and promoted by the
-	// success path — one per ConfigName.
-	if bcList, listErr := srcCli.Typed.CoreV1().Secrets(BootstrapConfigNamespace).List(
-		bg, metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=yage,app.kubernetes.io/component=bootstrap-config",
-		},
-	); listErr == nil {
-		if !ensuredNS[BootstrapConfigNamespace] {
-			if nsErr := dstCli.EnsureNamespace(bg, BootstrapConfigNamespace); nsErr != nil {
-				logx.Warn("Hand-off: failed to ensure namespace %s on management: %v", BootstrapConfigNamespace, nsErr)
+	// Hand off all per-config namespaces (labeled infra.yage-deployment.bucaniere.us=true).
+	// Each namespace holds a "bootstrap-config" Secret. Mirror namespace + labels + secret.
+	if nsList, nsListErr := srcCli.Typed.CoreV1().Namespaces().List(bg, metav1.ListOptions{
+		LabelSelector: "infra.yage-deployment.bucaniere.us=true",
+	}); nsListErr == nil {
+		for _, srcNS := range nsList.Items {
+			nsName := srcNS.Name
+			// Ensure the namespace exists on management with the same labels.
+			nsLabels := map[string]string{"infra.yage-deployment.bucaniere.us": "true"}
+			if prov, ok := srcNS.Labels["infra.capi-provider.bucaniere.us"]; ok && prov != "" {
+				nsLabels["infra.capi-provider.bucaniere.us"] = prov
+			}
+			if !ensuredNS[nsName] {
+				if nsErr := dstCli.EnsureNamespaceWithLabels(bg, nsName, nsLabels); nsErr != nil {
+					logx.Warn("Hand-off: failed to ensure namespace %s on management: %v", nsName, nsErr)
+					if firstErr == nil {
+						firstErr = nsErr
+					}
+					continue
+				}
+				ensuredNS[nsName] = true
+			}
+			// Copy the bootstrap-config Secret if present.
+			src, secErr := srcCli.Typed.CoreV1().Secrets(nsName).Get(bg, "bootstrap-config", metav1.GetOptions{})
+			if secErr != nil {
+				continue // namespace exists but secret not yet written — normal during first-run
+			}
+			clean := corev1.Secret{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+				ObjectMeta: metav1.ObjectMeta{Name: src.Name, Namespace: nsName, Labels: src.Labels, Annotations: stripServerAnnotations(src.Annotations)},
+				Type:       src.Type,
+				Data:       src.Data,
+				StringData: src.StringData,
+				Immutable:  src.Immutable,
+			}
+			if clean.Type == "" {
+				clean.Type = corev1.SecretTypeOpaque
+			}
+			body, merr := json.Marshal(clean)
+			if merr != nil {
+				logx.Warn("Hand-off: failed to marshal %s/bootstrap-config: %v", nsName, merr)
 				if firstErr == nil {
-					firstErr = nsErr
+					firstErr = merr
 				}
-			} else {
-				ensuredNS[BootstrapConfigNamespace] = true
+				continue
 			}
-		}
-		if ensuredNS[BootstrapConfigNamespace] {
-			for _, src := range bcList.Items {
-				clean := corev1.Secret{
-					TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-					ObjectMeta: metav1.ObjectMeta{Name: src.Name, Namespace: src.Namespace, Labels: src.Labels, Annotations: stripServerAnnotations(src.Annotations)},
-					Type:       src.Type,
-					Data:       src.Data,
-					StringData: src.StringData,
-					Immutable:  src.Immutable,
+			_, perr := dstCli.Typed.CoreV1().Secrets(nsName).Patch(
+				bg, "bootstrap-config", types.ApplyPatchType, body,
+				metav1.PatchOptions{FieldManager: k8sclient.FieldManager, Force: boolTrue()},
+			)
+			if perr != nil {
+				logx.Warn("Hand-off: failed to apply %s/bootstrap-config on management: %v", nsName, perr)
+				if firstErr == nil {
+					firstErr = perr
 				}
-				if clean.Type == "" {
-					clean.Type = corev1.SecretTypeOpaque
-				}
-				body, merr := json.Marshal(clean)
-				if merr != nil {
-					logx.Warn("Hand-off: failed to marshal %s/%s: %v", src.Namespace, src.Name, merr)
-					if firstErr == nil {
-						firstErr = merr
-					}
-					continue
-				}
-				_, perr := dstCli.Typed.CoreV1().Secrets(BootstrapConfigNamespace).Patch(
-					bg, src.Name, types.ApplyPatchType, body,
-					metav1.PatchOptions{FieldManager: k8sclient.FieldManager, Force: boolTrue()},
-				)
-				if perr != nil {
-					logx.Warn("Hand-off: failed to apply %s/%s on management: %v", src.Namespace, src.Name, perr)
-					if firstErr == nil {
-						firstErr = perr
-					}
-					continue
-				}
-				copied++
-				logx.Log("Hand-off: copied %s/%s (bootstrap config %s) from %s to management cluster.",
-					src.Namespace, src.Name, src.Labels["yage.io/config-name"], kindCtx)
+				continue
 			}
+			copied++
+			logx.Log("Hand-off: copied %s/bootstrap-config (config %s) from %s to management cluster.",
+				nsName, src.Labels["yage.io/config-name"], kindCtx)
 		}
 	}
 

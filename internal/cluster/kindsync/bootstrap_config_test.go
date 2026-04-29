@@ -146,27 +146,32 @@ func TestKindSyncExplicitGuardPreservedOnMerge(t *testing.T) {
 	}
 }
 
-// TestBootstrapConfigSecretName verifies the naming function for all three
-// supported modes.
+// TestBootstrapConfigSecretName verifies that the Secret name is always
+// "bootstrap-config" — the namespace is the discriminator.
 func TestBootstrapConfigSecretName(t *testing.T) {
-	// Case 1 / 2 / 3: ConfigName is non-empty.
 	cfg := config.Load()
-	cfg.ConfigName = "dev"
-	if got := BootstrapConfigSecretName(cfg); got != "dev-bootstrap-config" {
-		t.Errorf("case 1: got %q, want %q", got, "dev-bootstrap-config")
+	for _, name := range []string{"dev", "prod-eu-low-cost", "scenario-aws-vs-hetzner", ""} {
+		cfg.ConfigName = name
+		if got := BootstrapConfigSecretName(cfg); got != "bootstrap-config" {
+			t.Errorf("ConfigName=%q: got %q, want %q", name, got, "bootstrap-config")
+		}
 	}
-	cfg.ConfigName = "prod-eu-low-cost"
-	if got := BootstrapConfigSecretName(cfg); got != "prod-eu-low-cost-bootstrap-config" {
-		t.Errorf("case 2: got %q, want %q", got, "prod-eu-low-cost-bootstrap-config")
+}
+
+// TestBootstrapConfigNamespace verifies the per-config namespace naming.
+func TestBootstrapConfigNamespace(t *testing.T) {
+	cfg := config.Load()
+	cases := []struct{ configName, want string }{
+		{"dev", "yage-dev"},
+		{"prod-eu-low-cost", "yage-prod-eu-low-cost"},
+		{"scenario-aws-vs-hetzner", "yage-scenario-aws-vs-hetzner"},
+		{"", "yage-default"},
 	}
-	cfg.ConfigName = "scenario-aws-vs-hetzner"
-	if got := BootstrapConfigSecretName(cfg); got != "scenario-aws-vs-hetzner-bootstrap-config" {
-		t.Errorf("case 3: got %q, want %q", got, "scenario-aws-vs-hetzner-bootstrap-config")
-	}
-	// Empty ConfigName falls back to "bootstrap-config".
-	cfg.ConfigName = ""
-	if got := BootstrapConfigSecretName(cfg); got != "bootstrap-config" {
-		t.Errorf("empty fallback: got %q, want %q", got, "bootstrap-config")
+	for _, c := range cases {
+		cfg.ConfigName = c.configName
+		if got := BootstrapConfigNamespace(cfg); got != c.want {
+			t.Errorf("ConfigName=%q: got %q, want %q", c.configName, got, c.want)
+		}
 	}
 }
 
@@ -196,8 +201,7 @@ func TestSanitizeLabelValue(t *testing.T) {
 }
 
 // TestBootstrapLabelsCase1 verifies that two configs with distinct WorkloadClusterNames
-// (ConfigName defaults to WorkloadClusterName) produce distinct Secret names
-// and carry the correct labels.
+// live in distinct namespaces (yage-<name>) with the correct Secret labels.
 func TestBootstrapLabelsCase1(t *testing.T) {
 	for _, wl := range []string{"dev", "staging", "prod"} {
 		cfg := config.Load()
@@ -205,9 +209,12 @@ func TestBootstrapLabelsCase1(t *testing.T) {
 		cfg.ConfigName = wl // default rule applied in Load()
 		cfg.InfraProvider = "aws"
 
-		name := BootstrapConfigSecretName(cfg)
-		if name != wl+"-bootstrap-config" {
-			t.Errorf("case1 %s: Secret name %q, want %q", wl, name, wl+"-bootstrap-config")
+		// Secret is always "bootstrap-config"; namespace is the discriminator.
+		if got := BootstrapConfigSecretName(cfg); got != "bootstrap-config" {
+			t.Errorf("case1 %s: Secret name %q, want %q", wl, got, "bootstrap-config")
+		}
+		if got := BootstrapConfigNamespace(cfg); got != "yage-"+wl {
+			t.Errorf("case1 %s: namespace %q, want %q", wl, got, "yage-"+wl)
 		}
 
 		lbl := bootstrapLabels(cfg, "draft")
@@ -223,11 +230,20 @@ func TestBootstrapLabelsCase1(t *testing.T) {
 		if lbl["yage.io/provider"] != "aws" {
 			t.Errorf("case1 %s: provider label %q", wl, lbl["yage.io/provider"])
 		}
+
+		// Namespace labels carry the discovery marker + provider.
+		nsLbl := configNamespaceLabels(cfg)
+		if nsLbl["infra.yage-deployment.bucaniere.us"] != "true" {
+			t.Errorf("case1 %s: missing discovery label", wl)
+		}
+		if nsLbl["infra.capi-provider.bucaniere.us"] != "aws" {
+			t.Errorf("case1 %s: provider ns-label %q", wl, nsLbl["infra.capi-provider.bucaniere.us"])
+		}
 	}
 }
 
 // TestBootstrapLabelsCase2 verifies two configs for the same workload cluster
-// (different ConfigName) both carry workload-cluster=prod but distinct Secret names.
+// (different ConfigName) live in distinct namespaces, both carrying workload-cluster=prod.
 func TestBootstrapLabelsCase2(t *testing.T) {
 	for _, configName := range []string{"prod", "prod-eu-low-cost"} {
 		cfg := config.Load()
@@ -235,9 +251,12 @@ func TestBootstrapLabelsCase2(t *testing.T) {
 		cfg.ConfigName = configName
 		cfg.InfraProvider = "azure"
 
-		name := BootstrapConfigSecretName(cfg)
-		if name != configName+"-bootstrap-config" {
-			t.Errorf("case2 %s: Secret name %q", configName, name)
+		// Secret name is always "bootstrap-config"; namespace differs.
+		if got := BootstrapConfigSecretName(cfg); got != "bootstrap-config" {
+			t.Errorf("case2 %s: Secret name %q, want bootstrap-config", configName, got)
+		}
+		if got := BootstrapConfigNamespace(cfg); got != "yage-"+configName {
+			t.Errorf("case2 %s: namespace %q, want %q", configName, got, "yage-"+configName)
 		}
 		lbl := bootstrapLabels(cfg, "draft")
 		if lbl["yage.io/workload-cluster"] != "prod" {
@@ -250,7 +269,7 @@ func TestBootstrapLabelsCase2(t *testing.T) {
 }
 
 // TestBootstrapLabelsCase3 verifies a draft scenario config has status="draft"
-// in its labels.
+// in its labels, and the namespace discovery label is present but provider label absent.
 func TestBootstrapLabelsCase3(t *testing.T) {
 	cfg := config.Load()
 	cfg.ConfigName = "scenario-aws-vs-hetzner"
@@ -266,6 +285,15 @@ func TestBootstrapLabelsCase3(t *testing.T) {
 	}
 	if _, ok := lbl["yage.io/provider"]; ok {
 		t.Errorf("case3: provider label should be absent when InfraProvider is empty")
+	}
+
+	// Namespace labels: discovery marker always present, provider absent when empty.
+	nsLbl := configNamespaceLabels(cfg)
+	if nsLbl["infra.yage-deployment.bucaniere.us"] != "true" {
+		t.Errorf("case3: missing discovery label on namespace")
+	}
+	if _, ok := nsLbl["infra.capi-provider.bucaniere.us"]; ok {
+		t.Errorf("case3: provider ns-label should be absent when InfraProvider is empty")
 	}
 }
 

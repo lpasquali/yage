@@ -1412,7 +1412,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.saveKindErr = nil
 				cfg := m.cfg
 				return m, func() tea.Msg {
-					return saveKindMsg{err: kindsync.ApplyBootstrapConfigToManagementCluster(cfg)}
+					return saveKindMsg{err: kindsync.WriteBootstrapConfigSecret(cfg)}
 				}
 			}
 			return m, nil
@@ -1874,13 +1874,13 @@ func (m dashModel) updateDeployTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.deployFocused {
 		case 0:
 			if !m.saveKindLoading {
+				m.flushToCfg()
 				m.saveKindLoading = true
 				m.saveKindDone = false
 				m.saveKindErr = nil
 				cfg := m.cfg
 				return m, func() tea.Msg {
-					err := kindsync.ApplyBootstrapConfigToManagementCluster(cfg)
-					return saveKindMsg{err: err}
+					return saveKindMsg{err: kindsync.WriteBootstrapConfigSecret(cfg)}
 				}
 			}
 		case 1:
@@ -2062,7 +2062,8 @@ func (m dashModel) loadEditorResourcesCmd() tea.Cmd {
 		bg := context.Background()
 		var items []editorResource
 
-		secrets, err := cli.Typed.CoreV1().Secrets(kindsync.BootstrapConfigNamespace).List(bg, metav1.ListOptions{})
+		cfgNS := kindsync.BootstrapConfigNamespace(cfg)
+		secrets, err := cli.Typed.CoreV1().Secrets(cfgNS).List(bg, metav1.ListOptions{})
 		if err != nil {
 			return editorResourcesMsg{err: fmt.Errorf("list secrets: %w", err)}
 		}
@@ -2070,7 +2071,7 @@ func (m dashModel) loadEditorResourcesCmd() tea.Cmd {
 			items = append(items, editorResource{Kind: "Secret", Name: s.Name})
 		}
 
-		cms, err := cli.Typed.CoreV1().ConfigMaps(kindsync.BootstrapConfigNamespace).List(bg, metav1.ListOptions{})
+		cms, err := cli.Typed.CoreV1().ConfigMaps(cfgNS).List(bg, metav1.ListOptions{})
 		if err == nil {
 			for _, cm := range cms.Items {
 				items = append(items, editorResource{Kind: "ConfigMap", Name: cm.Name})
@@ -2130,19 +2131,20 @@ func (m dashModel) openKindResourceEditorCmd(res editorResource) tea.Cmd {
 		bg := context.Background()
 
 		var body string
+		cfgNS2 := kindsync.BootstrapConfigNamespace(cfg)
 		switch res.Kind {
 		case "Secret":
-			sec, err := cli.Typed.CoreV1().Secrets(kindsync.BootstrapConfigNamespace).Get(bg, res.Name, metav1.GetOptions{})
+			sec, err := cli.Typed.CoreV1().Secrets(cfgNS2).Get(bg, res.Name, metav1.GetOptions{})
 			if err != nil {
 				return editorResourcesMsg{err: fmt.Errorf("get secret %s: %w", res.Name, err)}
 			}
-			body = secretToEditableYAML(sec.Data, res)
+			body = secretToEditableYAML(sec.Data, res, cfgNS2)
 		case "ConfigMap":
-			cm, err := cli.Typed.CoreV1().ConfigMaps(kindsync.BootstrapConfigNamespace).Get(bg, res.Name, metav1.GetOptions{})
+			cm, err := cli.Typed.CoreV1().ConfigMaps(cfgNS2).Get(bg, res.Name, metav1.GetOptions{})
 			if err != nil {
 				return editorResourcesMsg{err: fmt.Errorf("get configmap %s: %w", res.Name, err)}
 			}
-			body = configMapToEditableYAML(cm.Data, res)
+			body = configMapToEditableYAML(cm.Data, res, cfgNS2)
 		default:
 			return editorResourcesMsg{err: fmt.Errorf("unknown kind %s", res.Kind)}
 		}
@@ -2165,11 +2167,11 @@ func (m dashModel) openKindResourceEditorCmd(res editorResource) tea.Cmd {
 
 // secretToEditableYAML converts Secret data to a cleartext YAML for editing.
 // Values are base64-decoded and JSON-quoted.
-func secretToEditableYAML(data map[string][]byte, res editorResource) string {
+func secretToEditableYAML(data map[string][]byte, res editorResource, ns string) string {
 	var sb strings.Builder
 	sb.WriteString("# ⚠️  🔓  🎥  WARNING: CLEARTEXT SECRETS VISIBLE ON SCREEN  🎥  🔓  ⚠️\n")
 	sb.WriteString("# This file contains the decoded contents of Secret: ")
-	sb.WriteString(kindsync.BootstrapConfigNamespace + "/" + res.Name + "\n")
+	sb.WriteString(ns + "/" + res.Name + "\n")
 	sb.WriteString("# Anyone watching your screen can see these values!\n")
 	sb.WriteString("# The temp file is deleted automatically after you close the editor.\n")
 	sb.WriteString("#\n# Format: key: \"json-quoted-value\"  (one entry per line)\n\n")
@@ -2186,10 +2188,10 @@ func secretToEditableYAML(data map[string][]byte, res editorResource) string {
 }
 
 // configMapToEditableYAML converts ConfigMap data to a simple YAML for editing.
-func configMapToEditableYAML(data map[string]string, res editorResource) string {
+func configMapToEditableYAML(data map[string]string, res editorResource, ns string) string {
 	var sb strings.Builder
 	sb.WriteString("# ConfigMap: ")
-	sb.WriteString(kindsync.BootstrapConfigNamespace + "/" + res.Name + "\n\n")
+	sb.WriteString(ns + "/" + res.Name + "\n\n")
 	keys := make([]string, 0, len(data))
 	for k := range data {
 		keys = append(keys, k)
@@ -2219,7 +2221,7 @@ func applyEditedResourceToKind(cfg *config.Config, res *editorResource, tmpFile 
 		return err
 	}
 	bg := context.Background()
-	ns := kindsync.BootstrapConfigNamespace
+	ns := kindsync.BootstrapConfigNamespace(cfg)
 
 	switch res.Kind {
 	case "Secret":
@@ -2293,7 +2295,7 @@ func (m dashModel) renderEditorTab(w, h int) string {
 		lines = append(lines, stBad.Render("  "+m.editorErr))
 		lines = append(lines, stMuted.Render("  r = retry"))
 	} else if len(m.editorItems) == 0 {
-		lines = append(lines, stMuted.Render("  no resources found in "+kindsync.BootstrapConfigNamespace))
+		lines = append(lines, stMuted.Render("  no resources found in "+kindsync.BootstrapConfigNamespace(m.cfg)))
 		lines = append(lines, stMuted.Render("  r = refresh"))
 	} else {
 		for i, res := range m.editorItems {
@@ -4129,22 +4131,29 @@ func (m dashModel) renderDepsTab(w, h int) string {
 	}
 
 	if len(m.depsImages) > 0 {
-		lines = append(lines, stBold.Render("  Provider images (arm64)"))
+		provLabel := m.cfg.InfraProvider
+		if provLabel == "" {
+			provLabel = "provider"
+		}
+		lines = append(lines, stBold.Render("  "+provLabel+" images"))
+		archOK := func(ok bool) string {
+			if ok {
+				return stOK.Render("✓")
+			}
+			return stBad.Render("✗")
+		}
 		for _, img := range m.depsImages {
-			var badge string
-			switch {
-			case img.Err:
-				badge = stWarn.Render("  ?")
-			case img.Arm64:
-				badge = stOK.Render("  ✓")
-			default:
-				badge = stBad.Render("  ✗")
-			}
 			ref := img.Image
-			if len(ref) > 55 {
-				ref = "…" + ref[len(ref)-54:]
+			if len(ref) > 45 {
+				ref = "…" + ref[len(ref)-44:]
 			}
-			lines = append(lines, fmt.Sprintf("%s %-18s  %s", badge, img.Name, stMuted.Render(ref)))
+			var archStr string
+			if img.Err {
+				archStr = stWarn.Render("  ? [amd64:?] [arm64:?]")
+			} else {
+				archStr = fmt.Sprintf("  [amd64:%s] [arm64:%s]", archOK(img.Amd64), archOK(img.Arm64))
+			}
+			lines = append(lines, fmt.Sprintf("  %-18s %s  %s", img.Name, archStr, stMuted.Render(ref)))
 		}
 		lines = append(lines, "")
 	}

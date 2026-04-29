@@ -761,6 +761,16 @@ func awsAnyCredentialsAvailable(cfg *config.Config) bool {
 	return false
 }
 
+// gcpAnyCredentialsAvailable mirrors awsAnyCredentialsAvailable for GCP: checks
+// the explicit cfg credential first, then the same env-var fallbacks that the
+// pricing fetcher uses (YAGE_GCP_API_KEY, GOOGLE_BILLING_API_KEY).
+func gcpAnyCredentialsAvailable(cfg *config.Config) bool {
+	if cfg.Cost.Credentials.GCPAPIKey != "" {
+		return true
+	}
+	return os.Getenv("YAGE_GCP_API_KEY") != "" || os.Getenv("GOOGLE_BILLING_API_KEY") != ""
+}
+
 // disableProvidersMissingCredentials syncs cfg.SkipProviders with credential
 // availability. Azure, Linode, and OCI use public APIs and are never touched.
 // AWS is skipped only when no credentials exist in any form (explicit key/secret,
@@ -778,7 +788,7 @@ func disableProvidersMissingCredentials(cfg *config.Config) {
 	}
 	checks := []check{
 		{"aws", !awsAnyCredentialsAvailable(cfg)},
-		{"gcp", cfg.Cost.Credentials.GCPAPIKey == ""},
+		{"gcp", !gcpAnyCredentialsAvailable(cfg)},
 		{"hetzner", cfg.Cost.Credentials.HetznerToken == ""},
 		{"digitalocean", cfg.Cost.Credentials.DigitalOceanToken == ""},
 		{"ibmcloud", cfg.Cost.Credentials.IBMCloudAPIKey == ""},

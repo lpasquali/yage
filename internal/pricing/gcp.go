@@ -143,13 +143,13 @@ func (g *gcpFetcher) findCoreRam(family, region, key string, wantCore bool) (flo
 		if !inSlice(s.ServiceRegions, region) {
 			continue
 		}
-		if s.Category == nil || s.Category.ResourceFamily != "Compute" {
+		if s.ResourceFamily != "Compute" {
 			continue
 		}
-		if !strings.Contains(s.Category.ResourceGroup, wantGroup) {
+		if !strings.Contains(s.ResourceGroup, wantGroup) {
 			continue
 		}
-		if s.Category.UsageType != "OnDemand" {
+		if s.UsageType != "OnDemand" {
 			continue
 		}
 		desc := strings.ToUpper(s.Description)
@@ -165,12 +165,8 @@ func (g *gcpFetcher) findCoreRam(family, region, key string, wantCore bool) (flo
 		if strings.Contains(desc, "SOLE TENANT") || strings.Contains(desc, "CUSTOM") {
 			continue
 		}
-		if len(s.PricingInfo) == 0 {
-			continue
-		}
-		price := gcpUsdFromTier(s.PricingInfo[0])
-		if price > 0 {
-			return price, nil
+		if s.PriceUSD > 0 {
+			return s.PriceUSD, nil
 		}
 	}
 	return 0, fmt.Errorf("gcp: no %s sku for family %s in %s", wantGroup, family, region)
@@ -199,17 +195,13 @@ func (g *gcpFetcher) fetchPD(kind, region, key string) (Item, error) {
 		if !strings.Contains(s.Description, wantDesc) {
 			continue
 		}
-		if s.Category == nil || s.Category.UsageType != "OnDemand" {
+		if s.UsageType != "OnDemand" {
 			continue
 		}
-		if len(s.PricingInfo) == 0 {
-			continue
-		}
-		price := gcpUsdFromTier(s.PricingInfo[0])
-		if price > 0 {
+		if s.PriceUSD > 0 {
 			return Item{
 				USDPerHour:  0,
-				USDPerMonth: price,
+				USDPerMonth: s.PriceUSD,
 				FetchedAt:   time.Now(),
 			}, nil
 		}

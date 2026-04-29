@@ -13,9 +13,13 @@
 //
 // Config:
 //
-//	--bootstrap-secret-ref   namespace/name of the bootstrap-config
-//	                         Secret written by the yage CLI post-pivot
-//	                         (default: yage-system/proxmox-bootstrap-config).
+//	--config-name NAME       Bootstrap-config name prefix; the operator reads
+//	                         yage-system/<name>-bootstrap-config (the
+//	                         orchestrator-state Secret written by the yage CLI).
+//	                         When unset, defaults to the CAPI cluster name
+//	                         "capi-quickstart". Use --bootstrap-secret-ref to
+//	                         override the full namespace/name directly.
+//	--bootstrap-secret-ref   namespace/name override (overrides --config-name).
 //	                         When the Secret is unreadable the runner
 //	                         falls back to an empty config (all providers
 //	                         priced at default shape).
@@ -59,10 +63,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "warning: prctl PR_SET_DUMPABLE failed:", err)
 	}
 	var (
-		metricsAddr    string
-		probeAddr      string
-		pollInterval   time.Duration
-		secretRef      string
+		metricsAddr  string
+		probeAddr    string
+		pollInterval time.Duration
+		configName   string
+		secretRef    string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"Address to expose Prometheus metrics on.")
@@ -70,12 +75,23 @@ func main() {
 		"Address to expose /healthz and /readyz probes on.")
 	flag.DurationVar(&pollInterval, "cost-poll-interval", 24*time.Hour,
 		"How often to poll pricing APIs (e.g. 24h, 6h).")
-	flag.StringVar(&secretRef, "bootstrap-secret-ref", "yage-system/proxmox-bootstrap-config",
-		"namespace/name of the bootstrap-config Secret written by the yage CLI.")
+	flag.StringVar(&configName, "config-name", "",
+		"Bootstrap-config name prefix; Secret is yage-system/<name>-bootstrap-config. "+
+			"Defaults to \"capi-quickstart\" when unset.")
+	flag.StringVar(&secretRef, "bootstrap-secret-ref", "",
+		"namespace/name override for the bootstrap-config Secret. When empty, computed from --config-name.")
 
 	zapOpts := zap.Options{}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	if secretRef == "" {
+		name := configName
+		if name == "" {
+			name = "capi-quickstart"
+		}
+		secretRef = "yage-system/" + name + "-bootstrap-config"
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 	log := ctrl.Log.WithName("yage-operator")

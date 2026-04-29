@@ -15,6 +15,7 @@ package kindsync
 // cluster required) by calling the same internal functions directly.
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/lpasquali/yage/internal/config"
@@ -142,6 +143,189 @@ func TestKindSyncExplicitGuardPreservedOnMerge(t *testing.T) {
 	}
 	if dst.KindVersion != "v0.25.0" {
 		t.Errorf("unguarded KindVersion should be applied: got %q", dst.KindVersion)
+	}
+}
+
+// TestBootstrapConfigSecretName verifies the naming function for all three
+// supported modes.
+func TestBootstrapConfigSecretName(t *testing.T) {
+	// Case 1 / 2 / 3: ConfigName is non-empty.
+	cfg := config.Load()
+	cfg.ConfigName = "dev"
+	if got := BootstrapConfigSecretName(cfg); got != "dev-bootstrap-config" {
+		t.Errorf("case 1: got %q, want %q", got, "dev-bootstrap-config")
+	}
+	cfg.ConfigName = "prod-eu-low-cost"
+	if got := BootstrapConfigSecretName(cfg); got != "prod-eu-low-cost-bootstrap-config" {
+		t.Errorf("case 2: got %q, want %q", got, "prod-eu-low-cost-bootstrap-config")
+	}
+	cfg.ConfigName = "scenario-aws-vs-hetzner"
+	if got := BootstrapConfigSecretName(cfg); got != "scenario-aws-vs-hetzner-bootstrap-config" {
+		t.Errorf("case 3: got %q, want %q", got, "scenario-aws-vs-hetzner-bootstrap-config")
+	}
+	// Empty ConfigName falls back to "bootstrap-config".
+	cfg.ConfigName = ""
+	if got := BootstrapConfigSecretName(cfg); got != "bootstrap-config" {
+		t.Errorf("empty fallback: got %q, want %q", got, "bootstrap-config")
+	}
+}
+
+// TestSanitizeLabelValue verifies the K8s label charset sanitization.
+func TestSanitizeLabelValue(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"aws", "aws"},
+		{"us-east-1", "us-east-1"},
+		{"prod-eu-low-cost", "prod-eu-low-cost"},
+		{"PROD", "prod"},
+		{"my cluster", "my-cluster"},
+		{"--leading--", "leading"},
+		{"trailing--", "trailing"},
+		{"a_b", "a-b"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := sanitizeLabelValue(c.in); got != c.want {
+			t.Errorf("sanitizeLabelValue(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	// Values longer than 63 chars are truncated without trailing hyphen.
+	long := "a" + strings.Repeat("-", 62) + "b"
+	if got := sanitizeLabelValue(long); len(got) > 63 {
+		t.Errorf("long label: len=%d > 63", len(got))
+	}
+}
+
+// TestBootstrapLabelsCase1 verifies that two configs with distinct WorkloadClusterNames
+// (ConfigName defaults to WorkloadClusterName) produce distinct Secret names
+// and carry the correct labels.
+func TestBootstrapLabelsCase1(t *testing.T) {
+	for _, wl := range []string{"dev", "staging", "prod"} {
+		cfg := config.Load()
+		cfg.WorkloadClusterName = wl
+		cfg.ConfigName = wl // default rule applied in Load()
+		cfg.InfraProvider = "aws"
+
+		name := BootstrapConfigSecretName(cfg)
+		if name != wl+"-bootstrap-config" {
+			t.Errorf("case1 %s: Secret name %q, want %q", wl, name, wl+"-bootstrap-config")
+		}
+
+		lbl := bootstrapLabels(cfg, "draft")
+		if lbl["yage.io/config-name"] != wl {
+			t.Errorf("case1 %s: config-name label %q", wl, lbl["yage.io/config-name"])
+		}
+		if lbl["yage.io/workload-cluster"] != wl {
+			t.Errorf("case1 %s: workload-cluster label %q", wl, lbl["yage.io/workload-cluster"])
+		}
+		if lbl["yage.io/config-status"] != "draft" {
+			t.Errorf("case1 %s: config-status label %q", wl, lbl["yage.io/config-status"])
+		}
+		if lbl["yage.io/provider"] != "aws" {
+			t.Errorf("case1 %s: provider label %q", wl, lbl["yage.io/provider"])
+		}
+	}
+}
+
+// TestBootstrapLabelsCase2 verifies two configs for the same workload cluster
+// (different ConfigName) both carry workload-cluster=prod but distinct Secret names.
+func TestBootstrapLabelsCase2(t *testing.T) {
+	for _, configName := range []string{"prod", "prod-eu-low-cost"} {
+		cfg := config.Load()
+		cfg.WorkloadClusterName = "prod"
+		cfg.ConfigName = configName
+		cfg.InfraProvider = "azure"
+
+		name := BootstrapConfigSecretName(cfg)
+		if name != configName+"-bootstrap-config" {
+			t.Errorf("case2 %s: Secret name %q", configName, name)
+		}
+		lbl := bootstrapLabels(cfg, "draft")
+		if lbl["yage.io/workload-cluster"] != "prod" {
+			t.Errorf("case2 %s: workload-cluster %q", configName, lbl["yage.io/workload-cluster"])
+		}
+		if lbl["yage.io/config-name"] != configName {
+			t.Errorf("case2 %s: config-name %q", configName, lbl["yage.io/config-name"])
+		}
+	}
+}
+
+// TestBootstrapLabelsCase3 verifies a draft scenario config has status="draft"
+// in its labels.
+func TestBootstrapLabelsCase3(t *testing.T) {
+	cfg := config.Load()
+	cfg.ConfigName = "scenario-aws-vs-hetzner"
+	cfg.WorkloadClusterName = ""
+	cfg.InfraProvider = ""
+
+	lbl := bootstrapLabels(cfg, "draft")
+	if lbl["yage.io/config-status"] != "draft" {
+		t.Errorf("case3: config-status %q", lbl["yage.io/config-status"])
+	}
+	if _, ok := lbl["yage.io/workload-cluster"]; ok {
+		t.Errorf("case3: workload-cluster label should be absent when WorkloadClusterName is empty")
+	}
+	if _, ok := lbl["yage.io/provider"]; ok {
+		t.Errorf("case3: provider label should be absent when InfraProvider is empty")
+	}
+}
+
+// TestBootstrapLabelsPromoted verifies the realized status string.
+func TestBootstrapLabelsPromoted(t *testing.T) {
+	cfg := config.Load()
+	cfg.ConfigName = "dev"
+	lbl := bootstrapLabels(cfg, "realized")
+	if lbl["yage.io/config-status"] != "realized" {
+		t.Errorf("realized label: got %q", lbl["yage.io/config-status"])
+	}
+}
+
+// TestConfigNameRoundTripSnapshot verifies YAGE_CONFIG_NAME round-trips
+// through SnapshotYAML → ApplySnapshotKV correctly, and that the explicit
+// guard prevents overwrite.
+func TestConfigNameRoundTripSnapshot(t *testing.T) {
+	src := config.Load()
+	src.ConfigName = "prod-eu-low-cost"
+	src.ConfigNameExplicit = false // not explicit, so snapshot can restore it
+
+	yaml := src.SnapshotYAML()
+	kv := parseFlatYAMLOrJSON(yaml)
+
+	dst := config.Load()
+	dst.ApplySnapshotKV(kv)
+
+	if dst.ConfigName != "prod-eu-low-cost" {
+		t.Errorf("ConfigName round-trip: got %q, want %q", dst.ConfigName, "prod-eu-low-cost")
+	}
+
+	// With explicit guard set, the CLI-provided value wins.
+	dst2 := config.Load()
+	dst2.ConfigName = "my-override"
+	dst2.ConfigNameExplicit = true
+	dst2.ApplySnapshotKV(kv)
+	if dst2.ConfigName != "my-override" {
+		t.Errorf("ConfigName explicit guard: got %q, want %q", dst2.ConfigName, "my-override")
+	}
+}
+
+// TestPickBootstrapConfigNonTTY verifies that pickBootstrapConfig auto-picks
+// the first candidate when stdin is not a TTY (the expected state in CI/tests).
+func TestPickBootstrapConfigNonTTY(t *testing.T) {
+	candidates := []BootstrapCandidate{
+		{KindCluster: "k1", ConfigName: "prod", Workload: "prod", Status: "realized", Provider: "aws"},
+		{KindCluster: "k1", ConfigName: "prod-eu-low-cost", Workload: "prod", Status: "draft", Provider: "azure"},
+		{KindCluster: "k2", ConfigName: "dev", Workload: "dev", Status: "draft", Provider: "gcp"},
+	}
+	// In test environments stdin is not a TTY, so pickBootstrapConfig should
+	// return the first candidate without prompting.
+	if isTTY() {
+		t.Skip("skipping non-TTY test when stdin is a TTY (interactive terminal)")
+	}
+	c := pickBootstrapConfig(candidates, "test picker")
+	if c == nil {
+		t.Fatal("pickBootstrapConfig returned nil")
+	}
+	if c.ConfigName != "prod" {
+		t.Errorf("non-TTY auto-pick: got %q, want %q", c.ConfigName, "prod")
 	}
 }
 

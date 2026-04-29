@@ -4,11 +4,12 @@
 package pricing
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
-
-	"cloud.google.com/go/billing/apiv1/billingpb"
+	"time"
 )
 
 // GCP service-specific helpers — read from the same Cloud Billing
@@ -40,20 +41,44 @@ const (
 	gcpCloudSQLService    = "9662-B51E-5089" // Cloud SQL (PostgreSQL / MySQL / SQLServer)
 )
 
-// gcpServiceSKUCache memoizes the full SKU list per service ID for
-// the process lifetime. The Cloud Billing Catalog is stable enough
-// that one fetch per `yage` run is plenty, and re-walking the
-// paginated catalog on every gcpFindSku call (NAT, LB, egress, …)
-// dominates the cost-compare wall-clock when GCP is in the mix.
+// gcpSkuRecord is the compact, disk-cacheable representation of a GCP SKU.
+// Only the fields needed by gcpFindSku and findCoreRam are stored.
+type gcpSkuRecord struct {
+	Description    string   `json:"d"`
+	ServiceRegions []string `json:"r"`
+	UsageType      string   `json:"u"` // Category.UsageType
+	ResourceFamily string   `json:"f"` // Category.ResourceFamily
+	ResourceGroup  string   `json:"g"` // Category.ResourceGroup
+	PriceUSD       float64  `json:"p"` // first non-zero on-demand price
+}
+
+type gcpServiceDiskCache struct {
+	FetchedAt time.Time      `json:"fetchedAt"`
+	SKUs      []gcpSkuRecord `json:"skus"`
+}
+
+// gcpServiceSKUCache memoizes the compact SKU list per service ID for the
+// process lifetime with 24-hour disk persistence — so the slow first-ever
+// GCP Billing Catalog fetch is only paid once across restarts.
 var (
 	gcpServiceSKUMu    sync.Mutex
-	gcpServiceSKUCache = map[string][]*billingpb.Sku{}
+	gcpServiceSKUCache = map[string][]gcpSkuRecord{}
 )
 
-// gcpListAllSkus returns every SKU the catalog exposes for a service,
-// fetching once per process and caching the result. Callers do their
-// own filtering by region / description / category in-memory.
-func gcpListAllSkus(serviceID, key string) ([]*billingpb.Sku, error) {
+// gcpSkuDiskPath returns the cache file path for a GCP service SKU list.
+func gcpSkuDiskPath(serviceID string) string {
+	d := cacheDir()
+	_ = os.MkdirAll(d, 0o755)
+	return fmt.Sprintf("%s/gcp-svc-%s.json", d, serviceID)
+}
+
+// gcpListAllSkus returns every SKU the catalog exposes for a service in
+// compact form, with two caching layers:
+//  1. Per-process in-memory cache (zero cost after first call per service).
+//  2. 24-hour disk cache (avoids slow API pagination on process restart).
+//
+// Callers filter the returned slice by region / description / category.
+func gcpListAllSkus(serviceID, key string) ([]gcpSkuRecord, error) {
 	gcpServiceSKUMu.Lock()
 	if cached, ok := gcpServiceSKUCache[serviceID]; ok {
 		gcpServiceSKUMu.Unlock()
@@ -61,23 +86,67 @@ func gcpListAllSkus(serviceID, key string) ([]*billingpb.Sku, error) {
 	}
 	gcpServiceSKUMu.Unlock()
 
-	skus, err := gcpFetchAllSkus(serviceID, key)
+	// Check disk cache.
+	if path := gcpSkuDiskPath(serviceID); true {
+		if raw, err := os.ReadFile(path); err == nil {
+			var dc gcpServiceDiskCache
+			if err := json.Unmarshal(raw, &dc); err == nil && time.Since(dc.FetchedAt) < DefaultTTL {
+				gcpServiceSKUMu.Lock()
+				gcpServiceSKUCache[serviceID] = dc.SKUs
+				gcpServiceSKUMu.Unlock()
+				return dc.SKUs, nil
+			}
+		}
+	}
+
+	// Full API fetch — slow on first call; result written to disk + memory.
+	protos, err := gcpFetchAllSkus(serviceID, key)
 	if err != nil {
 		return nil, err
 	}
+	records := make([]gcpSkuRecord, 0, len(protos))
+	for _, s := range protos {
+		price := 0.0
+		if len(s.PricingInfo) > 0 {
+			price = gcpUsdFromTier(s.PricingInfo[0])
+		}
+		cat := s.Category
+		rec := gcpSkuRecord{
+			Description:    s.Description,
+			ServiceRegions: s.ServiceRegions,
+			PriceUSD:       price,
+		}
+		if cat != nil {
+			rec.UsageType = cat.UsageType
+			rec.ResourceFamily = cat.ResourceFamily
+			rec.ResourceGroup = cat.ResourceGroup
+		}
+		if rec.PriceUSD == 0 {
+			continue // skip un-priced SKUs — they won't match any lookup
+		}
+		records = append(records, rec)
+	}
 
 	gcpServiceSKUMu.Lock()
-	gcpServiceSKUCache[serviceID] = skus
+	gcpServiceSKUCache[serviceID] = records
 	gcpServiceSKUMu.Unlock()
-	return skus, nil
+
+	if path := gcpSkuDiskPath(serviceID); path != "" {
+		dc := gcpServiceDiskCache{FetchedAt: time.Now(), SKUs: records}
+		if raw, err := json.Marshal(dc); err == nil {
+			tmp := path + ".tmp"
+			if err := os.WriteFile(tmp, raw, 0o644); err == nil {
+				_ = os.Rename(tmp, path)
+			}
+		}
+	}
+	return records, nil
 }
 
-// gcpFindSku scans the cached SKU list for a service+region and
-// returns the first non-zero on-demand price whose description
-// contains all of descContains (and none of mustNotContain). Pure
-// in-memory after the first fetch — repeated calls across
-// gcpFindSku / overhead helpers cost a slice walk, not an HTTP
-// request.
+// gcpFindSku scans the cached SKU list for a service+region and returns the
+// first non-zero on-demand price whose description contains all of
+// descContains (and none of mustNotContain). Pure in-memory after the first
+// fetch — repeated calls cost a slice walk, not an HTTP request.
 func gcpFindSku(serviceID, region, key string, descContains []string, mustNotContain []string) (float64, error) {
 	skus, err := gcpListAllSkus(serviceID, key)
 	if err != nil {
@@ -87,7 +156,7 @@ func gcpFindSku(serviceID, region, key string, descContains []string, mustNotCon
 		if region != "" && !inSlice(s.ServiceRegions, region) {
 			continue
 		}
-		if s.Category == nil || s.Category.UsageType != "OnDemand" {
+		if s.UsageType != "OnDemand" {
 			continue
 		}
 		desc := strings.ToLower(s.Description)
@@ -111,12 +180,8 @@ func gcpFindSku(serviceID, region, key string, descContains []string, mustNotCon
 		if skip {
 			continue
 		}
-		if len(s.PricingInfo) == 0 {
-			continue
-		}
-		price := gcpUsdFromTier(s.PricingInfo[0])
-		if price > 0 {
-			return price, nil
+		if s.PriceUSD > 0 {
+			return s.PriceUSD, nil
 		}
 	}
 	return 0, fmt.Errorf("gcp: no sku for %v in %s", descContains, region)

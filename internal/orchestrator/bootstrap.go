@@ -998,6 +998,9 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		}
 	}
 
+	// Promote the bootstrap-config Secret from draft → realized now that
+	// the full bootstrap (CAPI + Argo CD) has completed successfully.
+	kindsync.PromoteBootstrapConfigToRealized(cfg)
 	logx.Log("Done. CAPI: 'kubectl get clusters -A' and 'clusterctl describe cluster <name>'. For workload apps, rely on Argo CD sync (this script does not wait for all add-ons to be Healthy).")
 	return 0
 }

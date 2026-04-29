@@ -114,6 +114,7 @@ func blockStorageTierName(provName string) string {
 // CloudCost is one row in the multi-cloud comparison table.
 type CloudCost struct {
 	ProviderName         string
+	Region               string  // region estimated; empty for on-prem or single-region flows
 	Estimate             provider.CostEstimate
 	Err                  error
 	StorageUSDPerGBMonth float64 // 0 when not fetchable
@@ -211,6 +212,95 @@ func StreamWithFilter(cfg *config.Config, scope Scope, progress io.Writer, ch ch
 				fmt.Fprintf(progress, "    ✓ %s\n", name)
 			}
 		}()
+	}
+	go func() { wg.Wait(); close(ch) }()
+}
+
+// withProviderRegion returns a shallow copy of cfg with the named
+// provider's region / location field set to region. Used by
+// StreamWithRegions to price each (provider, region) pair with a
+// region-specific config copy — all other fields (machine types,
+// credentials, overhead tier) remain identical to the source.
+func withProviderRegion(cfg *config.Config, provName, region string) config.Config {
+	c := *cfg
+	switch provName {
+	case "aws":
+		c.Providers.AWS.Region = region
+	case "azure":
+		c.Providers.Azure.Location = region
+	case "gcp":
+		c.Providers.GCP.Region = region
+	case "hetzner":
+		c.Providers.Hetzner.Location = region
+	case "digitalocean":
+		c.Providers.DigitalOcean.Region = region
+	case "linode":
+		c.Providers.Linode.Region = region
+	case "oci":
+		c.Providers.OCI.Region = region
+	case "ibmcloud":
+		c.Providers.IBMCloud.Region = region
+	}
+	return c
+}
+
+// StreamWithRegions fans out cost estimates per (provider, region) pair
+// and sends each CloudCost to ch as it completes, then closes ch.
+// regionsByProvider maps provider name to the ordered list of regions to
+// estimate for that provider. If a provider has no entry (or an empty
+// list) the provider's current region from cfg is used (single estimate).
+// CloudCost.Region is set for every result. Provider / scope filtering is
+// identical to StreamWithFilter.
+func StreamWithRegions(cfg *config.Config, scope Scope, regionsByProvider map[string][]string, progress io.Writer, ch chan<- CloudCost) {
+	names := provider.AirgapFilter(provider.Registered(), cfg.Airgapped)
+	names = filterEphemeralTestProviders(names)
+	switch scope {
+	case ScopeCloudOnly:
+		names = filterCloudOnly(names)
+	case ScopeOnPremOnly:
+		names = filterOnPremOnly(names)
+	}
+	if cfg.InfraProvider != "" && !cfg.InfraProviderDefaulted {
+		names = filterByInclusion(names, map[string]struct{}{cfg.InfraProvider: {}})
+	}
+	skipped := parseProviderList(cfg.SkipProviders)
+	if len(skipped) > 0 {
+		names = filterByExclusion(names, skipped)
+	}
+	var wg sync.WaitGroup
+	for _, name := range names {
+		name := name
+		regions := regionsByProvider[name]
+		if len(regions) == 0 {
+			regions = []string{""} // sentinel: use region already in cfg
+		}
+		for _, region := range regions {
+			region := region
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				p, err := provider.Get(name)
+				if err != nil {
+					return
+				}
+				var cfgCopy config.Config
+				if region != "" {
+					cfgCopy = withProviderRegion(cfg, name, region)
+				} else {
+					cfgCopy = *cfg
+				}
+				est, estErr := p.EstimateMonthlyCostUSD(&cfgCopy)
+				storagePrice, storageErr := liveBlockStorageUSDPerGBMonth(name, &cfgCopy)
+				ch <- CloudCost{
+					ProviderName:         name,
+					Region:               region,
+					Estimate:             est,
+					Err:                  estErr,
+					StorageUSDPerGBMonth: storagePrice,
+					StorageErr:           storageErr,
+				}
+			}()
+		}
 	}
 	go func() { wg.Wait(); close(ch) }()
 }

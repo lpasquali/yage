@@ -5,7 +5,6 @@ package pricing
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,16 +50,6 @@ type awsServiceFetcher struct {
 }
 
 var awsSvc = &awsServiceFetcher{}
-
-func awsBulkServiceCachePath(service, region string) string {
-	d := cacheDir()
-	_ = os.MkdirAll(d, 0o755)
-	tag := region
-	if tag == "" {
-		tag = "global"
-	}
-	return fmt.Sprintf("%s/aws-svc-%s-%s.json", d, service, tag)
-}
 
 func (a *awsServiceFetcher) loadServiceBulk(service, region string) (*awsBulkPayload, error) {
 	a.mu.Lock()

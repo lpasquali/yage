@@ -52,6 +52,7 @@ proxmox — Proxmox VE / CAPMOX flags (most-mature path)
     --recreate-proxmox-identities to force a clean re-bootstrap.
 
 See also:
+    --config-name    bootstrap-config discriminator (see general --help)
     --help kind      kind cluster name, config, backup/restore
     --help pivot     move CAPI to a Proxmox-hosted mgmt cluster
     --help cost      on-prem TCO (--hardware-cost-usd, --hardware-watts, ...)

@@ -45,6 +45,7 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/cost"
 	"github.com/lpasquali/yage/internal/obs"
+	"github.com/lpasquali/yage/internal/platform/installer"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/platform/sysinfo"
 	"github.com/lpasquali/yage/internal/pricing"
@@ -111,6 +112,12 @@ const (
 	tiProxmoxMgmtWorkerCores   // Proxmox mgmt worker CPU cores
 	tiProxmoxMgmtWorkerMemMiB  // Proxmox mgmt worker memory MiB
 	tiProxmoxMgmtWorkerDiskGB  // Proxmox mgmt worker boot disk GB
+	tiProxmoxPool           // Proxmox workload cluster pool
+	tiProxmoxMgmtPool       // Proxmox mgmt cluster pool
+	tiProxmoxCPCount        // workload CP replica count
+	tiProxmoxWorkerCount    // workload worker replica count
+	tiProxmoxMgmtCPCount    // mgmt CP replica count
+	tiProxmoxMgmtWorkerCount // mgmt worker replica count
 	tiArgoURL               // AppOfApps git URL
 	tiArgoPath      // AppOfApps git path
 	tiArgoRef       // AppOfApps git ref
@@ -203,7 +210,13 @@ const (
 	focProxmoxMgmtWorkerCores   // 37
 	focProxmoxMgmtWorkerMemMiB  // 38
 	focProxmoxMgmtWorkerDiskGB  // 39
-	focCPEndpointIP             // 40
+	focProxmoxPool              // 40 — Proxmox workload pool name
+	focProxmoxMgmtPool          // 41 — Proxmox mgmt pool name
+	focProxmoxCPCount           // 42 — workload CP replica count
+	focProxmoxWorkerCount       // 43 — workload worker replica count
+	focProxmoxMgmtCPCount       // 44 — mgmt CP replica count
+	focProxmoxMgmtWorkerCount   // 45 — mgmt worker replica count
+	focCPEndpointIP             // 46
 	focNodeIPRanges             // 41
 	focGateway                  // 42
 	focIPPrefix                 // 43
@@ -305,6 +318,12 @@ var dashFields = []fieldMeta{
 	{fkText, tiProxmoxMgmtWorkerCores, "  cores", "", false},
 	{fkText, tiProxmoxMgmtWorkerMemMiB, "  mem MiB", "", false},
 	{fkText, tiProxmoxMgmtWorkerDiskGB, "  disk GB", "", false},
+	{fkText, tiProxmoxPool, "wl pool name", "", false},
+	{fkText, tiProxmoxMgmtPool, "mgmt pool name", "", false},
+	{fkText, tiProxmoxCPCount, "wl CP replicas", "", false},
+	{fkText, tiProxmoxWorkerCount, "wl worker replicas", "", false},
+	{fkText, tiProxmoxMgmtCPCount, "mgmt CP replicas", "", false},
+	{fkText, tiProxmoxMgmtWorkerCount, "mgmt worker replicas", "", false},
 	// ── Workload Network (on-prem only) ──────────────────────────────────── fid 40-44
 	{fkText, tiCPEndpointIP, "CP endpoint IP", "Workload Network", false},
 	{fkText, tiNodeIPRanges, "node IP ranges", "", false},
@@ -356,12 +375,24 @@ const (
 	tabCosts                 // 2 — full provider comparison table + bar chart
 	tabLogs                  // 3 — scrollable ring buffer
 	tabDeploy                // 4 — save-to-kind + start-deploy actions
-	tabHelp                  // 5 — keyboard shortcuts reference (always second-to-last)
-	tabAbout                 // 6 — version / license / URL (always last)
+	tabDeps                  // 5 — CLI deps check + upgrade; provider image arm64 status
+	tabHelp                  // 6 — keyboard shortcuts reference (always second-to-last)
+	tabAbout                 // 7 — version / license / URL (always last)
 	tabCount                 // must be last
 )
 
-var tabLabels = [tabCount]string{"config", "editor", "costs", "logs", "deploy", "help", "about"}
+var tabLabels = [tabCount]string{"config", "editor", "costs", "logs", "deploy", "deps", "help", "about"}
+
+// ─── config-tab sub-screen state ─────────────────────────────────────────────
+
+// cfgScreenKind is the sub-state of the config tab.
+type cfgScreenKind int
+
+const (
+	cfgScreenList    cfgScreenKind = iota // show list of existing configs
+	cfgScreenNewName                       // enter name for a new config
+	cfgScreenEdit                          // full interactive edit form (all tabs accessible)
+)
 
 // ─── cost-tab credential input slots ─────────────────────────────────────────
 
@@ -454,6 +485,27 @@ type ptyExitMsg struct{ err error }
 // saveKindMsg is returned when the background Save-to-Kind goroutine completes.
 type saveKindMsg struct{ err error }
 
+// depsCheckMsg carries the result of a background dependency check.
+type depsCheckMsg struct {
+	tools  []installer.DepCheck
+	images []installer.ImageCheck
+}
+
+// depsUpgradeMsg carries the result of a background dependency upgrade.
+type depsUpgradeMsg struct{ err error }
+
+// cfgListMsg carries the result of listing bootstrap configs on the kind cluster.
+type cfgListMsg struct {
+	candidates []kindsync.BootstrapCandidate
+	err        error
+}
+
+// cfgEntryLoadMsg carries the fully merged config for a selected bootstrap entry.
+type cfgEntryLoadMsg struct {
+	cfg *config.Config
+	err error
+}
+
 // sysStatsMsg carries a fresh sysinfo sample.
 type sysStatsMsg struct{ s sysinfo.Stats }
 
@@ -471,6 +523,32 @@ func (s *selectState) prev() {
 	s.cur = (s.cur - 1 + len(s.options)) % len(s.options)
 }
 
+// ─── cost time-window presets ─────────────────────────────────────────────────
+
+type costWindowPreset struct {
+	d     time.Duration
+	label string // human-readable full name, shown in the selector
+	short string // compact suffix used in tables and bottom bar
+}
+
+// costWindows is the ordered list of time-window presets. Index 6 (1 month)
+// is the default. The user cycles through them with [ / ] in the costs tab.
+var costWindows = []costWindowPreset{
+	{time.Second, "1 second", "/sec"},
+	{time.Minute, "1 minute", "/min"},
+	{time.Hour, "1 hour", "/hr"},
+	{8 * time.Hour, "8 hours", "/8h"},
+	{24 * time.Hour, "1 day", "/day"},
+	{7 * 24 * time.Hour, "1 week", "/wk"},
+	{30 * 24 * time.Hour, "1 month", "/mo"},   // default (index 6)
+	{365 * 24 * time.Hour, "1 year", "/yr"},
+}
+
+const costDefaultPeriodIdx = 6 // 1 month
+
+// costMonthSecs is the number of seconds in the reference month (30 days).
+const costMonthSecs = 30 * 24 * 3600.0
+
 // ─── dashboard model ─────────────────────────────────────────────────────────
 
 type dashModel struct {
@@ -487,11 +565,12 @@ type dashModel struct {
 	activeTab dashTab
 
 	// cost preview
-	costRows       []cost.CloudCost
-	costLoading    bool
-	costVendor     int // which vendor's detail block is shown (index into costRows)
-	refreshPending bool
-	lastDirty      time.Time
+	costRows        []cost.CloudCost
+	costLoading     bool
+	costVendor      int // which vendor's detail block is shown (index into costRows)
+	costPeriodIdx   int // index into costWindows (default 6 = 1 month)
+	refreshPending  bool
+	lastDirty       time.Time
 
 	// logs tab
 	logLines       []string        // snapshot from globalLogRing
@@ -514,6 +593,21 @@ type dashModel struct {
 	saveKindDone    bool
 	saveKindErr     error
 	deployRequested bool
+
+	// config tab selection state (cfgScreenList / cfgScreenNewName / cfgScreenEdit)
+	cfgScreen     cfgScreenKind
+	cfgCandidates []kindsync.BootstrapCandidate
+	cfgListCursor int
+	cfgLoading    bool
+	cfgLoadErr    string
+	cfgNewInput   textinput.Model
+
+	// deps tab
+	depsTools    []installer.DepCheck
+	depsImages   []installer.ImageCheck
+	depsRunning  bool   // check or upgrade in flight
+	depsFocused  int    // 0=check button, 1=upgrade button
+	depsStatus   string // last result summary
 
 	// editor tab — kind resource browser
 	editorItems    []editorResource // listed Secrets+ConfigMaps in yage-system
@@ -545,12 +639,13 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	sampler := sysinfo.NewSampler()
 	sampler.Sample() // prime the counters; first real delta will be on the second call
 	m := dashModel{
-		cfg:         cfg,
-		s:           s,
-		focus:       focKindName,
-		costLoading: cfg.CostCompareEnabled, // show "fetching…" from the first frame
-		termH:       termPaneHDefault,
-		sysSampler:  sampler,
+		cfg:           cfg,
+		s:             s,
+		focus:         focKindName,
+		costLoading:   cfg.CostCompareEnabled, // show "fetching…" from the first frame
+		termH:         termPaneHDefault,
+		sysSampler:    sampler,
+		costPeriodIdx: costDefaultPeriodIdx,
 	}
 
 	// Build text inputs.
@@ -631,6 +726,12 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.textInputs[tiProxmoxMgmtWorkerCores].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerNumCores)
 	m.textInputs[tiProxmoxMgmtWorkerMemMiB].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerMemoryMiB)
 	m.textInputs[tiProxmoxMgmtWorkerDiskGB].SetValue(cfg.Providers.Proxmox.Mgmt.WorkerBootVolumeSize)
+	m.textInputs[tiProxmoxPool].SetValue(cfg.Providers.Proxmox.Pool)
+	m.textInputs[tiProxmoxMgmtPool].SetValue(cfg.Providers.Proxmox.Mgmt.Pool)
+	m.textInputs[tiProxmoxCPCount].SetValue(cfg.ControlPlaneMachineCount)
+	m.textInputs[tiProxmoxWorkerCount].SetValue(cfg.WorkerMachineCount)
+	m.textInputs[tiProxmoxMgmtCPCount].SetValue(cfg.Mgmt.ControlPlaneMachineCount)
+	m.textInputs[tiProxmoxMgmtWorkerCount].SetValue(cfg.Mgmt.WorkerMachineCount)
 	m.textInputs[tiArgoURL].SetValue(cfg.ArgoCD.AppOfAppsGitURL)
 	m.textInputs[tiArgoPath].SetValue(cfg.ArgoCD.AppOfAppsGitPath)
 	m.textInputs[tiArgoRef].SetValue(cfg.ArgoCD.AppOfAppsGitRef)
@@ -763,6 +864,19 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	fi.Width = 40
 	m.logFilterInput = fi
 
+	// Config selection state: skip the list when --config-name was passed explicitly.
+	if cfg.ConfigNameExplicit {
+		m.cfgScreen = cfgScreenEdit
+	} else {
+		m.cfgScreen = cfgScreenList
+		m.cfgLoading = true
+		ni := textinput.New()
+		ni.Placeholder = "e.g. prod-eu-low-cost"
+		ni.Prompt = "> "
+		ni.Width = 40
+		m.cfgNewInput = ni
+	}
+
 	// Focus the first visible input.
 	cmd := m.textInputs[tiKindName].Focus()
 	_ = cmd // will be returned from Init
@@ -772,13 +886,17 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 
 func (m dashModel) Init() tea.Cmd {
 	m.lastDirty = time.Now()
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		textinput.Blink,
 		m.textInputs[tiKindName].Focus(),
 		m.kickRefreshCmd(),
 		m.watchLogsCmd(),
 		m.sysStatsTickCmd(),
-	)
+	}
+	if m.cfgScreen == cfgScreenList && m.cfgLoading {
+		cmds = append(cmds, m.loadCfgListCmd())
+	}
+	return tea.Batch(cmds...)
 }
 
 // sysStatsTickCmd samples process stats after 2 s and delivers a sysStatsMsg.
@@ -872,7 +990,9 @@ func (m *dashModel) isHidden(fid int) bool {
 		focProxmoxWLCPTmpl, focProxmoxWLCPCores, focProxmoxWLCPMemMiB, focProxmoxWLCPDiskGB,
 		focProxmoxWLWorkerTmpl, focProxmoxWLWorkerCores, focProxmoxWLWorkerMemMiB, focProxmoxWLWorkerDiskGB,
 		focProxmoxMgmtCPTmpl, focProxmoxMgmtCPCores, focProxmoxMgmtCPMemMiB, focProxmoxMgmtCPDiskGB,
-		focProxmoxMgmtWorkerTmpl, focProxmoxMgmtWorkerCores, focProxmoxMgmtWorkerMemMiB, focProxmoxMgmtWorkerDiskGB:
+		focProxmoxMgmtWorkerTmpl, focProxmoxMgmtWorkerCores, focProxmoxMgmtWorkerMemMiB, focProxmoxMgmtWorkerDiskGB,
+		focProxmoxPool, focProxmoxMgmtPool,
+		focProxmoxCPCount, focProxmoxWorkerCount, focProxmoxMgmtCPCount, focProxmoxMgmtWorkerCount:
 		return m.selects[siProvider].value() != "proxmox"
 	// Workload network: on-prem only (cloud VPCs are fully managed).
 	case focCPEndpointIP, focNodeIPRanges, focGateway, focIPPrefix, focDNSServers:
@@ -880,9 +1000,8 @@ func (m *dashModel) isHidden(fid int) bool {
 	// Mgmt cluster network: on-prem only.
 	case focMgmtCPEndpointIP, focMgmtNodeIPRanges:
 		return isCloud
-	// ArgoCD: hidden when env=dev (ArgoCD is not installed in dev tier).
 	case focArgoURL, focArgoPath, focArgoRef:
-		return m.selects[siEnv].value() == "dev"
+		return false
 	// Airgap.
 	case focAirgapped:
 		return false
@@ -1022,7 +1141,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Action == tea.MouseActionPress &&
 			msg.Button == tea.MouseButtonLeft &&
 			msg.Y == 0 {
-			if tab, ok := tabAtX(msg.X); ok && tab != tabEditor {
+			if tab, ok := tabAtX(msg.X); ok && tab != tabEditor && m.cfgReady() {
 				m.activeTab = tab
 				return m, nil
 			}
@@ -1201,6 +1320,76 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case depsCheckMsg:
+		m.depsRunning = false
+		m.depsTools = msg.tools
+		m.depsImages = msg.images
+		bad := 0
+		for _, t := range msg.tools {
+			if !t.OK && !t.Skip {
+				bad++
+			}
+		}
+		if bad == 0 {
+			m.depsStatus = "all tools OK"
+		} else {
+			m.depsStatus = fmt.Sprintf("%d tool(s) need upgrade", bad)
+		}
+		return m, nil
+
+	case depsUpgradeMsg:
+		m.depsRunning = false
+		if msg.err != nil {
+			m.depsStatus = "upgrade failed: " + msg.err.Error()
+		} else {
+			m.depsStatus = "upgrade complete"
+		}
+		cfg := m.cfg
+		return m, func() tea.Msg {
+			return depsCheckMsg{
+				tools:  installer.CheckDeps(cfg),
+				images: installer.CheckProviderImages(cfg),
+			}
+		}
+
+	case cfgListMsg:
+		m.cfgLoading = false
+		if msg.err != nil {
+			m.cfgLoadErr = msg.err.Error()
+		} else {
+			m.cfgCandidates = msg.candidates
+			m.cfgListCursor = 0
+			m.cfgLoadErr = ""
+		}
+		return m, nil
+
+	case cfgEntryLoadMsg:
+		m.cfgLoading = false
+		if msg.err != nil {
+			m.cfgLoadErr = msg.err.Error()
+			return m, nil
+		}
+		// Copy loaded fields back into the original cfg pointer so the
+		// caller's reference remains valid after the dashboard exits.
+		*m.cfg = *msg.cfg
+		m.s.initFromConfig(m.cfg)
+		// Rebuild all text inputs / selects / toggles from the loaded cfg.
+		newM := newDashModel(m.cfg, m.s)
+		newM.cfgScreen = cfgScreenEdit
+		newM.activeTab = tabConfig
+		newM.width = m.width
+		newM.height = m.height
+		newM.costRows = m.costRows
+		newM.costLoading = m.costLoading
+		newM.costPeriodIdx = m.costPeriodIdx
+		newM.logLines = m.logLines
+		newM.logSub = m.logSub
+		newM.sysSampler = m.sysSampler
+		newM.sysStats = m.sysStats
+		// Keep the original cfg pointer so callers stay in sync.
+		newM.cfg = m.cfg
+		return newM, tea.Batch(textinput.Blink, newM.kickRefreshCmd(), newM.watchLogsCmd())
+
 	case saveCostCredsMsg:
 		if msg.err != nil {
 			obs.Global().Error("save cost credentials to kind", msg.err)
@@ -1243,45 +1432,54 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// ── Alt+1..7: universal tab switching — works even inside text fields ──
-		switch keyStr {
-		case "alt+1":
-			m.activeTab = tabConfig
-			return m, nil
-		case "alt+2":
-			m.activeTab = tabEditor
-			return m, m.switchToEditorTab()
-		case "alt+3":
-			m.activeTab = tabCosts
-			return m, nil
-		case "alt+4":
-			m.activeTab = tabLogs
-			return m, nil
-		case "alt+5":
-			m.activeTab = tabDeploy
-			return m, nil
-		case "alt+6":
-			m.activeTab = tabHelp
-			return m, nil
-		case "alt+7":
-			m.activeTab = tabAbout
-			return m, nil
+		// ── Ctrl+Alt+1..8: universal tab switching — works even inside text fields ──
+		// Tab switching is locked until a config entry is selected (cfgScreenEdit).
+		if m.cfgReady() {
+			switch keyStr {
+			case "ctrl+alt+1":
+				m.activeTab = tabConfig
+				return m, nil
+			case "ctrl+alt+2":
+				m.activeTab = tabEditor
+				return m, m.switchToEditorTab()
+			case "ctrl+alt+3":
+				m.activeTab = tabCosts
+				return m, nil
+			case "ctrl+alt+4":
+				m.activeTab = tabLogs
+				return m, nil
+			case "ctrl+alt+5":
+				m.activeTab = tabDeploy
+				return m, nil
+			case "ctrl+alt+6":
+				m.activeTab = tabDeps
+				return m, nil
+			case "ctrl+alt+7":
+				m.activeTab = tabHelp
+				return m, nil
+			case "ctrl+alt+8":
+				m.activeTab = tabAbout
+				return m, nil
+			}
 		}
 
 		// ── Ctrl+Left/Right: universal tab cycling — works even inside text fields ──
-		if key == tea.KeyCtrlLeft {
-			m.activeTab = (m.activeTab - 1 + tabCount) % tabCount
-			if m.activeTab == tabEditor {
-				return m, m.switchToEditorTab()
+		// Locked until a config entry is selected.
+		if m.cfgReady() {
+			if key == tea.KeyCtrlLeft {
+				m.activeTab = (m.activeTab - 1 + tabCount) % tabCount
+				if m.activeTab == tabEditor {
+					return m, m.switchToEditorTab()
+				}
+				return m, nil
 			}
-			return m, nil
-		}
-		if key == tea.KeyCtrlRight {
-			m.activeTab = (m.activeTab + 1) % tabCount
-			if m.activeTab == tabEditor {
-				return m, m.switchToEditorTab()
+			if key == tea.KeyCtrlRight {
+				m.activeTab = (m.activeTab + 1) % tabCount
+				if m.activeTab == tabEditor {
+					return m, m.switchToEditorTab()
+				}
+				return m, nil
 			}
-			return m, nil
 		}
 
 		// ── Ctrl+T: start embedded terminal / toggle focus ──
@@ -1370,33 +1568,36 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// ── tab switching: left/right arrows or number keys 1-7 ──
-		// (Only when not in a text input on the config tab.)
-		inTextField := (m.activeTab == tabConfig && dashFields[m.focus].kind == fkText) ||
+		// ── tab switching: left/right arrows or number keys 1-8 ──
+		// (Only when not in a text input on the config tab, and a config is selected.)
+		inTextField := (m.activeTab == tabConfig && m.cfgReady() && dashFields[m.focus].kind == fkText) ||
 			(m.activeTab == tabLogs && m.logFiltering)
 		switch {
-		case !inTextField && keyStr == "1":
+		case !inTextField && keyStr == "1" && m.cfgReady():
 			m.activeTab = tabConfig
 			return m, nil
-		case !inTextField && keyStr == "2":
+		case !inTextField && keyStr == "2" && m.cfgReady():
 			m.activeTab = tabEditor
 			return m, m.switchToEditorTab()
-		case !inTextField && keyStr == "3":
+		case !inTextField && keyStr == "3" && m.cfgReady():
 			m.activeTab = tabCosts
 			return m, nil
-		case !inTextField && keyStr == "4":
+		case !inTextField && keyStr == "4" && m.cfgReady():
 			m.activeTab = tabLogs
 			return m, nil
-		case !inTextField && keyStr == "5":
+		case !inTextField && keyStr == "5" && m.cfgReady():
 			m.activeTab = tabDeploy
 			return m, nil
-		case !inTextField && keyStr == "6":
+		case !inTextField && keyStr == "6" && m.cfgReady():
+			m.activeTab = tabDeps
+			return m, nil
+		case !inTextField && keyStr == "7" && m.cfgReady():
 			m.activeTab = tabHelp
 			return m, nil
-		case !inTextField && keyStr == "7":
+		case !inTextField && keyStr == "8" && m.cfgReady():
 			m.activeTab = tabAbout
 			return m, nil
-		case (key == tea.KeyLeft || key == tea.KeyRight) && !inTextField && m.activeTab != tabConfig:
+		case (key == tea.KeyLeft || key == tea.KeyRight) && !inTextField && m.activeTab != tabConfig && m.cfgReady():
 			// Only cycle tabs with arrows when not on config (config uses arrows for fields).
 			if key == tea.KeyLeft {
 				m.activeTab = (m.activeTab - 1 + tabCount) % tabCount
@@ -1416,24 +1617,116 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateConfigTab(msg)
 
 		case tabEditor:
-			return m.updateEditorTab(msg)
+			if m.cfgReady() {
+				return m.updateEditorTab(msg)
+			}
 
 		case tabLogs:
-			return m.updateLogsTab(msg)
+			if m.cfgReady() {
+				return m.updateLogsTab(msg)
+			}
 
 		case tabCosts:
-			return m.updateCostsTab(msg)
+			if m.cfgReady() {
+				return m.updateCostsTab(msg)
+			}
 
 		case tabDeploy:
-			return m.updateDeployTab(msg)
+			if m.cfgReady() {
+				return m.updateDeployTab(msg)
+			}
+
+		case tabDeps:
+			if m.cfgReady() {
+				return m.updateDepsTab(msg)
+			}
 		}
 	}
 
 	return m, nil
 }
 
-// updateConfigTab handles key events while the config tab is active.
+// updateConfigTab dispatches key events to the active config sub-screen.
 func (m dashModel) updateConfigTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.cfgScreen {
+	case cfgScreenList:
+		return m.updateCfgListScreen(msg)
+	case cfgScreenNewName:
+		return m.updateCfgNewNameScreen(msg)
+	default:
+		return m.updateCfgEditScreen(msg)
+	}
+}
+
+// updateCfgListScreen handles keys on the config-list screen.
+func (m dashModel) updateCfgListScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.cfgLoading {
+		return m, nil
+	}
+	key := msg.Type
+	keyStr := msg.String()
+	total := len(m.cfgCandidates) + 1 // +1 for the "[ + New config ]" sentinel
+	switch {
+	case key == tea.KeyUp || keyStr == "k":
+		if m.cfgListCursor > 0 {
+			m.cfgListCursor--
+		}
+	case key == tea.KeyDown || keyStr == "j":
+		if m.cfgListCursor < total-1 {
+			m.cfgListCursor++
+		}
+	case key == tea.KeyEnter:
+		if m.cfgListCursor == len(m.cfgCandidates) {
+			// New config sentinel selected.
+			m.cfgScreen = cfgScreenNewName
+			m.cfgNewInput.SetValue("")
+			cmd := m.cfgNewInput.Focus()
+			return m, cmd
+		}
+		c := m.cfgCandidates[m.cfgListCursor]
+		m.cfgLoading = true
+		m.cfgLoadErr = ""
+		return m, m.loadCfgEntryCmd(c)
+	case keyStr == "n":
+		m.cfgScreen = cfgScreenNewName
+		m.cfgNewInput.SetValue("")
+		cmd := m.cfgNewInput.Focus()
+		return m, cmd
+	case keyStr == "r":
+		m.cfgLoading = true
+		m.cfgLoadErr = ""
+		m.cfgCandidates = nil
+		return m, m.loadCfgListCmd()
+	}
+	return m, nil
+}
+
+// updateCfgNewNameScreen handles keys while entering a new config name.
+func (m dashModel) updateCfgNewNameScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.Type
+	switch {
+	case key == tea.KeyEsc:
+		m.cfgScreen = cfgScreenList
+		m.cfgNewInput.Blur()
+		return m, nil
+	case key == tea.KeyEnter:
+		name := strings.TrimSpace(m.cfgNewInput.Value())
+		m.cfgNewInput.Blur()
+		if name != "" {
+			m.cfg.ConfigName = name
+			m.cfg.ConfigNameExplicit = true
+		}
+		m.cfgScreen = cfgScreenEdit
+		return m, textinput.Blink
+	default:
+		var cmd tea.Cmd
+		m.cfgNewInput, cmd = m.cfgNewInput.Update(msg)
+		return m, cmd
+	}
+}
+
+// updateCfgEditScreen handles key events in the full config edit form.
+func (m dashModel) updateCfgEditScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.Type
 	keyStr := msg.String()
 
@@ -1620,6 +1913,14 @@ func (m dashModel) updateCostsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.costRows) > 0 {
 			m.costVendor = (m.costVendor + 1) % len(m.costRows)
 		}
+	case keyStr == "[":
+		if m.costPeriodIdx > 0 {
+			m.costPeriodIdx--
+		}
+	case keyStr == "]":
+		if m.costPeriodIdx < len(costWindows)-1 {
+			m.costPeriodIdx++
+		}
 	}
 	return m, nil
 }
@@ -1707,6 +2008,36 @@ func (m *dashModel) saveCostCredsCmd() tea.Cmd {
 }
 
 // ─── editor tab ───────────────────────────────────────────────────────────────
+
+// cfgReady reports whether a configuration entry has been selected and the
+// full edit form is active. When false, tab switching is locked.
+func (m dashModel) cfgReady() bool { return m.cfgScreen == cfgScreenEdit }
+
+// loadCfgListCmd fetches all bootstrap-config Secrets from the kind cluster.
+func (m dashModel) loadCfgListCmd() tea.Cmd {
+	kindName := m.cfg.KindClusterName
+	return func() tea.Msg {
+		return cfgListMsg{candidates: kindsync.ListBootstrapCandidates(kindName)}
+	}
+}
+
+// loadCfgEntryCmd merges the selected bootstrap entry into a cfg copy and
+// returns cfgEntryLoadMsg with the fully-populated config.
+func (m dashModel) loadCfgEntryCmd(c kindsync.BootstrapCandidate) tea.Cmd {
+	cfgCopy := *m.cfg
+	return func() tea.Msg {
+		cfgCopy.KindClusterName = c.KindCluster
+		cfgCopy.ConfigName = c.ConfigName
+		if !cfgCopy.WorkloadClusterNameExplicit && c.Workload != "" {
+			cfgCopy.WorkloadClusterName = c.Workload
+		}
+		_ = kindsync.MergeBootstrapConfigFromKind(&cfgCopy)
+		kindsync.MergeBootstrapSecretsFromKind(&cfgCopy)
+		_ = kindsync.ReadCostCompareSecret(&cfgCopy)
+		disableProvidersMissingCredentials(&cfgCopy)
+		return cfgEntryLoadMsg{cfg: &cfgCopy}
+	}
+}
 
 // switchToEditorTab transitions to the editor tab and kicks a resource list load.
 func (m dashModel) switchToEditorTab() tea.Cmd {
@@ -2253,13 +2584,15 @@ func (m dashModel) kickRefreshCmd() tea.Cmd {
 	// Cost comparison always queries every credentialled provider, regardless
 	// of which provider the user has selected in the config tab. The provider
 	// select is a deployment choice, not a cost-filter. Clear InfraProvider
-	// so StreamWithFilter does not narrow to a single provider.
+	// so StreamWithRegions does not narrow to a single provider.
 	snap.InfraProvider = ""
 	snap.InfraProviderDefaulted = true
 	// Capture credentials at dispatch time: pricing.SetCredentials is a
 	// process-global set before kind is connected, so it may not include
 	// credentials loaded later from the cost-compare-config Secret.
 	c := m.cfg.Cost.Credentials
+	s := m.s
+	cfg := m.cfg
 	return func() tea.Msg {
 		pricing.SetCredentials(pricing.Credentials{
 			AWSAccessKeyID:     c.AWSAccessKeyID,
@@ -2269,8 +2602,40 @@ func (m dashModel) kickRefreshCmd() tea.Cmd {
 			DigitalOceanToken:  c.DigitalOceanToken,
 			IBMCloudAPIKey:     c.IBMCloudAPIKey,
 		})
-		ch := make(chan cost.CloudCost, 16)
-		cost.StreamWithFilter(&snap, cost.ScopeCloudOnly, globalLogRing, ch)
+
+		// Determine geo lat/lon for nearest-region ranking.
+		// Source priority: --geoip outbound IP > DataCenterLocation centroid.
+		var geoLat, geoLon float64
+		geoOK := false
+		if cfg.GeoIPEnabled {
+			s.ensureGeoLookup()
+			geoLat, geoLon, geoOK = s.geoLat, s.geoLon, s.geoOK
+		}
+		if !geoOK {
+			dc := strings.ToUpper(strings.TrimSpace(snap.Cost.Currency.DataCenterLocation))
+			if dc != "" {
+				if lat, lon, ok := pricing.CountryCentroid(dc); ok {
+					geoLat, geoLon, geoOK = lat, lon, true
+				}
+			}
+		}
+
+		// Build per-provider region list (up to 4 nearest). When geo is
+		// unavailable, regionsByProvider stays nil and StreamWithRegions
+		// falls back to the region already in snap per provider.
+		var regionsByProvider map[string][]string
+		if geoOK {
+			regionsByProvider = map[string][]string{}
+			for _, name := range []string{"aws", "azure", "gcp", "hetzner", "digitalocean", "linode", "oci", "ibmcloud"} {
+				ranked := geoRankedRegions(name, geoLat, geoLon, 4)
+				if len(ranked) > 0 {
+					regionsByProvider[name] = ranked
+				}
+			}
+		}
+
+		ch := make(chan cost.CloudCost, 64)
+		cost.StreamWithRegions(&snap, cost.ScopeCloudOnly, regionsByProvider, globalLogRing, ch)
 		row, ok := <-ch
 		return costRowMsg{row: row, ch: ch, done: !ok}
 	}
@@ -2347,6 +2712,24 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtWorkerDiskGB].Value()); v != "" {
 		snap.Providers.Proxmox.Mgmt.WorkerBootVolumeSize = v
 	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxPool].Value()); v != "" {
+		snap.Providers.Proxmox.Pool = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtPool].Value()); v != "" {
+		snap.Providers.Proxmox.Mgmt.Pool = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxCPCount].Value()); v != "" {
+		snap.ControlPlaneMachineCount = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxWorkerCount].Value()); v != "" {
+		snap.WorkerMachineCount = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtCPCount].Value()); v != "" {
+		snap.Mgmt.ControlPlaneMachineCount = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxMgmtWorkerCount].Value()); v != "" {
+		snap.Mgmt.WorkerMachineCount = v
+	}
 
 	// ArgoCD git coordinates.
 	if u := strings.TrimSpace(m.textInputs[tiArgoURL].Value()); u != "" {
@@ -2400,18 +2783,8 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 	}
 
 	env := envTier(m.selects[siEnv].value())
-	switch env {
-	case envDev:
-		snap.ArgoCD.Enabled = false
-		snap.ArgoCD.WorkloadEnabled = false
-	case envStaging:
-		snap.ArgoCD.Enabled = true
-		snap.ArgoCD.WorkloadEnabled = false
-	case envProd:
-		snap.ArgoCD.Enabled = true
-		snap.ArgoCD.WorkloadEnabled = true
-		snap.CertManagerEnabled = true
-	}
+	snap.ArgoCD.Enabled = true
+	snap.ArgoCD.WorkloadEnabled = true
 
 	var resil resilienceTier
 	switch m.selects[siResil].value() {
@@ -2558,6 +2931,12 @@ func (m *dashModel) flushToCfg() {
 	m.cfg.Providers.Proxmox.Mgmt.WorkerNumCores = snap.Providers.Proxmox.Mgmt.WorkerNumCores
 	m.cfg.Providers.Proxmox.Mgmt.WorkerMemoryMiB = snap.Providers.Proxmox.Mgmt.WorkerMemoryMiB
 	m.cfg.Providers.Proxmox.Mgmt.WorkerBootVolumeSize = snap.Providers.Proxmox.Mgmt.WorkerBootVolumeSize
+	m.cfg.Providers.Proxmox.Pool = snap.Providers.Proxmox.Pool
+	m.cfg.Providers.Proxmox.Mgmt.Pool = snap.Providers.Proxmox.Mgmt.Pool
+	m.cfg.ControlPlaneMachineCount = snap.ControlPlaneMachineCount
+	m.cfg.WorkerMachineCount = snap.WorkerMachineCount
+	m.cfg.Mgmt.ControlPlaneMachineCount = snap.Mgmt.ControlPlaneMachineCount
+	m.cfg.Mgmt.WorkerMachineCount = snap.Mgmt.WorkerMachineCount
 	m.cfg.Airgapped = snap.Airgapped
 	m.cfg.ImageRegistryMirror = snap.ImageRegistryMirror
 	m.cfg.InternalCABundle = snap.InternalCABundle
@@ -2633,12 +3012,14 @@ func (m dashModel) View() string {
 		content = m.renderCostsTab(m.width, usable)
 	case tabLogs:
 		content = m.renderLogsTab(m.width, usable)
+	case tabDeploy:
+		content = m.renderDeployTab(m.width, usable)
+	case tabDeps:
+		content = m.renderDepsTab(m.width, usable)
 	case tabHelp:
 		content = m.renderHelpTab(m.width, usable)
 	case tabAbout:
 		content = m.renderAboutTab(m.width, usable)
-	case tabDeploy:
-		content = m.renderDeployTab(m.width, usable)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, tabBar, content, termPane, bottomStrip, footer)
@@ -2824,10 +3205,14 @@ func (m dashModel) renderBottomStrip() string {
 	sep := "  "
 	for _, r := range sorted {
 		var token string
+		label := r.ProviderName
+		if r.Region != "" {
+			label = r.ProviderName + "/" + r.Region
+		}
 		if r.Err != nil {
-			token = r.ProviderName + " n/a"
+			token = label + " n/a"
 		} else {
-			token = fmt.Sprintf("%s $%.0f", r.ProviderName, r.Estimate.TotalUSDMonthly)
+			token = label + " " + m.formatCost(r.Estimate.TotalUSDMonthly)
 		}
 		need := len(token)
 		if len(kept) > 0 {
@@ -2855,8 +3240,10 @@ func (m dashModel) renderBottomStrip() string {
 				style = stMuted
 			} else {
 				total := r.Estimate.TotalUSDMonthly
+				scaledTotal := m.costForPeriod(total)
+				scaledBudget := m.costForPeriod(budget)
 				switch {
-				case budget > 0 && total > budget:
+				case scaledBudget > 0 && scaledTotal > scaledBudget:
 					style = stBad
 				case cheapest > 0 && total <= cheapest:
 					style = stOK
@@ -2883,18 +3270,31 @@ func (m dashModel) renderBottomStrip() string {
 
 func (m dashModel) renderFooter() string {
 	shellHint := stMuted.Render("ctrl+t") + " terminal  "
-	tabHint := stMuted.Render("1-7/alt+1-7/ctrl+◄►") + " tabs  "
+	tabHint := stMuted.Render("1-8/ctrl+alt+1-8/ctrl+◄►") + " tabs  "
 	var keys string
 	switch m.activeTab {
 	case tabConfig:
-		keys = stMuted.Render("tab/⇧tab") + " navigate  " +
-			stMuted.Render("space") + " toggle  " +
-			stMuted.Render("◄ ►") + " select  " +
-			shellHint +
-			stMuted.Render("ctrl+l") + " logs  " +
-			tabHint +
-			stAccent.Render("ctrl+s") + " save  " +
-			stMuted.Render("esc/q") + " abort"
+		switch m.cfgScreen {
+		case cfgScreenList:
+			keys = stMuted.Render("↑/↓") + " navigate  " +
+				stMuted.Render("enter") + " select  " +
+				stMuted.Render("n") + " new  " +
+				stMuted.Render("r") + " refresh  " +
+				stMuted.Render("esc/q") + " quit"
+		case cfgScreenNewName:
+			keys = stMuted.Render("enter") + " confirm  " +
+				stMuted.Render("esc") + " back  " +
+				stMuted.Render("esc/q") + " quit"
+		default:
+			keys = stMuted.Render("tab/⇧tab") + " navigate  " +
+				stMuted.Render("space") + " toggle  " +
+				stMuted.Render("◄ ►") + " select  " +
+				shellHint +
+				stMuted.Render("ctrl+l") + " logs  " +
+				tabHint +
+				stAccent.Render("ctrl+s") + " save  " +
+				stMuted.Render("esc/q") + " abort"
+		}
 	case tabLogs:
 		keys = stMuted.Render("j/k") + " scroll  " +
 			stMuted.Render("g/G") + " top/bottom  " +
@@ -2910,6 +3310,7 @@ func (m dashModel) renderFooter() string {
 				stMuted.Render("esc/q") + " abort"
 		} else {
 			keys = stMuted.Render("j/k") + " scroll  " +
+				stMuted.Render("[/]") + " time window  " +
 				stMuted.Render("c") + " edit creds  " +
 				shellHint + tabHint +
 				stAccent.Render("ctrl+s") + " save  " +
@@ -2920,6 +3321,11 @@ func (m dashModel) renderFooter() string {
 			stMuted.Render("enter") + " activate  " +
 			shellHint + tabHint +
 			stAccent.Render("ctrl+s") + " save  " +
+			stMuted.Render("esc/q") + " abort"
+	case tabDeps:
+		keys = stMuted.Render("tab") + " focus  " +
+			stMuted.Render("enter") + " activate  " +
+			shellHint + tabHint +
 			stMuted.Render("esc/q") + " abort"
 	default:
 		keys = shellHint + tabHint +
@@ -2938,10 +3344,95 @@ func (m dashModel) renderFooter() string {
 const labelW = 18
 const inputW = 13
 
-// renderConfigTab renders the full-width interactive config form.
+// renderConfigTab dispatches to the active config sub-screen renderer.
 func (m dashModel) renderConfigTab(w, h int) string {
+	switch m.cfgScreen {
+	case cfgScreenList:
+		return m.renderCfgListScreen(w, h)
+	case cfgScreenNewName:
+		return m.renderCfgNewNameScreen(w, h)
+	default:
+		return m.renderCfgEditScreen(w, h)
+	}
+}
+
+// renderCfgListScreen renders the list of existing bootstrap configs.
+func (m dashModel) renderCfgListScreen(w, h int) string {
+	var lines []string
+	title := fmt.Sprintf(" Configurations on kind cluster %q", m.cfg.KindClusterName)
+	lines = append(lines, stHdr.Render(title))
+	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
+	lines = append(lines, "")
+
+	if m.cfgLoading {
+		lines = append(lines, stMuted.Render("  loading…"))
+	} else if m.cfgLoadErr != "" {
+		lines = append(lines, stBad.Render("  "+m.cfgLoadErr))
+		lines = append(lines, stMuted.Render("  r = retry"))
+	} else {
+		for i, c := range m.cfgCandidates {
+			cursor := "  "
+			if i == m.cfgListCursor {
+				cursor = stAccent.Render("▸ ")
+			}
+			lines = append(lines, cursor+c.Label())
+		}
+		lines = append(lines, "")
+		// "[ + New config ]" sentinel.
+		sentinelIdx := len(m.cfgCandidates)
+		newLabel := "[ + New config ]"
+		if m.cfgListCursor == sentinelIdx {
+			lines = append(lines, stAccent.Render("▸ ")+stAccent.Render(newLabel))
+		} else {
+			lines = append(lines, "  "+stMuted.Render(newLabel))
+		}
+	}
+
+	lines = append(lines, "")
+	if m.cfgLoading {
+		lines = append(lines, stMuted.Render("  please wait…"))
+	} else {
+		lines = append(lines, stMuted.Render("  ↑/↓  navigate    enter  select    n  new config    r  refresh    esc/q  quit"))
+	}
+	lines = append(lines, "")
+	lines = append(lines, stWarn.Render("  ⚠ Select a configuration to unlock all tabs"))
+
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:min(len(lines), h)], "\n")
+}
+
+// renderCfgNewNameScreen renders the new config name input.
+func (m dashModel) renderCfgNewNameScreen(w, h int) string {
+	var lines []string
+	lines = append(lines, stHdr.Render(" New configuration name"))
+	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
+	lines = append(lines, "")
+	lines = append(lines, stMuted.Render("  Enter a name for the new bootstrap config."))
+	lines = append(lines, stMuted.Render("  This becomes the Secret name prefix in yage-system."))
+	lines = append(lines, "  (leave blank to use the workload cluster name as the default)")
+	lines = append(lines, "")
+	lines = append(lines, "  "+m.cfgNewInput.View())
+	lines = append(lines, "")
+	lines = append(lines, stMuted.Render("  enter  confirm    esc  back to list"))
+
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:min(len(lines), h)], "\n")
+}
+
+// renderCfgEditScreen renders the full interactive config edit form.
+func (m dashModel) renderCfgEditScreen(w, h int) string {
 	var lines []string
 	lastSection := ""
+
+	// Config name badge at the top.
+	if name := m.cfg.ConfigName; name != "" {
+		lines = append(lines, stMuted.Render(fmt.Sprintf("  config: %s", name)))
+		lines = append(lines, "")
+	}
 
 	for fid := 0; fid < focCount; fid++ {
 		if m.isHidden(fid) {
@@ -3066,7 +3557,10 @@ func (m dashModel) renderField(fid int, focused bool, w int) string {
 func (m dashModel) renderCostsTab(w, h int) string {
 	var lines []string
 
-	title := stHdr.Render(" Provider cost comparison ($/mo)")
+	win := m.activeCostWindow()
+	windowSel := stMuted.Render("[") + win.label + stMuted.Render("]") +
+		stMuted.Render("  ◄[ ]►")
+	title := stHdr.Render(" Provider cost comparison") + "  " + windowSel
 	if m.costLoading {
 		title += stMuted.Render("  refreshing…")
 	}
@@ -3113,11 +3607,12 @@ func (m dashModel) renderCostsTab(w, h int) string {
 			m.costVendor = 0
 		}
 
-		// Table header.
-		hdr := fmt.Sprintf("  %-14s %10s  %s", "provider", "$/mo", "bar chart")
+		// Table header. The provider/region column is 22 chars wide to
+		// accommodate "digitalocean nyc3" and similar combined labels.
+		hdr := fmt.Sprintf("  %-22s %10s  %s", "provider/region", m.activeCostWindow().short, "bar chart")
 		lines = append(lines, stHdr.Render(hdr))
 
-		barW := w - 32 // chars available for bar
+		barW := w - 40 // chars available for bar (2+22+1+10+2 = 37 fixed + margin)
 		if barW < 10 {
 			barW = 10
 		}
@@ -3131,7 +3626,11 @@ func (m dashModel) renderCostsTab(w, h int) string {
 		lines = append(lines, "")
 		if m.costVendor < len(sorted) {
 			sel := sorted[m.costVendor]
-			lines = append(lines, stMuted.Render(fmt.Sprintf(" ─ %s detail ─", sel.ProviderName)))
+			detailLabel := sel.ProviderName
+			if sel.Region != "" {
+				detailLabel = sel.ProviderName + " " + sel.Region
+			}
+			lines = append(lines, stMuted.Render(fmt.Sprintf(" ─ %s detail ─", detailLabel)))
 			if sel.Err != nil {
 				lines = append(lines, stBad.Render("  "+sel.Err.Error()))
 			} else {
@@ -3144,17 +3643,23 @@ func (m dashModel) renderCostsTab(w, h int) string {
 					if len(name) > maxNameW {
 						name = name[:maxNameW] + "…"
 					}
-					lineStr := fmt.Sprintf("  %-*s %8.2f", maxNameW, name, it.SubtotalUSD)
+					lineStr := fmt.Sprintf("  %-*s %10s", maxNameW, name, m.formatCost(it.SubtotalUSD))
 					lines = append(lines, lineStr)
 				}
 			}
 			if budget > 0 && sel.Err == nil {
 				lines = append(lines, "")
-				total := sel.Estimate.TotalUSDMonthly
-				if total <= budget {
-					lines = append(lines, stOK.Render(fmt.Sprintf("  ✓ within budget (%.0f / %.0f)", total, budget)))
+				scaledTotal := m.costForPeriod(sel.Estimate.TotalUSDMonthly)
+				scaledBudget := m.costForPeriod(budget)
+				w := m.activeCostWindow()
+				if scaledTotal <= scaledBudget {
+					lines = append(lines, stOK.Render(fmt.Sprintf("  ✓ within budget (%s / %s%s)",
+						m.formatCost(sel.Estimate.TotalUSDMonthly),
+						fmt.Sprintf("$%.0f", scaledBudget), w.short)))
 				} else {
-					lines = append(lines, stBad.Render(fmt.Sprintf("  ✗ over budget (%.0f / %.0f)", total, budget)))
+					lines = append(lines, stBad.Render(fmt.Sprintf("  ✗ over budget (%s / %s%s)",
+						m.formatCost(sel.Estimate.TotalUSDMonthly),
+						fmt.Sprintf("$%.0f", scaledBudget), w.short)))
 				}
 			}
 		}
@@ -3203,24 +3708,37 @@ func (m dashModel) renderCostsCredsForm() []string {
 	return lines
 }
 
-// renderCostRow renders a single provider row with bar chart.
+// renderCostRow renders a single provider+region row with bar chart.
 func (m dashModel) renderCostRow(r cost.CloudCost, selected bool, cheapest, maxTotal, budget float64, barW int) string {
 	prefix := "  "
 	if selected {
 		prefix = stAccent.Render("▌ ")
 	}
 
+	// Combined provider/region label (max 22 chars).
+	label := r.ProviderName
+	if r.Region != "" {
+		label = r.ProviderName + " " + r.Region
+	}
+	if len(label) > 22 {
+		label = label[:21] + "…"
+	}
+
 	if r.Err != nil {
-		row := prefix + stMuted.Render(fmt.Sprintf("%-14s  n/a", r.ProviderName))
+		row := prefix + stMuted.Render(fmt.Sprintf("%-22s  n/a", label))
 		return row
 	}
 
 	total := r.Estimate.TotalUSDMonthly
-	totalStr := fmt.Sprintf("$%8.2f", total)
+	totalStr := fmt.Sprintf("%10s", m.formatCost(total))
 
+	// Budget comparison uses period-scaled values so the budget field
+	// (which is always monthly) is also scaled before the check.
+	scaledBudget := m.costForPeriod(budget)
+	scaledTotal := m.costForPeriod(total)
 	var style lipgloss.Style
 	switch {
-	case budget > 0 && total > budget:
+	case scaledBudget > 0 && scaledTotal > scaledBudget:
 		style = stBad
 	case cheapest > 0 && total <= cheapest:
 		style = stOK
@@ -3241,16 +3759,16 @@ func (m dashModel) renderCostRow(r cost.CloudCost, selected bool, cheapest, maxT
 	bar := strings.Repeat("█", barLen)
 	bar = style.Render(bar)
 
-	name := fmt.Sprintf("%-14s", r.ProviderName)
+	nameStr := fmt.Sprintf("%-22s", label)
 	if selected {
-		name = stAccent.Render(name)
+		nameStr = stAccent.Render(nameStr)
 		totalStr = style.Bold(true).Render(totalStr)
 	} else {
-		name = style.Render(name)
+		nameStr = style.Render(nameStr)
 		totalStr = style.Render(totalStr)
 	}
 
-	return prefix + name + " " + totalStr + "  " + bar
+	return prefix + nameStr + " " + totalStr + "  " + bar
 }
 
 // renderVendorRow is kept for backward compatibility (used by bottom strip logic).
@@ -3410,8 +3928,8 @@ func (m dashModel) renderHelpTab(w, h int) string {
 		stMuted.Render(strings.Repeat("─", w)),
 		"",
 		stBold.Render("  Tab switching"),
-		"  " + stAccent.Render("1-7") + "              switch tabs (when not in text field)",
-		"  " + stAccent.Render("alt+1-7") + "          switch tabs (works from any context)",
+		"  " + stAccent.Render("1-8") + "              switch tabs (when not in text field)",
+		"  " + stAccent.Render("ctrl+alt+1-8") + "       switch tabs (works from any context)",
 		"  " + stAccent.Render("ctrl+← →") + "         cycle tabs (works from any context)",
 		"  " + stAccent.Render("← →") + "              cycle tabs (when not in text field)",
 		"",
@@ -3527,6 +4045,120 @@ func (m dashModel) renderDeployTab(w, h int) string {
 	return strings.Join(lines[:min(len(lines), h)], "\n")
 }
 
+// ─── deps tab ────────────────────────────────────────────────────────────────
+
+// updateDepsTab handles key events on the deps tab.
+func (m dashModel) updateDepsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.Type
+	switch {
+	case key == tea.KeyTab || key == tea.KeyDown:
+		m.depsFocused = (m.depsFocused + 1) % 2
+	case key == tea.KeyShiftTab || key == tea.KeyUp:
+		m.depsFocused = (m.depsFocused - 1 + 2) % 2
+	case key == tea.KeyEnter || key == tea.KeySpace:
+		if m.depsRunning {
+			return m, nil
+		}
+		cfg := m.cfg
+		switch m.depsFocused {
+		case 0: // check button
+			m.depsRunning = true
+			m.depsStatus = "checking…"
+			return m, func() tea.Msg {
+				return depsCheckMsg{
+					tools:  installer.CheckDeps(cfg),
+					images: installer.CheckProviderImages(cfg),
+				}
+			}
+		case 1: // upgrade button
+			m.depsRunning = true
+			m.depsStatus = "upgrading…"
+			return m, func() tea.Msg {
+				return depsUpgradeMsg{err: installer.UpgradeDeps(cfg)}
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m dashModel) renderDepsTab(w, h int) string {
+	var lines []string
+	lines = append(lines, stHdr.Render(" Dependencies"))
+	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
+	lines = append(lines, "")
+
+	// buttons
+	btnCheck := "[Check]"
+	btnUpgrade := "[Upgrade All]"
+	if m.depsFocused == 0 {
+		btnCheck = stAccent.Render("▸ " + btnCheck)
+		btnUpgrade = stMuted.Render("  " + btnUpgrade)
+	} else {
+		btnCheck = stMuted.Render("  " + btnCheck)
+		btnUpgrade = stAccent.Render("▸ " + btnUpgrade)
+	}
+	lines = append(lines, btnCheck+"  "+btnUpgrade)
+	lines = append(lines, "")
+
+	// status line
+	if m.depsStatus != "" {
+		lines = append(lines, stMuted.Render("  "+m.depsStatus))
+		lines = append(lines, "")
+	}
+
+	if len(m.depsTools) > 0 {
+		lines = append(lines, stBold.Render("  CLI tools"))
+		for _, t := range m.depsTools {
+			var badge string
+			switch {
+			case t.Skip:
+				badge = stMuted.Render("  ◦")
+			case t.OK:
+				badge = stOK.Render("  ✓")
+			default:
+				badge = stBad.Render("  ✗")
+			}
+			have := t.Have
+			if len(have) > 20 {
+				have = have[:20]
+			}
+			line := fmt.Sprintf("%s %-12s  have: %-20s  want: %s", badge, t.Name, have, t.Want)
+			lines = append(lines, line)
+		}
+		lines = append(lines, "")
+	}
+
+	if len(m.depsImages) > 0 {
+		lines = append(lines, stBold.Render("  Provider images (arm64)"))
+		for _, img := range m.depsImages {
+			var badge string
+			switch {
+			case img.Err:
+				badge = stWarn.Render("  ?")
+			case img.Arm64:
+				badge = stOK.Render("  ✓")
+			default:
+				badge = stBad.Render("  ✗")
+			}
+			ref := img.Image
+			if len(ref) > 55 {
+				ref = "…" + ref[len(ref)-54:]
+			}
+			lines = append(lines, fmt.Sprintf("%s %-18s  %s", badge, img.Name, stMuted.Render(ref)))
+		}
+		lines = append(lines, "")
+	}
+
+	if len(m.depsTools) == 0 && len(m.depsImages) == 0 && m.depsStatus == "" {
+		lines = append(lines, stMuted.Render("  Press [Check] to scan installed CLI versions and provider image availability."))
+	}
+
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:min(len(lines), h)], "\n")
+}
+
 // sortedCostRows returns the cost rows sorted cheapest-first (errors last).
 func (m dashModel) sortedCostRows() []cost.CloudCost {
 	sorted := make([]cost.CloudCost, len(m.costRows))
@@ -3570,10 +4202,49 @@ func runDashboard(w io.Writer, cfg *config.Config, s *state) dashResult {
 	}
 	if final.selects[siMode].value() == "on-prem" {
 		s.fork = forkOnPrem
+		// Copy loaded cfg back to caller's pointer (handles cfgEntryLoadMsg replacement).
+		*cfg = *final.cfg
 		return dashResult{saved: true}
 	}
 	final.flushToCfg()
+	// Copy flushed cfg back to caller's pointer.
+	*cfg = *final.cfg
 	return dashResult{saved: true, deployRequested: final.deployRequested}
+}
+
+// ─── cost period helpers ──────────────────────────────────────────────────────
+
+// activeCostWindow returns the currently selected time window preset.
+func (m dashModel) activeCostWindow() costWindowPreset {
+	if m.costPeriodIdx < 0 || m.costPeriodIdx >= len(costWindows) {
+		return costWindows[costDefaultPeriodIdx]
+	}
+	return costWindows[m.costPeriodIdx]
+}
+
+// costForPeriod scales a monthly USD figure to the active window.
+func (m dashModel) costForPeriod(monthly float64) float64 {
+	w := m.activeCostWindow()
+	return monthly * w.d.Seconds() / costMonthSecs
+}
+
+// formatCost renders an amount with the active window's short suffix.
+func (m dashModel) formatCost(monthly float64) string {
+	if monthly == 0 {
+		return "n/a"
+	}
+	amt := m.costForPeriod(monthly)
+	w := m.activeCostWindow()
+	switch {
+	case amt < 0.01:
+		return fmt.Sprintf("$%.4f%s", amt, w.short)
+	case amt < 1:
+		return fmt.Sprintf("$%.3f%s", amt, w.short)
+	case amt < 100:
+		return fmt.Sprintf("$%.2f%s", amt, w.short)
+	default:
+		return fmt.Sprintf("$%.0f%s", amt, w.short)
+	}
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

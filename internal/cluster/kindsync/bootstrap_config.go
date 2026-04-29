@@ -3,10 +3,10 @@
 
 package kindsync
 
-// bootstrap_config.go manages per-config orchestrator-state Secrets in
-// the yage-system namespace. Each Secret is named
-// "<cfg.ConfigName>-bootstrap-config" and carries a full env-var
-// snapshot (config.yaml) plus labeled metadata for discovery.
+// bootstrap_config.go manages per-config orchestrator-state Secrets.
+// Each config lives in its own Kubernetes namespace named
+// "yage-<sanitized cfg.ConfigName>" (e.g. "yage-dev", "yage-prod-eu").
+// Inside that namespace the Secret is always called "bootstrap-config".
 //
 // Three coexistence modes (cfg.ConfigName is the discriminator):
 //
@@ -17,7 +17,12 @@ package kindsync
 //  3. N draft scenarios: ConfigName set to a scenario label, no realized
 //     workload yet.
 //
-// Labels written on every Secret:
+// Namespace labels (updated on every save):
+//
+//	infra.yage-deployment.bucaniere.us:  "true"
+//	infra.capi-provider.bucaniere.us:    <cfg.InfraProvider>   (omitted when empty)
+//
+// Secret labels (written inside the per-config namespace):
 //
 //	app.kubernetes.io/managed-by:  yage
 //	app.kubernetes.io/component:   bootstrap-config
@@ -27,6 +32,10 @@ package kindsync
 //	yage.io/provider:              <cfg.InfraProvider>           (when set)
 //	yage.io/region:                <provider.Region or "">       (when set)
 //
+// Discovery: list namespaces with infra.yage-deployment.bucaniere.us=true,
+// then fetch "bootstrap-config" from each.
+//
+// Shared resources (cost credentials) remain in YageSystemNamespace.
 // The Proxmox provider-snapshot Secret (proxmox-bootstrap-config, written
 // by applyBootstrapConfigToManagementCluster) is a separate concept and is
 // not affected by this file.
@@ -50,19 +59,38 @@ import (
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
-// BootstrapConfigNamespace is the kind-side namespace yage owns
-// for its bootstrap state Secret.
-const BootstrapConfigNamespace = "yage-system"
+// YageSystemNamespace is the shared kind-side namespace for non-per-config
+// yage resources (cost credentials, operator state).
+const YageSystemNamespace = "yage-system"
 
-// BootstrapConfigSecretName returns the name of the bootstrap-config
-// Secret for cfg in BootstrapConfigNamespace. The name is
-// "<cfg.ConfigName>-bootstrap-config"; when ConfigName is empty
-// (should not happen after Load()) falls back to "bootstrap-config".
-func BootstrapConfigSecretName(cfg *config.Config) string {
-	if cfg.ConfigName == "" {
-		return "bootstrap-config"
+// BootstrapConfigNamespace returns the per-config namespace for cfg.
+// Named "yage-<sanitized ConfigName>". Falls back to "yage-default" when
+// ConfigName is empty (callers that write data should guard against this
+// separately via an error return).
+func BootstrapConfigNamespace(cfg *config.Config) string {
+	if cfg == nil || cfg.ConfigName == "" {
+		return "yage-default"
 	}
-	return cfg.ConfigName + "-bootstrap-config"
+	return "yage-" + sanitizeLabelValue(cfg.ConfigName)
+}
+
+// BootstrapConfigSecretName returns the name of the bootstrap-config Secret
+// inside the per-config namespace. Always "bootstrap-config" — the namespace
+// is the discriminator so no config-name prefix is needed.
+func BootstrapConfigSecretName(_ *config.Config) string {
+	return "bootstrap-config"
+}
+
+// configNamespaceLabels returns the labels applied to the per-config namespace
+// on every save so callers can discover all yage configs via label-selector.
+func configNamespaceLabels(cfg *config.Config) map[string]string {
+	lbl := map[string]string{
+		"infra.yage-deployment.bucaniere.us": "true",
+	}
+	if cfg != nil && cfg.InfraProvider != "" {
+		lbl["infra.capi-provider.bucaniere.us"] = sanitizeLabelValue(cfg.InfraProvider)
+	}
+	return lbl
 }
 
 // sanitizeLabelValue maps s to a valid Kubernetes label value
@@ -144,22 +172,28 @@ func isTTY() bool {
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
-// WriteBootstrapConfigSecret emits cfg into Secret/yage-system/
-// bootstrap-config, using the prefix-based schema documented at
-// the top of this file. Returns nil best-effort: when the kind
-// cluster isn't reachable (e.g. xapiri running before any cluster
-// exists), logs and returns nil so the caller can fall through to
-// a local-file fallback.
+// WriteBootstrapConfigSecret emits cfg into the per-config namespace
+// (yage-<ConfigName>) as Secret "bootstrap-config". The namespace is
+// created on first write and its labels are updated on every save so the
+// label-based discovery in ListBootstrapCandidates stays current.
+// Returns nil best-effort: when the kind cluster isn't reachable (e.g.
+// xapiri running before any cluster exists), logs and returns nil so the
+// caller can fall through to a local-file fallback.
 func WriteBootstrapConfigSecret(cfg *config.Config) error {
+	if cfg.ConfigName == "" {
+		return fmt.Errorf("kindsync: ConfigName is required to write bootstrap config; set --config-name or YAGE_CONFIG_NAME")
+	}
 	kctx := "kind-" + cfg.KindClusterName
 	cli, err := k8sclient.ForContext(kctx)
 	if err != nil {
 		// Kind cluster not reachable — best-effort skip.
-		logx.Warn("kindsync: kind context %s not reachable; skipping %s/%s write (%v)", kctx, BootstrapConfigNamespace, BootstrapConfigSecretName(cfg), err)
+		logx.Warn("kindsync: kind context %s not reachable; skipping %s/%s write (%v)", kctx, BootstrapConfigNamespace(cfg), BootstrapConfigSecretName(cfg), err)
 		return nil
 	}
 	bg := context.Background()
-	if err := cli.EnsureNamespace(bg, BootstrapConfigNamespace); err != nil {
+	// Always apply namespace with labels — creates on first run, updates
+	// provider label on subsequent saves.
+	if err := cli.EnsureNamespaceWithLabels(bg, BootstrapConfigNamespace(cfg), configNamespaceLabels(cfg)); err != nil {
 		return err
 	}
 
@@ -198,7 +232,7 @@ func WriteBootstrapConfigSecret(cfg *config.Config) error {
 		data["config.yaml"] = []byte(yaml)
 	}
 
-	return applySecret(bg, cli, BootstrapConfigNamespace, BootstrapConfigSecretName(cfg), data, bootstrapLabels(cfg, "draft"))
+	return applySecret(bg, cli, BootstrapConfigNamespace(cfg), BootstrapConfigSecretName(cfg), data, bootstrapLabels(cfg, "draft"))
 }
 
 // MergeBootstrapConfigFromKind reads Secret/yage-system/
@@ -226,7 +260,7 @@ func MergeBootstrapConfigFromKind(cfg *config.Config) error {
 		return nil // no discriminator; caller must populate ConfigName first
 	}
 	bg := context.Background()
-	sec, err := cli.Typed.CoreV1().Secrets(BootstrapConfigNamespace).Get(bg, BootstrapConfigSecretName(cfg), metav1.GetOptions{})
+	sec, err := cli.Typed.CoreV1().Secrets(BootstrapConfigNamespace(cfg)).Get(bg, BootstrapConfigSecretName(cfg), metav1.GetOptions{})
 	if err != nil {
 		return nil // not present yet → first-run case
 	}
@@ -309,13 +343,13 @@ func PromoteBootstrapConfigToRealized(cfg *config.Config) {
 		return
 	}
 	patch := []byte(`{"metadata":{"labels":{"yage.io/config-status":"realized"}}}`)
-	_, err = cli.Typed.CoreV1().Secrets(BootstrapConfigNamespace).Patch(
+	_, err = cli.Typed.CoreV1().Secrets(BootstrapConfigNamespace(cfg)).Patch(
 		context.Background(), BootstrapConfigSecretName(cfg),
 		types.MergePatchType, patch, metav1.PatchOptions{},
 	)
 	if err != nil {
 		logx.Warn("kindsync: PromoteBootstrapConfigToRealized: patch %s/%s: %v",
-			BootstrapConfigNamespace, BootstrapConfigSecretName(cfg), err)
+			BootstrapConfigNamespace(cfg), BootstrapConfigSecretName(cfg), err)
 	}
 }
 
@@ -338,24 +372,30 @@ func (c BootstrapCandidate) Label() string {
 		c.ConfigName, st, c.Workload, c.Provider, c.Region)
 }
 
-// ListBootstrapCandidates returns all bootstrap-config Secrets in
-// yage-system on the given kind cluster identified by kindClusterName.
+// ListBootstrapCandidates discovers all per-config namespaces on the given
+// kind cluster by looking for namespaces labeled
+// infra.yage-deployment.bucaniere.us=true, then fetches the
+// "bootstrap-config" Secret from each to read the rich label metadata.
 func ListBootstrapCandidates(kindClusterName string) []BootstrapCandidate {
 	kctx := "kind-" + kindClusterName
 	cli, err := k8sclient.ForContext(kctx)
 	if err != nil {
 		return nil
 	}
-	list, err := cli.Typed.CoreV1().Secrets(BootstrapConfigNamespace).List(
-		context.Background(), metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=yage,app.kubernetes.io/component=bootstrap-config",
-		},
-	)
+	bg := context.Background()
+	nsList, err := cli.Typed.CoreV1().Namespaces().List(bg, metav1.ListOptions{
+		LabelSelector: "infra.yage-deployment.bucaniere.us=true",
+	})
 	if err != nil {
 		return nil
 	}
-	out := make([]BootstrapCandidate, 0, len(list.Items))
-	for _, sec := range list.Items {
+	out := make([]BootstrapCandidate, 0, len(nsList.Items))
+	for _, ns := range nsList.Items {
+		sec, err := cli.Typed.CoreV1().Secrets(ns.Name).Get(bg, "bootstrap-config", metav1.GetOptions{})
+		if err != nil {
+			// Namespace exists but secret not yet written — skip.
+			continue
+		}
 		lbl := sec.Labels
 		out = append(out, BootstrapCandidate{
 			KindCluster: kindClusterName,
@@ -497,7 +537,7 @@ func SelectBootstrapConfigForXapiri(cfg *config.Config) error {
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewInput().
 				Title("New config name").
-				Description("Prefix for the bootstrap-config Secret in yage-system (default: workload cluster name).").
+				Description("Names the yage-<config-name> namespace (default: workload cluster name).").
 				Value(&newName),
 		)).Run(); err != nil {
 			return err

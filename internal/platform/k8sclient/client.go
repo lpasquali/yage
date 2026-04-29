@@ -301,6 +301,26 @@ func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
 	return c.ApplyYAML(ctx, []byte(body))
 }
 
+// EnsureNamespaceWithLabels creates the namespace if absent, or updates its
+// labels via server-side apply when the namespace already exists. The labels
+// map is always applied (idempotent for both create and label-update paths).
+func (c *Client) EnsureNamespaceWithLabels(ctx context.Context, name string, labels map[string]string) error {
+	var sb strings.Builder
+	sb.WriteString("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ")
+	sb.WriteString(name)
+	if len(labels) > 0 {
+		sb.WriteString("\n  labels:")
+		for k, v := range labels {
+			sb.WriteString("\n    ")
+			sb.WriteString(k)
+			sb.WriteString(": ")
+			sb.WriteString(v)
+		}
+	}
+	sb.WriteByte('\n')
+	return c.ApplyYAML(ctx, []byte(sb.String()))
+}
+
 // FileBacked materialises a kubeconfig file derived from a Secret data key
 // to a temp file path; callers use it to drive workflows that still need a
 // KUBECONFIG file (e.g. helm). Returns the temp file path and a cleanup fn.

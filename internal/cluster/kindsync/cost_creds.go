@@ -44,7 +44,7 @@ func CostCompareSecretExists(cfg *config.Config) bool {
 	if err != nil {
 		return false
 	}
-	_, err = cli.Typed.CoreV1().Secrets(BootstrapConfigNamespace).Get(
+	_, err = cli.Typed.CoreV1().Secrets(YageSystemNamespace).Get(
 		context.Background(), costCredsSecretName, metav1.GetOptions{})
 	return err == nil
 }
@@ -63,7 +63,7 @@ func ReadCostCompareSecret(cfg *config.Config) error {
 		return nil // cluster unreachable — not an error
 	}
 	bg := context.Background()
-	sec, err := cli.Typed.CoreV1().Secrets(BootstrapConfigNamespace).Get(bg, costCredsSecretName, metav1.GetOptions{})
+	sec, err := cli.Typed.CoreV1().Secrets(YageSystemNamespace).Get(bg, costCredsSecretName, metav1.GetOptions{})
 	if err != nil {
 		return nil // secret absent — first-run case, not an error
 	}
@@ -102,7 +102,7 @@ func WriteCostCompareSecret(cfg *config.Config, creds map[string]string) error {
 	if len(data) == 0 {
 		return nil
 	}
-	return applySecret(context.Background(), cli, BootstrapConfigNamespace, costCredsSecretName, data, map[string]string{
+	return applySecret(context.Background(), cli, YageSystemNamespace, costCredsSecretName, data, map[string]string{
 		"app.kubernetes.io/managed-by": "yage",
 		"yage.io/secret-type":          "cost-credentials",
 	})

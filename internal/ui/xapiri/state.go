@@ -31,6 +31,7 @@ import (
 	"os"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/provider"
 )
 
 // forkType discriminates the on-prem vs cloud branches of the
@@ -189,6 +190,13 @@ func newStateWithReader(w io.Writer, cfg *config.Config, in io.Reader) *state {
 func (s *state) initFromConfig(cfg *config.Config) {
 	if cfg == nil {
 		return
+	}
+	// Restore fork from saved InfraProvider so the dashboard opens in
+	// the correct on-prem/cloud view without a manual mode switch.
+	if provider.AirgapCompatible(cfg.InfraProvider) {
+		s.fork = forkOnPrem
+	} else if cfg.InfraProvider != "" {
+		s.fork = forkCloud
 	}
 	switch cfg.Workload.Environment {
 	case "staging":

@@ -159,6 +159,13 @@ func Clusterctl(cfg *config.Config) error {
 // CiliumCLI ensures cilium CLI matches cfg.CiliumCLIVersion,
 // installing the upstream tarball when missing or out of date.
 func CiliumCLI(cfg *config.Config) error {
+	if err := ciliumCLI(cfg); err != nil {
+		logx.Die("Failed to install cilium CLI (curl or tar: check CILIUM_CLI_VERSION=%s and network).", cfg.CiliumCLIVersion)
+	}
+	return nil
+}
+
+func ciliumCLI(cfg *config.Config) error {
 	if shell.CommandExists("cilium") {
 		have := firstVersionOn("cilium", "version", "2>&1")
 		if versionx.Match(have, cfg.CiliumCLIVersion) {
@@ -171,7 +178,7 @@ func CiliumCLI(cfg *config.Config) error {
 	tarball := fmt.Sprintf("cilium-%s-%s.tar.gz", sysinfo.OS(), sysinfo.Arch())
 	url := fmt.Sprintf("https://github.com/cilium/cilium-cli/releases/download/%s/%s", cfg.CiliumCLIVersion, tarball)
 	if err := installTarballMember(url, "cilium", 0); err != nil {
-		logx.Die("Failed to install cilium CLI (curl or tar: check CILIUM_CLI_VERSION=%s and network).", cfg.CiliumCLIVersion)
+		return fmt.Errorf("install cilium CLI: %w", err)
 	}
 	return nil
 }
@@ -180,8 +187,15 @@ func CiliumCLI(cfg *config.Config) error {
 // installing the upstream release binary when missing or out of date.
 // Linux-only.
 func ArgoCDCLI(cfg *config.Config) error {
+	if err := argoCDCLI(cfg); err != nil {
+		logx.Die("%v", err)
+	}
+	return nil
+}
+
+func argoCDCLI(cfg *config.Config) error {
 	if runtime.GOOS != "linux" {
-		logx.Die("argocd CLI install is supported on Linux only (amd64/arm64), not %s.", runtime.GOOS)
+		return fmt.Errorf("argocd CLI install is supported on Linux only (amd64/arm64), not %s", runtime.GOOS)
 	}
 	if shell.CommandExists("argocd") {
 		have := firstVersionOn("argocd", "version", "--client", "2>&1")
@@ -196,7 +210,7 @@ func ArgoCDCLI(cfg *config.Config) error {
 	switch arch {
 	case "amd64", "arm64":
 	default:
-		logx.Die("Unsupported architecture for argocd CLI on Linux: %s (need amd64 or arm64).", arch)
+		return fmt.Errorf("unsupported architecture for argocd CLI on Linux: %s (need amd64 or arm64)", arch)
 	}
 	url := fmt.Sprintf("https://github.com/argoproj/argo-cd/releases/download/%s/argocd-linux-%s", cfg.ArgoCD.Version, arch)
 	return installBinary("argocd", url)
@@ -205,8 +219,15 @@ func ArgoCDCLI(cfg *config.Config) error {
 // KyvernoCLI ensures the kyverno CLI matches cfg.KyvernoCLIVersion.
 // Linux-only; amd64 uses x86_64 in the asset name.
 func KyvernoCLI(cfg *config.Config) error {
+	if err := kyvernoCLI(cfg); err != nil {
+		logx.Die("%v", err)
+	}
+	return nil
+}
+
+func kyvernoCLI(cfg *config.Config) error {
 	if runtime.GOOS != "linux" {
-		logx.Die("kyverno CLI install is supported on Linux only (amd64/arm64), not %s.", runtime.GOOS)
+		return fmt.Errorf("kyverno CLI install is supported on Linux only (amd64/arm64), not %s", runtime.GOOS)
 	}
 	if shell.CommandExists("kyverno") {
 		have := firstVersionOn("kyverno", "version", "2>&1")
@@ -224,12 +245,12 @@ func KyvernoCLI(cfg *config.Config) error {
 	case "arm64":
 		kyArch = "arm64"
 	default:
-		logx.Die("Unsupported architecture for kyverno CLI on Linux: %s (need amd64 or arm64).", sysinfo.Arch())
+		return fmt.Errorf("unsupported architecture for kyverno CLI on Linux: %s (need amd64 or arm64)", sysinfo.Arch())
 	}
 	tarball := fmt.Sprintf("kyverno-cli_%s_linux_%s.tar.gz", cfg.KyvernoCLIVersion, kyArch)
 	url := fmt.Sprintf("https://github.com/kyverno/kyverno/releases/download/%s/%s", cfg.KyvernoCLIVersion, tarball)
 	if err := installTarballMember(url, "kyverno", 0); err != nil {
-		logx.Die("Failed to install kyverno CLI (check KYVERNO_CLI_VERSION=%s and network).", cfg.KyvernoCLIVersion)
+		return fmt.Errorf("install kyverno CLI: %w", err)
 	}
 	return nil
 }
@@ -237,8 +258,15 @@ func KyvernoCLI(cfg *config.Config) error {
 // Cmctl ensures the cmctl (cert-manager) CLI matches
 // cfg.CmctlVersion. Linux-only.
 func Cmctl(cfg *config.Config) error {
+	if err := cmctlInner(cfg); err != nil {
+		logx.Die("%v", err)
+	}
+	return nil
+}
+
+func cmctlInner(cfg *config.Config) error {
 	if runtime.GOOS != "linux" {
-		logx.Die("cmctl install is supported on Linux only (amd64/arm64), not %s.", runtime.GOOS)
+		return fmt.Errorf("cmctl install is supported on Linux only (amd64/arm64), not %s", runtime.GOOS)
 	}
 	if shell.CommandExists("cmctl") {
 		have := firstVersionOn("cmctl", "version", "2>&1")
@@ -251,12 +279,12 @@ func Cmctl(cfg *config.Config) error {
 	}
 	arch := sysinfo.Arch()
 	if arch != "amd64" && arch != "arm64" {
-		logx.Die("Unsupported architecture for cmctl on Linux: %s (need amd64 or arm64).", arch)
+		return fmt.Errorf("unsupported architecture for cmctl on Linux: %s (need amd64 or arm64)", arch)
 	}
 	tarball := fmt.Sprintf("cmctl_linux_%s.tar.gz", arch)
 	url := fmt.Sprintf("https://github.com/cert-manager/cmctl/releases/download/%s/%s", cfg.CmctlVersion, tarball)
 	if err := installTarballMember(url, "cmctl", 0); err != nil {
-		logx.Die("Failed to install cmctl (check CMCTL_VERSION=%s and network).", cfg.CmctlVersion)
+		return fmt.Errorf("install cmctl: %w", err)
 	}
 	return nil
 }
@@ -436,6 +464,13 @@ func BuildIfNoArm64(cfg *config.Config, image, repo, tag, dir, cluster string) e
 // `tofu version -json` emits the same schema Terraform did, including the
 // `terraform_version` key — we reuse the existing parser for that reason.
 func OpenTofu(cfg *config.Config) error {
+	if err := openTofuInner(cfg); err != nil {
+		logx.Die("Failed to install OpenTofu (check OPENTOFU_VERSION=%s and network): %v", cfg.OpenTofuVersion, err)
+	}
+	return nil
+}
+
+func openTofuInner(cfg *config.Config) error {
 	if shell.CommandExists("tofu") {
 		have := tofuJSONVersion()
 		if versionx.Match(have, cfg.OpenTofuVersion) {
@@ -451,7 +486,7 @@ func OpenTofu(cfg *config.Config) error {
 		cfg.OpenTofuVersion, cfg.OpenTofuVersion, osName, arch)
 	zipPath := filepath.Join(os.TempDir(), fmt.Sprintf("tofu_%s_%s_%s.zip", cfg.OpenTofuVersion, osName, arch))
 	if err := downloadTo(url, zipPath); err != nil {
-		logx.Die("Failed to download OpenTofu from %s (check OPENTOFU_VERSION=%s and network).", url, cfg.OpenTofuVersion)
+		return fmt.Errorf("download OpenTofu from %s: %w", url, err)
 	}
 	defer os.Remove(zipPath)
 	bin := filepath.Join(os.TempDir(), "tofu.bin")
@@ -594,4 +629,138 @@ func extractZipMember(zipPath, name, dest string) error {
 	// supplies archive/zip, this is trivial; adding import here keeps the
 	// function self-contained for readability.
 	return extractZipMemberImpl(zipPath, name, dest)
+}
+
+// ─── deps check / upgrade ─────────────────────────────────────────────────────
+
+// DepCheck records the current state of one CLI dependency.
+type DepCheck struct {
+	Name string
+	Want string // pinned version or "any"
+	Have string // detected version or "not found"
+	OK   bool
+	Skip bool // built-in (no check needed)
+}
+
+// ImageCheck records arm64 availability for one container image.
+type ImageCheck struct {
+	Name  string // human-friendly label
+	Image string // full image:tag reference
+	Arm64 bool   // has arm64 in manifest list
+	Err   bool   // docker absent or network failure
+}
+
+// CheckDeps returns the installed-vs-required status for every CLI tool yage
+// needs, without installing anything. Safe to call from the TUI.
+func CheckDeps(cfg *config.Config) []DepCheck {
+	check := func(name, want, have string) DepCheck {
+		ok := versionx.Match(have, want)
+		if have == "" {
+			have = "not found"
+		}
+		return DepCheck{Name: name, Want: want, Have: have, OK: ok}
+	}
+	var out []DepCheck
+	out = append(out, DepCheck{Name: "kind", Want: "embedded", Have: "embedded", OK: true, Skip: true})
+	out = append(out, check("kubectl", cfg.KubectlVersion, kubectlClientGitVersion()))
+	out = append(out, check("clusterctl", cfg.ClusterctlVersion, clusterctlGitVersion()))
+	out = append(out, check("tofu", cfg.OpenTofuVersion, tofuJSONVersion()))
+	if cfg.CiliumCLIVersion != "" {
+		out = append(out, check("cilium", cfg.CiliumCLIVersion, firstVersionOn("cilium", "version", "2>&1")))
+	}
+	if cfg.ArgoCD.Enabled {
+		out = append(out, check("argocd", cfg.ArgoCD.Version, firstVersionOn("argocd", "version", "--client", "2>&1")))
+	}
+	if cfg.KyvernoEnabled {
+		out = append(out, check("kyverno", cfg.KyvernoCLIVersion, firstVersionOn("kyverno", "version", "2>&1")))
+	}
+	if cfg.CertManagerEnabled {
+		out = append(out, check("cmctl", cfg.CmctlVersion, firstVersionOn("cmctl", "version", "2>&1")))
+	}
+	helmHave := firstVersionOn("helm", "version")
+	out = append(out, DepCheck{Name: "helm", Want: "any", Have: orHelmMissing(helmHave), OK: helmHave != ""})
+	dockerHave := firstVersionOn("docker", "--version")
+	out = append(out, DepCheck{Name: "docker", Want: "any", Have: orHelmMissing(dockerHave), OK: dockerHave != ""})
+	return out
+}
+
+func orHelmMissing(v string) string {
+	if v == "" {
+		return "not found"
+	}
+	return v
+}
+
+// CheckProviderImages checks whether the container images required by the
+// active provider have arm64 support in their registry manifest lists.
+// Returns an empty slice when docker is absent. Safe to call from the TUI.
+func CheckProviderImages(cfg *config.Config) []ImageCheck {
+	if !shell.CommandExists("docker") {
+		return nil
+	}
+	var images []struct{ name, ref string }
+	if cfg.CAPICoreImage != "" {
+		images = append(images, struct{ name, ref string }{"CAPI core", cfg.CAPICoreImage})
+	}
+	if cfg.CAPIBootstrapImage != "" {
+		images = append(images, struct{ name, ref string }{"CAPI bootstrap", cfg.CAPIBootstrapImage})
+	}
+	if cfg.CAPIControlplaneImage != "" {
+		images = append(images, struct{ name, ref string }{"CAPI controlplane", cfg.CAPIControlplaneImage})
+	}
+	if cfg.IPAMImage != "" {
+		images = append(images, struct{ name, ref string }{"IPAM", cfg.IPAMImage})
+	}
+	if cfg.CAPMOXImageRepo != "" {
+		tag := cfg.CAPMOXVersion
+		if tag == "" {
+			tag = "latest"
+		}
+		images = append(images, struct{ name, ref string }{"CAPMOX", cfg.CAPMOXImageRepo + ":" + tag})
+	}
+	var out []ImageCheck
+	for _, img := range images {
+		arm64 := HasArm64Image(img.ref)
+		out = append(out, ImageCheck{Name: img.name, Image: img.ref, Arm64: arm64})
+	}
+	return out
+}
+
+// UpgradeDeps installs or upgrades every CLI tool to its pinned version.
+// Unlike the individual exported functions, this returns the first error
+// rather than calling logx.Die, making it safe to call from the TUI.
+func UpgradeDeps(cfg *config.Config) error {
+	if err := Kubectl(cfg); err != nil {
+		return fmt.Errorf("kubectl: %w", err)
+	}
+	if err := Clusterctl(cfg); err != nil {
+		return fmt.Errorf("clusterctl: %w", err)
+	}
+	if err := openTofuInner(cfg); err != nil {
+		return fmt.Errorf("tofu: %w", err)
+	}
+	if cfg.CiliumCLIVersion != "" {
+		if err := ciliumCLI(cfg); err != nil {
+			return fmt.Errorf("cilium: %w", err)
+		}
+	}
+	if cfg.ArgoCD.Enabled {
+		if err := argoCDCLI(cfg); err != nil {
+			return fmt.Errorf("argocd: %w", err)
+		}
+	}
+	if cfg.KyvernoEnabled {
+		if err := kyvernoCLI(cfg); err != nil {
+			return fmt.Errorf("kyverno: %w", err)
+		}
+	}
+	if cfg.CertManagerEnabled {
+		if err := cmctlInner(cfg); err != nil {
+			return fmt.Errorf("cmctl: %w", err)
+		}
+	}
+	if err := Helm(); err != nil {
+		return fmt.Errorf("helm: %w", err)
+	}
+	return nil
 }

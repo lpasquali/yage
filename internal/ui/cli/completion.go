@@ -73,6 +73,7 @@ var topLevelFlags = []string{
 	"--cilium-wait-duration",
 	"--cloudinit-storage",
 	"--cluster-set-id",
+	"--config-name",
 	"--cluster-topology",
 	"--cnpg-version",
 	"--completion",

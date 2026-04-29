@@ -261,6 +261,8 @@ OPTIONS
         --worker-memory-mib N                  (default: 4096 — kubelet + Cilium + a small pod budget)
 
   Workload cluster
+        --config-name NAME                    Bootstrap-config discriminator (default: workload-cluster-name).
+                                              Use to keep N profiles or draft scenarios side-by-side in yage-system.
         --workload-cluster-name NAME          CAPI Cluster name (default: capi-quickstart)
         --workload-cluster-namespace NS       Cluster namespace (default: default)
         --workload-cilium-cluster-id ID       Cilium cluster.id (default: derived from CLUSTER_SET_ID)

@@ -297,6 +297,9 @@ func Parse(c *config.Config, argv []string) {
 			c.Providers.Proxmox.WorkerNumCores = shiftVal(a)
 		case "--worker-memory-mib":
 			c.Providers.Proxmox.WorkerMemoryMiB = shiftVal(a)
+		case "--config-name":
+			c.ConfigName = shiftVal(a)
+			c.ConfigNameExplicit = true
 		case "--workload-cluster-name":
 			c.WorkloadClusterName = shiftVal(a)
 			c.WorkloadClusterNameExplicit = true
@@ -425,6 +428,10 @@ func Parse(c *config.Config, argv []string) {
 			// Launch the interactive configuration TUI and exit.
 			// See package internal/xapiri for the cultural note.
 			c.Xapiri = true
+		case "--geoip":
+			// Fetch the operator's outbound IP via GeoJS and use it to
+			// rank nearest cloud regions for cost estimation.
+			c.GeoIPEnabled = true
 		case "--airgapped":
 			// Disable every internet-requiring path (cloud providers,
 			// pricing fetchers, geo + FX). On-prem only. See §17.

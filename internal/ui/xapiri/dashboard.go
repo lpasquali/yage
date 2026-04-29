@@ -1412,7 +1412,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.saveKindErr = nil
 				cfg := m.cfg
 				return m, func() tea.Msg {
-					return saveKindMsg{err: kindsync.ApplyBootstrapConfigToManagementCluster(cfg)}
+					return saveKindMsg{err: kindsync.WriteBootstrapConfigSecret(cfg)}
 				}
 			}
 			return m, nil
@@ -1874,13 +1874,13 @@ func (m dashModel) updateDeployTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.deployFocused {
 		case 0:
 			if !m.saveKindLoading {
+				m.flushToCfg()
 				m.saveKindLoading = true
 				m.saveKindDone = false
 				m.saveKindErr = nil
 				cfg := m.cfg
 				return m, func() tea.Msg {
-					err := kindsync.ApplyBootstrapConfigToManagementCluster(cfg)
-					return saveKindMsg{err: err}
+					return saveKindMsg{err: kindsync.WriteBootstrapConfigSecret(cfg)}
 				}
 			}
 		case 1:

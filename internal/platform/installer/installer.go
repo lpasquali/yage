@@ -404,16 +404,25 @@ func fetchAll(url string) (string, error) {
 // JSON parsing. Returns false on any error (docker missing, network,
 // image absent).
 func HasArm64Image(image string) bool {
+	_, arm64, _ := checkImageArch(image)
+	return arm64
+}
+
+// checkImageArch probes a container image's manifest list and reports which
+// architectures are present. hasAmd64 covers amd64/x86_64; hasArm64 covers
+// arm64/aarch64. queryErr is true when docker is absent or the call fails.
+func checkImageArch(image string) (hasAmd64, hasArm64, queryErr bool) {
 	if !shell.CommandExists("docker") {
-		return false
+		return false, false, true
 	}
 	out, _, err := shell.Capture("docker", "manifest", "inspect", image)
 	if err != nil || out == "" {
-		return false
+		return false, false, true
 	}
 	type entry struct {
 		Platform struct {
 			Architecture string `json:"architecture"`
+			OS           string `json:"os"`
 		} `json:"platform"`
 	}
 	var m struct {
@@ -422,11 +431,14 @@ func HasArm64Image(image string) bool {
 	}
 	_ = json.Unmarshal([]byte(out), &m)
 	for _, x := range append(m.Manifests, m.ManifestsAlt...) {
-		if x.Platform.Architecture == "arm64" {
-			return true
+		switch x.Platform.Architecture {
+		case "amd64", "x86_64":
+			hasAmd64 = true
+		case "arm64", "aarch64":
+			hasArm64 = true
 		}
 	}
-	return false
+	return hasAmd64, hasArm64, false
 }
 
 // BuildIfNoArm64 ports build_if_no_arm64(). If an arm64 variant exists in
@@ -642,10 +654,11 @@ type DepCheck struct {
 	Skip bool // built-in (no check needed)
 }
 
-// ImageCheck records arm64 availability for one container image.
+// ImageCheck records architecture availability for one container image.
 type ImageCheck struct {
 	Name  string // human-friendly label
 	Image string // full image:tag reference
+	Amd64 bool   // has amd64/x86-64 in manifest list
 	Arm64 bool   // has arm64 in manifest list
 	Err   bool   // docker absent or network failure
 }
@@ -720,8 +733,8 @@ func CheckProviderImages(cfg *config.Config) []ImageCheck {
 	}
 	var out []ImageCheck
 	for _, img := range images {
-		arm64 := HasArm64Image(img.ref)
-		out = append(out, ImageCheck{Name: img.name, Image: img.ref, Arm64: arm64})
+		amd64, arm64, queryErr := checkImageArch(img.ref)
+		out = append(out, ImageCheck{Name: img.name, Image: img.ref, Amd64: amd64, Arm64: arm64, Err: queryErr})
 	}
 	return out
 }

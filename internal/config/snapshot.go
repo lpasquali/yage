@@ -161,6 +161,7 @@ func (c *Config) Snapshot() []SnapshotField {
 		sp("WORKER_NUM_CORES", &c.Providers.Proxmox.WorkerNumCores),
 		sp("WORKER_MEMORY_MIB", &c.Providers.Proxmox.WorkerMemoryMiB),
 		// --- Workload cluster (EXPLICIT-guarded for NAME/NAMESPACE) ---
+		spEx("YAGE_CONFIG_NAME", "YAGE_CONFIG_NAME_EXPLICIT", &c.ConfigName),
 		spEx("WORKLOAD_CLUSTER_NAME", "WORKLOAD_CLUSTER_NAME_EXPLICIT", &c.WorkloadClusterName),
 		spEx("WORKLOAD_CLUSTER_NAMESPACE", "WORKLOAD_CLUSTER_NAMESPACE_EXPLICIT", &c.WorkloadClusterNamespace),
 		sp("WORKLOAD_CILIUM_CLUSTER_ID", &c.WorkloadCiliumClusterID),
@@ -391,6 +392,7 @@ func (c *Config) explicitSet() map[string]bool {
 		"IP_PREFIX_EXPLICIT":                  c.IPPrefixExplicit,
 		"DNS_SERVERS_EXPLICIT":                c.DNSServersExplicit,
 		"ALLOWED_NODES_EXPLICIT":              c.AllowedNodesExplicit,
+		"YAGE_CONFIG_NAME_EXPLICIT":            c.ConfigNameExplicit,
 		"WORKLOAD_CLUSTER_NAME_EXPLICIT":       c.WorkloadClusterNameExplicit,
 		"WORKLOAD_CLUSTER_NAMESPACE_EXPLICIT":  c.WorkloadClusterNamespaceExplicit,
 		"WORKLOAD_KUBERNETES_VERSION_EXPLICIT": c.WorkloadKubernetesVersionExplicit,

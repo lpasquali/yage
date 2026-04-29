@@ -844,6 +844,12 @@ type Config struct {
 	// See docs/abstraction-plan.md §17.
 	Airgapped bool
 
+	// GeoIPEnabled, when true, fetches the operator's outbound IP via
+	// GeoJS to determine nearest cloud regions for cost estimation.
+	// Off by default; DataCenterLocation provides location hints without
+	// any outbound lookup. CLI flag: --geoip.
+	GeoIPEnabled bool
+
 	// ImageRegistryMirror, when non-empty, prefixes every CAPI
 	// provider image reference passed to `clusterctl init` so the
 	// images come from an internal mirror instead of the public
@@ -1083,8 +1089,15 @@ type Config struct {
 	WorkloadClusterName             string
 	WorkloadCiliumClusterID         string
 	WorkloadClusterNamespace        string
-	WorkloadClusterNameExplicit     bool
+	WorkloadClusterNameExplicit      bool
 	WorkloadClusterNamespaceExplicit bool
+	// ConfigName is the per-config discriminator used to name the
+	// yage-system bootstrap-config Secret (<ConfigName>-bootstrap-config).
+	// Defaults to WorkloadClusterName so case-1 (N workload clusters on one
+	// mgmt) needs no extra flag. Set --config-name explicitly to create
+	// named profiles (case 2) or draft scenarios (case 3).
+	ConfigName         string
+	ConfigNameExplicit bool
 	WorkloadKubernetesVersion         string
 	WorkloadKubernetesVersionExplicit bool
 	ControlPlaneMachineCount          string
@@ -1642,6 +1655,11 @@ func Load() *Config {
 	c.WorkloadClusterNamespace = getenv("WORKLOAD_CLUSTER_NAMESPACE", "default")
 	c.WorkloadClusterNameExplicit = envBoolLoose("WORKLOAD_CLUSTER_NAME_EXPLICIT", false) || os.Getenv("WORKLOAD_CLUSTER_NAME") != ""
 	c.WorkloadClusterNamespaceExplicit = envBoolLoose("WORKLOAD_CLUSTER_NAMESPACE_EXPLICIT", false) || os.Getenv("WORKLOAD_CLUSTER_NAMESPACE") != ""
+	c.ConfigName = getenv("YAGE_CONFIG_NAME", "")
+	c.ConfigNameExplicit = envBoolLoose("YAGE_CONFIG_NAME_EXPLICIT", false) || os.Getenv("YAGE_CONFIG_NAME") != ""
+	if c.ConfigName == "" {
+		c.ConfigName = c.WorkloadClusterName
+	}
 	c.WorkloadKubernetesVersion = getenv("WORKLOAD_KUBERNETES_VERSION", "v1.35.0")
 	c.WorkloadKubernetesVersionExplicit = os.Getenv("WORKLOAD_KUBERNETES_VERSION") != ""
 	c.ControlPlaneMachineCount = getenv("CONTROL_PLANE_MACHINE_COUNT", "1")

@@ -123,17 +123,20 @@ func Run(w io.Writer, cfg *config.Config) int {
 	if err := s.stepKindClusterName(); err != nil {
 		return s.exit(err)
 	}
-	// Load all previously saved state now that we know the kind cluster
-	// name. Two stores exist:
-	//   1. yage-system/proxmox-bootstrap-config — the orchestrator's
-	//      store, written after a real deployment. Contains network
-	//      fields, provider URL/tokens, workload cluster name.
-	//   2. yage-system/bootstrap-config — xapiri's own store, written
-	//      at the end of a successful walkthrough. Contains a full
-	//      snapshot including everything from store 1.
-	// Call 1 first so store 2 (which is fresher when it exists) wins
-	// on overlap. Both are best-effort no-ops when the cluster or Secret
-	// is not yet reachable (first-run case).
+	// Pick (or create) the bootstrap config to load before merging.
+	// Must run after stepKindClusterName so cfg.KindClusterName is set.
+	if err := s.stepConfigSelection(); err != nil {
+		return s.exit(err)
+	}
+	// Load all previously saved state. Two stores exist:
+	//   1. yage-system/proxmox-bootstrap-config — the Proxmox provider
+	//      snapshot written after a real deployment (network fields,
+	//      provider URL/tokens, workload cluster name).
+	//   2. yage-system/<ConfigName>-bootstrap-config — xapiri's per-config
+	//      store, written at the end of each walkthrough. Contains a full
+	//      snapshot that wins over store 1 on overlap (fresher).
+	// Both are best-effort no-ops when the cluster or Secret is not yet
+	// reachable (first-run case).
 	kindsync.MergeBootstrapSecretsFromKind(cfg)
 	_ = kindsync.MergeBootstrapConfigFromKind(cfg)
 	_ = kindsync.ReadCostCompareSecret(cfg) // sets CostCompareEnabled + loads credentials when secret exists
@@ -170,21 +173,13 @@ func useHuhTUI() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("YAGE_XAPIRI_TUI")), "huh")
 }
 
-// runHuhBranch is the YAGE_XAPIRI_TUI=huh entry. The kind prelude
-// still runs (every later step needs the cluster), then the huh
-// form covers steps 1..4 of the cloud fork; cost-compare and the
-// shared tail run unchanged afterwards.
+// runHuhBranch is the YAGE_XAPIRI_TUI=huh entry. The kind prelude brings
+// the management cluster up; the dashboard handles config selection and all
+// subsequent steps interactively.
 func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
-	// Speculative merge using the default cluster name so the huh form
-	// sees saved values as its initial field values.
 	if cfg.KindClusterName == "" {
 		cfg.KindClusterName = "yage-mgmt"
 	}
-	kindsync.MergeBootstrapSecretsFromKind(cfg)
-	_ = kindsync.MergeBootstrapConfigFromKind(cfg)
-	_ = kindsync.ReadCostCompareSecret(cfg) // sets CostCompareEnabled + loads credentials when secret exists
-	disableProvidersMissingCredentials(cfg)
-	s.initFromConfig(cfg) // re-seed walkthrough state now that kind merges have run
 	if !skipKindPrelude() {
 		if err := kind.EnsureClusterUp(cfg, w); err != nil {
 			fmt.Fprintf(w, "xapiri: kind management cluster could not be brought up: %v\n", err)
@@ -197,20 +192,13 @@ func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
 	if !res.saved {
 		return 0
 	}
-	if s.fork == forkOnPrem {
-		return s.runOnPremFork()
-	}
 	if !res.deployRequested {
-		// User saved config but did not press Start Deploy — exit cleanly.
 		return 0
 	}
 	if strings.TrimSpace(cfg.InfraProvider) == "" {
-		return s.exit(fmt.Errorf("xapiri: no infrastructure provider selected for cloud deployment; choose a provider before continuing"))
+		return s.exit(fmt.Errorf("xapiri: no infrastructure provider selected for deployment; choose a provider in the config tab before deploying"))
 	}
-	// User pressed Start Deploy — proceed directly to the orchestrator.
-	if err := s.runSharedTail(); err != nil {
-		return s.exit(err)
-	}
+	s.cfg.XapiriDeployNow = true
 	return 0
 }
 
@@ -220,6 +208,15 @@ func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
 func skipKindPrelude() bool {
 	v := strings.TrimSpace(os.Getenv("YAGE_XAPIRI_SKIP_KIND"))
 	return v == "1" || strings.EqualFold(v, "true")
+}
+
+// stepConfigSelection offers the user a huh picker to choose (or create)
+// a bootstrap config on the already-set cfg.KindClusterName. It sets
+// cfg.ConfigName so the subsequent MergeBootstrapConfigFromKind call
+// reads the right Secret. No-op when cfg.ConfigNameExplicit is true.
+// Always uses huh regardless of which xapiri path is active.
+func (s *state) stepConfigSelection() error {
+	return kindsync.SelectBootstrapConfigForXapiri(s.cfg)
 }
 
 // providerSubStruct resolves cfg.Providers.<ProperCase(name)> via

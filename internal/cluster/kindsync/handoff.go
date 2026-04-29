@@ -202,6 +202,64 @@ func HandOffBootstrapSecretsToManagement(cfg *config.Config, kindCtx, mgmtKubeco
 			tgt.Namespace, tgt.Name, tgt.Description, kindCtx)
 	}
 
+	// Also hand off all per-config bootstrap-config Secrets in yage-system
+	// (labeled app.kubernetes.io/component=bootstrap-config). These are the
+	// orchestrator-state Secrets written by xapiri and promoted by the
+	// success path — one per ConfigName.
+	if bcList, listErr := srcCli.Typed.CoreV1().Secrets(BootstrapConfigNamespace).List(
+		bg, metav1.ListOptions{
+			LabelSelector: "app.kubernetes.io/managed-by=yage,app.kubernetes.io/component=bootstrap-config",
+		},
+	); listErr == nil {
+		if !ensuredNS[BootstrapConfigNamespace] {
+			if nsErr := dstCli.EnsureNamespace(bg, BootstrapConfigNamespace); nsErr != nil {
+				logx.Warn("Hand-off: failed to ensure namespace %s on management: %v", BootstrapConfigNamespace, nsErr)
+				if firstErr == nil {
+					firstErr = nsErr
+				}
+			} else {
+				ensuredNS[BootstrapConfigNamespace] = true
+			}
+		}
+		if ensuredNS[BootstrapConfigNamespace] {
+			for _, src := range bcList.Items {
+				clean := corev1.Secret{
+					TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+					ObjectMeta: metav1.ObjectMeta{Name: src.Name, Namespace: src.Namespace, Labels: src.Labels, Annotations: stripServerAnnotations(src.Annotations)},
+					Type:       src.Type,
+					Data:       src.Data,
+					StringData: src.StringData,
+					Immutable:  src.Immutable,
+				}
+				if clean.Type == "" {
+					clean.Type = corev1.SecretTypeOpaque
+				}
+				body, merr := json.Marshal(clean)
+				if merr != nil {
+					logx.Warn("Hand-off: failed to marshal %s/%s: %v", src.Namespace, src.Name, merr)
+					if firstErr == nil {
+						firstErr = merr
+					}
+					continue
+				}
+				_, perr := dstCli.Typed.CoreV1().Secrets(BootstrapConfigNamespace).Patch(
+					bg, src.Name, types.ApplyPatchType, body,
+					metav1.PatchOptions{FieldManager: k8sclient.FieldManager, Force: boolTrue()},
+				)
+				if perr != nil {
+					logx.Warn("Hand-off: failed to apply %s/%s on management: %v", src.Namespace, src.Name, perr)
+					if firstErr == nil {
+						firstErr = perr
+					}
+					continue
+				}
+				copied++
+				logx.Log("Hand-off: copied %s/%s (bootstrap config %s) from %s to management cluster.",
+					src.Namespace, src.Name, src.Labels["yage.io/config-name"], kindCtx)
+			}
+		}
+	}
+
 	logx.Log("Hand-off summary: %d Secret(s) copied from kind context %s to management cluster.", copied, kindCtx)
 	return copied, firstErr
 }

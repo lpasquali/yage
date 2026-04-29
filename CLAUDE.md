@@ -51,7 +51,18 @@ Multi-document YAML (`\n---\n` separated) is the main workload manifest format. 
 
 ### State persistence
 
-State lives in kind Secrets (`proxmox-bootstrap-config/config.yaml` in `yage-system` namespace), not local disk. `internal/cluster/kindsync` owns this round-trip. `config.Snapshot()` serialises fields; `kindsync.MergeProxmoxBootstrapSecretsFromKind()` reads them back (skipping fields marked `*_EXPLICIT`).
+State lives in kind Secrets in the `yage-system` namespace, not local disk. `internal/cluster/kindsync` owns this round-trip. `config.Snapshot()` serialises fields; `kindsync.ApplySnapshotKV()` reads them back (skipping fields marked `*_EXPLICIT`).
+
+Two distinct Secret types coexist:
+
+1. **Provider snapshot** (`cfg.Providers.Proxmox.BootstrapConfigSecretName`, e.g. `proxmox-bootstrap-config`): Proxmox-specific, written by `ApplyBootstrapConfigToManagementCluster` / `SyncBootstrapConfigToKind` throughout the orchestrator run. Contains `config.yaml` with a full env-var snapshot.
+
+2. **Orchestrator-state Secret** (`<cfg.ConfigName>-bootstrap-config`, labeled `app.kubernetes.io/managed-by=yage,app.kubernetes.io/component=bootstrap-config`): generic, written by xapiri at end of walkthrough (`WriteBootstrapConfigSecret`), promoted to `yage.io/config-status=realized` by `PromoteBootstrapConfigToRealized` on orchestrator success. One Secret per `ConfigName` — supporting:
+   - **Case 1**: N workload clusters on one kind mgmt (ConfigName = WorkloadClusterName by default).
+   - **Case 2**: N named profiles for the same workload (`--config-name prod-eu-low-cost`).
+   - **Case 3**: N draft scenarios without a realized workload yet.
+
+`cfg.ConfigName` defaults to `cfg.WorkloadClusterName` so case 1 needs no new flag. Set `--config-name` or `YAGE_CONFIG_NAME` explicitly for cases 2 and 3.
 
 ### Kubernetes clients
 

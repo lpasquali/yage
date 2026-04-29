@@ -43,6 +43,14 @@ const (
 	awsBulkCacheTTL = 7 * 24 * time.Hour
 )
 
+// awsBulkMemCache is a process-lifetime in-memory cache so repeated calls
+// for the same service/region (e.g. AmazonEC2 for both NAT and egress
+// pricing) only incur one disk read per process.
+var (
+	awsBulkMemMu    sync.RWMutex
+	awsBulkMemCache = map[string]*awsBulkPayload{}
+)
+
 type awsFetcher struct {
 	mu sync.Mutex
 }
@@ -115,7 +123,11 @@ type awsPriceListItem struct {
 func awsBulkCachePath(service, region string) string {
 	d := cacheDir()
 	_ = os.MkdirAll(d, 0o755)
-	return filepath.Join(d, fmt.Sprintf("aws-bulk-%s-%s.json", service, region))
+	tag := region
+	if tag == "" {
+		tag = "global"
+	}
+	return filepath.Join(d, fmt.Sprintf("aws-svc-%s-%s.json", service, tag))
 }
 
 // newAWSPricingClient creates a Pricing API client.
@@ -220,16 +232,29 @@ func (a *awsFetcher) loadBulk(service, region string) (*awsBulkPayload, error) {
 	return awsLoadOrFetch(service, region, nil)
 }
 
-// awsLoadOrFetch checks the disk cache, returning cached data if
-// fresh (< 7 days old). On a cache miss it calls the AWS Pricing SDK
-// to fetch and cache the payload.
+// awsLoadOrFetch checks the in-memory cache, then the disk cache, returning
+// cached data if fresh (< 7 days old). On a miss it calls the AWS Pricing SDK
+// to fetch and cache the payload. The in-memory cache prevents repeated 440MB
+// disk reads when multiple overhead pricing functions request the same service
+// (e.g. AmazonEC2 for both NAT gateway and egress pricing).
 func awsLoadOrFetch(service, region string, extraFilters []awspricingtypes.Filter) (*awsBulkPayload, error) {
+	memKey := service + ":" + region
+	awsBulkMemMu.RLock()
+	if cached, ok := awsBulkMemCache[memKey]; ok {
+		awsBulkMemMu.RUnlock()
+		return cached, nil
+	}
+	awsBulkMemMu.RUnlock()
+
 	cache := awsBulkCachePath(service, region)
 	if st, err := os.Stat(cache); err == nil && time.Since(st.ModTime()) < awsBulkCacheTTL {
 		raw, err := os.ReadFile(cache)
 		if err == nil {
 			var pl awsBulkPayload
 			if err := json.Unmarshal(raw, &pl); err == nil {
+				awsBulkMemMu.Lock()
+				awsBulkMemCache[memKey] = &pl
+				awsBulkMemMu.Unlock()
 				return &pl, nil
 			}
 		}
@@ -240,7 +265,14 @@ func awsLoadOrFetch(service, region string, extraFilters []awspricingtypes.Filte
 	if err != nil {
 		return nil, err
 	}
-	return awsFetchAndBuildPayload(ctx, client, service, region, extraFilters)
+	pl, err := awsFetchAndBuildPayload(ctx, client, service, region, extraFilters)
+	if err != nil {
+		return nil, err
+	}
+	awsBulkMemMu.Lock()
+	awsBulkMemCache[memKey] = pl
+	awsBulkMemMu.Unlock()
+	return pl, nil
 }
 
 // Fetch routes by SKU shape:

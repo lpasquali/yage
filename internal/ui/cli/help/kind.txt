@@ -15,12 +15,6 @@ kind — management cluster name / config / backup / restore
     --capi-manifest PATH          Workload CAPI manifest on disk (default: kept in a kind Secret)
 
 xapiri integration
-    The TUI brings the kind cluster up before any prompt runs (so step 8 can persist into the
-    yage-system/bootstrap-config Secret without falling back to disk). YAGE_XAPIRI_SKIP_KIND=1
-    runs the wizard offline. YAGE_XAPIRI_DISK_FALLBACK=1 re-enables the legacy ~/.config/yage/
-    bootstrap.yaml path.
-
-    YAGE_XAPIRI_TUI    Selects the xapiri UI. Default: dashboard (bubbletea).
-                       Set to "legacy" or "bufio" to opt back to the bufio
-                       walkthrough (deprecated, removed in a future release).
-                       "huh" is accepted as a synonym for the default.
+    The TUI brings the kind cluster up before the dashboard opens (so the dashboard can persist
+    into the yage-system/bootstrap-config Secret). YAGE_XAPIRI_SKIP_KIND=1 runs the dashboard
+    offline.

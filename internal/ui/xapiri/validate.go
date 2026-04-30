@@ -5,9 +5,15 @@ package xapiri
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+// dns1123label is the validation regexp for Kubernetes-style names
+// (cluster names, namespaces). Lowercase alphanumeric + hyphens; must
+// start and end with an alphanumeric. Length is capped at 63 chars.
+var dns1123label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 // validateDNSLabel checks that v is a non-empty DNS-1123 label
 // (lowercase alphanumeric + hyphens, max 63 chars, must start and

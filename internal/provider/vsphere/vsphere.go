@@ -21,14 +21,16 @@
 // (apiVersion infrastructure.cluster.x-k8s.io/v1beta1 — CAPV is one
 // version behind the v1beta2 the rest of CAPI is on). The
 // MachineTemplate spec carries inline sizing fields (numCPUs,
-// numCoresPerSocket, memoryMiB, diskGiB) that map cleanly onto
-// yage's CONTROL_PLANE_* / WORKER_* config knobs — the
-// template wires the placeholders today and a future PatchManifest
-// can rewrite them post-render if richer per-role overrides are
-// needed.
+// numCoresPerSocket, memoryMiB, diskGiB) that map to
+// cfg.Providers.Vsphere.*NumCPUs / *MemoryMiB / *DiskGiB. PatchManifest
+// rewrites them post-render when the corresponding config fields are set.
 package vsphere
 
 import (
+	"os"
+	"regexp"
+	"strings"
+
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/provider"
 )
@@ -230,17 +232,108 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 	return k3sTemplate, nil
 }
 
-// PatchManifest is a no-op for vSphere today: the K3s template above
-// already wires CONTROL_PLANE_NUM_CORES / CONTROL_PLANE_MEMORY_MIB /
-// WORKER_NUM_CORES / WORKER_MEMORY_MIB into the right VSphereMachine-
-// Template fields, so the renderer covers per-role sizing on its own.
+// PatchManifest rewrites the VSphereMachineTemplate sizing fields
+// (numCPUs, numCoresPerSocket, memoryMiB, diskGiB) in the rendered
+// manifest at manifestPath.
 //
-// TODO: VSphereMachineTemplate has its own sizing field set
-// (`spec.template.spec.numCPUs`, `numCoresPerSocket`, `memoryMiB`,
-// `diskGiB`) that a future patch could honor based on the existing
-// CONTROL_PLANE_* / WORKER_* config fields.
+// Role detection: a template whose metadata.name contains "control-plane"
+// receives CP sizing; all other VSphereMachineTemplate documents receive
+// worker sizing. This matches the naming convention in K3sTemplate:
+// "${CLUSTER_NAME}-control-plane" and "${CLUSTER_NAME}-md-0".
+//
+// Only non-empty cfg.Providers.Vsphere.* fields are patched; an empty
+// value means "leave whatever the template rendered". mgmt=true is a
+// no-op (the vSphere path does not pivot to a vSphere mgmt cluster today).
 func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {
-	return nil
+	if mgmt {
+		return nil
+	}
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return err
+	}
+	text := string(raw)
+	vs := cfg.Providers.Vsphere
+
+	type sizing struct {
+		numCPUs          string
+		numCoresPerSocket string
+		memoryMiB        string
+		diskGiB          string
+	}
+	cp := sizing{vs.ControlPlaneNumCPUs, vs.ControlPlaneNumCoresPerSocket, vs.ControlPlaneMemoryMiB, vs.ControlPlaneDiskGiB}
+	wk := sizing{vs.WorkerNumCPUs, vs.WorkerNumCoresPerSocket, vs.WorkerMemoryMiB, vs.WorkerDiskGiB}
+
+	// Nothing to patch if all fields are empty.
+	if cp == (sizing{}) && wk == (sizing{}) {
+		return nil
+	}
+
+	// Line-anchored regex to identify VSphereMachineTemplate documents.
+	// Never use strings.Contains: infrastructureRef blocks embed the same
+	// kind string nested inside other documents.
+	vmtKindRE := regexp.MustCompile(`(?m)^kind:\s*VSphereMachineTemplate\s*$`)
+	nameRE := regexp.MustCompile(`(?m)^  name:\s*(\S+)\s*$`)
+
+	parts := strings.Split(text, "\n---\n")
+	for i, doc := range parts {
+		if !vmtKindRE.MatchString(doc) {
+			continue
+		}
+		// Determine role from metadata.name.
+		m := nameRE.FindStringSubmatch(doc)
+		if m == nil {
+			continue
+		}
+		var sz sizing
+		if strings.Contains(m[1], "control-plane") {
+			sz = cp
+		} else {
+			sz = wk
+		}
+		if sz == (sizing{}) {
+			continue
+		}
+		if sz.numCPUs != "" {
+			doc = replaceFirstField(doc, "numCPUs", sz.numCPUs)
+		}
+		if sz.numCoresPerSocket != "" {
+			doc = replaceFirstField(doc, "numCoresPerSocket", sz.numCoresPerSocket)
+		}
+		if sz.memoryMiB != "" {
+			doc = replaceFirstField(doc, "memoryMiB", sz.memoryMiB)
+		}
+		if sz.diskGiB != "" {
+			doc = replaceFirstField(doc, "diskGiB", sz.diskGiB)
+		}
+		parts[i] = doc
+	}
+
+	out := strings.Join(parts, "\n---\n")
+	if out == text {
+		return nil
+	}
+	return os.WriteFile(manifestPath, []byte(out), 0o644)
+}
+
+// replaceFirstField replaces the value of a YAML scalar field within a
+// single document. Matches `<key>: <anything>` at any indentation and
+// replaces only the first occurrence (there is exactly one of each
+// sizing field per VSphereMachineTemplate document).
+func replaceFirstField(doc, key, value string) string {
+	re := regexp.MustCompile(`(?m)^([ \t]*` + regexp.QuoteMeta(key) + `:\s*)(\S+)`)
+	replaced := false
+	return re.ReplaceAllStringFunc(doc, func(match string) string {
+		if replaced {
+			return match
+		}
+		replaced = true
+		sub := re.FindStringSubmatch(match)
+		if sub == nil {
+			return match
+		}
+		return sub[1] + value
+	})
 }
 
 // EstimateMonthlyCostUSD — vSphere is self-hosted; vendor licensing

@@ -160,6 +160,15 @@ func (c *Config) Snapshot() []SnapshotField {
 		sp("WORKER_NUM_SOCKETS", &c.Providers.Proxmox.WorkerNumSockets),
 		sp("WORKER_NUM_CORES", &c.Providers.Proxmox.WorkerNumCores),
 		sp("WORKER_MEMORY_MIB", &c.Providers.Proxmox.WorkerMemoryMiB),
+		// --- vSphere VSphereMachineTemplate sizing ---
+		sp("VSPHERE_CONTROL_PLANE_NUM_CPUS", &c.Providers.Vsphere.ControlPlaneNumCPUs),
+		sp("VSPHERE_CONTROL_PLANE_NUM_CORES_PER_SOCKET", &c.Providers.Vsphere.ControlPlaneNumCoresPerSocket),
+		sp("VSPHERE_CONTROL_PLANE_MEMORY_MIB", &c.Providers.Vsphere.ControlPlaneMemoryMiB),
+		sp("VSPHERE_CONTROL_PLANE_DISK_GIB", &c.Providers.Vsphere.ControlPlaneDiskGiB),
+		sp("VSPHERE_WORKER_NUM_CPUS", &c.Providers.Vsphere.WorkerNumCPUs),
+		sp("VSPHERE_WORKER_NUM_CORES_PER_SOCKET", &c.Providers.Vsphere.WorkerNumCoresPerSocket),
+		sp("VSPHERE_WORKER_MEMORY_MIB", &c.Providers.Vsphere.WorkerMemoryMiB),
+		sp("VSPHERE_WORKER_DISK_GIB", &c.Providers.Vsphere.WorkerDiskGiB),
 		// --- Workload cluster (EXPLICIT-guarded for NAME/NAMESPACE) ---
 		spEx("YAGE_CONFIG_NAME", "YAGE_CONFIG_NAME_EXPLICIT", &c.ConfigName),
 		spEx("WORKLOAD_CLUSTER_NAME", "WORKLOAD_CLUSTER_NAME_EXPLICIT", &c.WorkloadClusterName),

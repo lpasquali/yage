@@ -594,6 +594,22 @@ func Parse(c *config.Config, argv []string) {
 			c.Providers.Vsphere.Username = shiftVal(a)
 		case "--vsphere-password":
 			c.Providers.Vsphere.Password = shiftVal(a)
+		case "--vsphere-control-plane-num-cpus":
+			c.Providers.Vsphere.ControlPlaneNumCPUs = shiftVal(a)
+		case "--vsphere-control-plane-num-cores-per-socket":
+			c.Providers.Vsphere.ControlPlaneNumCoresPerSocket = shiftVal(a)
+		case "--vsphere-control-plane-memory-mib":
+			c.Providers.Vsphere.ControlPlaneMemoryMiB = shiftVal(a)
+		case "--vsphere-control-plane-disk-gib":
+			c.Providers.Vsphere.ControlPlaneDiskGiB = shiftVal(a)
+		case "--vsphere-worker-num-cpus":
+			c.Providers.Vsphere.WorkerNumCPUs = shiftVal(a)
+		case "--vsphere-worker-num-cores-per-socket":
+			c.Providers.Vsphere.WorkerNumCoresPerSocket = shiftVal(a)
+		case "--vsphere-worker-memory-mib":
+			c.Providers.Vsphere.WorkerMemoryMiB = shiftVal(a)
+		case "--vsphere-worker-disk-gib":
+			c.Providers.Vsphere.WorkerDiskGiB = shiftVal(a)
 		case "--hetzner-control-plane-machine-type":
 			c.Providers.Hetzner.ControlPlaneMachineType = shiftVal(a)
 		case "--hetzner-node-machine-type":

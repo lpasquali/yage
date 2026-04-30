@@ -32,6 +32,8 @@ func DefaultsFor(provider string) []string {
 		return []string{"hcloud-csi"}
 	case "proxmox":
 		return []string{"proxmox-csi"}
+	case "vsphere":
+		return []string{"vsphere-csi"}
 	default:
 		return nil
 	}

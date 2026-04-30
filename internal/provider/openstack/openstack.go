@@ -25,11 +25,12 @@
 //
 // Inventory / grouping: OpenStack does have `nova quota-show` and
 // projects (tenants). Per §13.4 #1 the per-project quota model
-// fits flat Total/Used/Available cleanly (Proxmox-shaped), but the
-// gophercloud integration is out of scope for the initial drop —
-// Inventory returns ErrNotApplicable until a follow-up wires it.
+// fits flat Total/Used/Available cleanly (Proxmox-shaped).
+// Inventory is implemented via gophercloud Nova limits + Cinder
+// quota APIs (see inventory.go). PatchManifest resolves the best-fit
+// Nova flavor for each role from cfg sizing fields.
 // Projects are pre-existing resources rather than
-// bootstrap-creatable ones, so EnsureGroup also returns
+// bootstrap-creatable ones, so EnsureGroup returns
 // ErrNotApplicable; the orchestrator skips silently.
 //
 // CSI: cinder-csi-plugin is the canonical OpenStack CSI; lands as
@@ -60,15 +61,8 @@ func (p *Provider) EnsureIdentity(cfg *config.Config) error {
 	return provider.ErrNotApplicable
 }
 
-// Inventory — OpenStack per-project quotas (cores/ram/instances/
-// volumes_gigabytes) are reachable via gophercloud and fit the
-// flat Total/Used/Available shape per §13.4 #1, but the
-// integration is out of scope for the initial provider drop.
-// Returns ErrNotApplicable until a follow-up wires gophercloud;
-// the orchestrator skips capacity preflight in the meantime.
-func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
-	return nil, provider.ErrNotApplicable
-}
+// Inventory — implemented in inventory.go via gophercloud Nova limits +
+// Cinder quota APIs. See inventory.go for details.
 
 // EnsureGroup — OpenStack uses projects (tenants) for grouping, but
 // those are pre-existing resources rather than bootstrap-creatable;
@@ -235,15 +229,8 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 	return k3sTemplate, nil
 }
 
-// PatchManifest is a no-op for CAPO: OpenStackMachineTemplate sizing
-// is set via the flavor name (${OPENSTACK_NODE_MACHINE_FLAVOR}) rather
-// than per-VM CPU/memory fields, so there's nothing per-role to patch
-// post-render. Future work: resolve cfg.Providers.Proxmox.WorkerNumCores /
-// Providers.Proxmox.WorkerMemoryMiB to the closest matching flavor via gophercloud and
-// rewrite the spec.template.spec.flavor field here.
-func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt bool) error {
-	return nil
-}
+// PatchManifest — implemented in inventory.go via gophercloud Nova flavor
+// resolution. See inventory.go for details.
 
 // EstimateMonthlyCostUSD — provider doesn't track variable usage
 // pricing in the same shape as AWS on-demand instances. Self-hosted

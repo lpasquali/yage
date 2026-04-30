@@ -10,14 +10,12 @@
 // the CAPV-required role bindings; yage consumes the
 // resulting credentials via the standard CAPV env vars
 // (VSPHERE_USERNAME / VSPHERE_PASSWORD / VSPHERE_SERVER) which the
-// orchestrator passes through to clusterctl. Inventory currently
-// returns ErrNotApplicable per §13.4 #1: vSphere's resource model
-// is a multi-level hierarchy (vCenter → Datacenter → Cluster →
-// ResourcePool) with soft per-pool reservations rather than a flat
-// Total/Used/Available pool. A future iteration could surface a
-// per-pool variant; today the orchestrator skips capacity preflight
-// for vSphere and relies on EstimateMonthlyCostUSD +
-// DescribeWorkload.
+// orchestrator passes through to clusterctl.
+//
+// EnsureGroup creates the VM folder (VSPHERE_FOLDER) via govmomi.
+// Inventory surfaces per-ResourcePool CPU/memory/storage capacity
+// using govmomi property collection; returns ErrNotApplicable when
+// the pool has unlimited CPU or memory limits (MaxUsage == -1).
 //
 // The K3s template targets VSphereCluster + VSphereMachineTemplate
 // (apiVersion infrastructure.cluster.x-k8s.io/v1beta1 — CAPV is one
@@ -50,23 +48,6 @@ func (p *Provider) InfraProviderName() string { return "vsphere" }
 // resulting credentials are supplied via VSPHERE_USERNAME /
 // VSPHERE_PASSWORD / VSPHERE_SERVER env vars at run time.
 func (p *Provider) EnsureIdentity(cfg *config.Config) error {
-	return provider.ErrNotApplicable
-}
-
-// Inventory is unimplemented for vSphere. The provider's resource
-// model is a multi-level hierarchy with soft reservations
-// (vCenter → Datacenter → Cluster → ResourcePool), which doesn't
-// compose with the flat Total/Used/Available shape; ErrNotApplicable
-// per §13.4 #1 is the honest answer until a per-pool variant ships.
-func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
-	return nil, provider.ErrNotApplicable
-}
-
-// EnsureGroup is a no-op for vSphere. Folders are the closest
-// equivalent to a Proxmox pool / AWS IAM group, but yage
-// doesn't manage them today; the operator pre-creates the target
-// folder and supplies its path via VSPHERE_FOLDER.
-func (p *Provider) EnsureGroup(cfg *config.Config, name string) error {
 	return provider.ErrNotApplicable
 }
 

@@ -71,6 +71,13 @@ func (MinStub) Purge(cfg *config.Config) error {
 	return nil
 }
 
+// RolloutHooker default: no provider-specific infrastructure machines
+// to annotate. Returns nil — the rollout flow can call this safely on
+// every provider.
+func (MinStub) RolloutMachineAnnotations(cfg *config.Config, ctxName, ns, selector, now string) error {
+	return nil
+}
+
 // TemplateVars default: empty map. Providers that need to inject
 // vendor-specific values into the clusterctl manifest template
 // override this.

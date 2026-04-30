@@ -159,6 +159,12 @@ type Provider interface {
 	// ErrNotApplicable when the provider has no cleanup concept.
 	Purger
 
+	// RolloutHooker patches provider-specific infrastructure-machine
+	// objects with reconcile annotations so the CAPI controller
+	// re-evaluates them during a triggered rollout. Providers that
+	// have no extra infrastructure objects to nudge return nil.
+	RolloutHooker
+
 	// TemplateVars returns the provider-specific env-style values
 	// substituted into the clusterctl manifest template at render
 	// time. Universal vars (CLUSTER_NAME, KUBERNETES_VERSION, etc.)
@@ -304,6 +310,25 @@ type Purger interface {
 	// cluster. MUST be idempotent: re-running is safe; NotFound
 	// errors get swallowed; other errors propagate.
 	Purge(cfg *config.Config) error
+}
+
+// RolloutHooker is composed into Provider for providers that need to
+// patch provider-specific infrastructure-machine objects with reconcile
+// annotations so the CAPI controller re-evaluates them when a rollout
+// is triggered. Providers with no extra infrastructure objects return nil.
+type RolloutHooker interface {
+	// RolloutMachineAnnotations patches every provider-specific
+	// infrastructure Machine object (e.g. ProxmoxMachine) that belongs
+	// to the named workload cluster with a reconcile annotation. Called
+	// by WorkloadRolloutCAPITouchRollout after the generic
+	// KubeadmControlPlane + MachineDeployment triggers are applied.
+	//
+	// ctxName is the kubeconfig context of the management cluster
+	// (e.g. "kind-<cluster>"). ns and selector are the workload
+	// cluster namespace and the CAPI label selector
+	// "cluster.x-k8s.io/cluster-name=<name>". now is the RFC 3339
+	// timestamp string already computed by the caller.
+	RolloutMachineAnnotations(cfg *config.Config, ctxName, ns, selector, now string) error
 }
 
 // PlanDescriber is composed into Provider so callers can depend on

@@ -21,6 +21,7 @@ import (
 	_ "github.com/lpasquali/yage/internal/csi/doblock"
 	_ "github.com/lpasquali/yage/internal/csi/gcppd"
 	_ "github.com/lpasquali/yage/internal/csi/hcloud"
+	_ "github.com/lpasquali/yage/internal/csi/longhorn"
 	_ "github.com/lpasquali/yage/internal/csi/ociblock"
 	_ "github.com/lpasquali/yage/internal/csi/vspherecsi"
 )
@@ -82,7 +83,8 @@ func TestSelectorUnknownNamesDropped(t *testing.T) {
 		},
 	}
 	got := names(csi.Selector(cfg))
-	want := []string{"aws-ebs"}
+	// longhorn is now registered; hcloud is not. Both aws-ebs and longhorn resolve.
+	want := []string{"aws-ebs", "longhorn"}
 	if !equalStringSlices(got, want) {
 		t.Errorf("Selector with unknowns = %v, want %v (only registered names survive)", got, want)
 	}
@@ -118,7 +120,7 @@ func TestSelectorNoProviderNoExplicit(t *testing.T) {
 func TestRegisteredContainsScopedDrivers(t *testing.T) {
 	got := csi.Registered()
 	sort.Strings(got)
-	for _, want := range []string{"aws-ebs", "azure-disk", "do-block-storage", "gcp-pd", "hcloud-csi", "oci-block-storage", "openstack-cinder", "vsphere-csi"} {
+	for _, want := range []string{"aws-ebs", "azure-disk", "do-block-storage", "gcp-pd", "hcloud-csi", "longhorn", "oci-block-storage", "openstack-cinder", "vsphere-csi"} {
 		found := false
 		for _, n := range got {
 			if n == want {

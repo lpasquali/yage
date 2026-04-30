@@ -53,6 +53,7 @@ import (
 	_ "github.com/lpasquali/yage/internal/csi/gcppd"
 	_ "github.com/lpasquali/yage/internal/csi/hcloud"
 	_ "github.com/lpasquali/yage/internal/csi/proxmoxcsi"
+	_ "github.com/lpasquali/yage/internal/csi/rookceph"
 )
 
 func main() {

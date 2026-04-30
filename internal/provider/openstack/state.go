@@ -45,15 +45,15 @@ func (p *Provider) KindSyncFields(cfg *config.Config) map[string]string {
 // cloud-config Secret CAPO references and are NOT in this map.
 func (p *Provider) TemplateVars(cfg *config.Config) map[string]string {
 	return map[string]string{
-		"OPENSTACK_CLOUD":                cfg.Providers.OpenStack.Cloud,
-		"OPENSTACK_PROJECT_NAME":         cfg.Providers.OpenStack.ProjectName,
-		"OPENSTACK_REGION":               cfg.Providers.OpenStack.Region,
-		"OPENSTACK_FAILURE_DOMAIN":       cfg.Providers.OpenStack.FailureDomain,
-		"OPENSTACK_IMAGE_NAME":           cfg.Providers.OpenStack.ImageName,
-		"OPENSTACK_CONTROL_PLANE_FLAVOR": cfg.Providers.OpenStack.ControlPlaneFlavor,
-		"OPENSTACK_WORKER_FLAVOR":        cfg.Providers.OpenStack.WorkerFlavor,
-		"OPENSTACK_DNS_NAMESERVERS":      cfg.Providers.OpenStack.DNSNameservers,
-		"OPENSTACK_SSH_KEY_NAME":         cfg.Providers.OpenStack.SSHKeyName,
+		"OPENSTACK_CLOUD":                          cfg.Providers.OpenStack.Cloud,
+		"OPENSTACK_PROJECT_NAME":                   cfg.Providers.OpenStack.ProjectName,
+		"OPENSTACK_REGION":                         cfg.Providers.OpenStack.Region,
+		"OPENSTACK_FAILURE_DOMAIN":                 cfg.Providers.OpenStack.FailureDomain,
+		"OPENSTACK_IMAGE_NAME":                     cfg.Providers.OpenStack.ImageName,
+		"OPENSTACK_CONTROL_PLANE_MACHINE_FLAVOR":   cfg.Providers.OpenStack.ControlPlaneFlavor,
+		"OPENSTACK_NODE_MACHINE_FLAVOR":            cfg.Providers.OpenStack.WorkerFlavor,
+		"OPENSTACK_DNS_NAMESERVERS":                cfg.Providers.OpenStack.DNSNameservers,
+		"OPENSTACK_SSH_KEY_NAME":                   cfg.Providers.OpenStack.SSHKeyName,
 	}
 }
 

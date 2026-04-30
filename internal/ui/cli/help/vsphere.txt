@@ -13,6 +13,30 @@ vsphere — vSphere / vCenter / CAPV flags
     --vsphere-username USER       vCenter username. Env: VSPHERE_USERNAME.
     --vsphere-password PASS       vCenter password. Env: VSPHERE_PASSWORD.
 
+VSphereMachineTemplate sizing
+    These are written into numCPUs / numCoresPerSocket / memoryMiB / diskGiB in
+    every VSphereMachineTemplate by PatchManifest after clusterctl renders the
+    manifest. Fields left empty are not patched (the template placeholder value
+    is kept).
+
+    --vsphere-control-plane-num-cpus N
+        Number of vCPUs for control-plane VMs. Env: VSPHERE_CONTROL_PLANE_NUM_CPUS.
+    --vsphere-control-plane-num-cores-per-socket N
+        Cores per socket for control-plane VMs.
+        Env: VSPHERE_CONTROL_PLANE_NUM_CORES_PER_SOCKET.
+    --vsphere-control-plane-memory-mib N
+        Memory in MiB for control-plane VMs. Env: VSPHERE_CONTROL_PLANE_MEMORY_MIB.
+    --vsphere-control-plane-disk-gib N
+        Boot disk size in GiB for control-plane VMs. Env: VSPHERE_CONTROL_PLANE_DISK_GIB.
+    --vsphere-worker-num-cpus N
+        Number of vCPUs for worker VMs. Env: VSPHERE_WORKER_NUM_CPUS.
+    --vsphere-worker-num-cores-per-socket N
+        Cores per socket for worker VMs. Env: VSPHERE_WORKER_NUM_CORES_PER_SOCKET.
+    --vsphere-worker-memory-mib N
+        Memory in MiB for worker VMs. Env: VSPHERE_WORKER_MEMORY_MIB.
+    --vsphere-worker-disk-gib N
+        Boot disk size in GiB for worker VMs. Env: VSPHERE_WORKER_DISK_GIB.
+
 Cost model
     vSphere is on-prem, so the cost estimator uses the same TCO knobs as Proxmox:
         --hardware-cost-usd N           Capex; required to enable on-prem cost

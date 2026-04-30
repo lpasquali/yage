@@ -226,6 +226,23 @@ type VsphereConfig struct {
 	// can round-trip.
 	Username string
 	Password string
+
+	// ---- Per-role VSphereMachineTemplate sizing ----
+	//
+	// These map onto the inline sizing fields in VSphereMachineTemplate
+	// spec.template.spec: numCPUs, numCoresPerSocket, memoryMiB, diskGiB.
+	// PatchManifest rewrites them post-render so the operator can override
+	// defaults without editing the manifest by hand.
+	// Env vars follow the VSPHERE_* namespace to stay consistent with the
+	// rest of VsphereConfig.
+	ControlPlaneNumCPUs          string // VSPHERE_CONTROL_PLANE_NUM_CPUS (e.g. "2")
+	ControlPlaneNumCoresPerSocket string // VSPHERE_CONTROL_PLANE_NUM_CORES_PER_SOCKET (e.g. "1")
+	ControlPlaneMemoryMiB        string // VSPHERE_CONTROL_PLANE_MEMORY_MIB (e.g. "4096")
+	ControlPlaneDiskGiB          string // VSPHERE_CONTROL_PLANE_DISK_GIB (e.g. "25")
+	WorkerNumCPUs                string // VSPHERE_WORKER_NUM_CPUS (e.g. "2")
+	WorkerNumCoresPerSocket      string // VSPHERE_WORKER_NUM_CORES_PER_SOCKET (e.g. "1")
+	WorkerMemoryMiB              string // VSPHERE_WORKER_MEMORY_MIB (e.g. "4096")
+	WorkerDiskGiB                string // VSPHERE_WORKER_DISK_GIB (e.g. "25")
 }
 
 // AzureConfig is the per-provider Azure (CAPZ) configuration.
@@ -1315,6 +1332,20 @@ func Load() *Config {
 	c.Providers.Vsphere.TLSThumbprint = getenv("VSPHERE_TLS_THUMBPRINT", "")
 	c.Providers.Vsphere.Username = getenv("VSPHERE_USERNAME", "")
 	c.Providers.Vsphere.Password = getenv("VSPHERE_PASSWORD", "")
+	// VSphereMachineTemplate sizing — PatchManifest writes these into
+	// numCPUs / numCoresPerSocket / memoryMiB / diskGiB post-render.
+	// Defaults mirror the literals in the K3s template (25 GiB disk,
+	// 1 core-per-socket; CPU and memory left empty so the template
+	// placeholder substitution takes effect when the operator has not
+	// set the VSPHERE_* override).
+	c.Providers.Vsphere.ControlPlaneNumCPUs = getenv("VSPHERE_CONTROL_PLANE_NUM_CPUS", "")
+	c.Providers.Vsphere.ControlPlaneNumCoresPerSocket = getenv("VSPHERE_CONTROL_PLANE_NUM_CORES_PER_SOCKET", "")
+	c.Providers.Vsphere.ControlPlaneMemoryMiB = getenv("VSPHERE_CONTROL_PLANE_MEMORY_MIB", "")
+	c.Providers.Vsphere.ControlPlaneDiskGiB = getenv("VSPHERE_CONTROL_PLANE_DISK_GIB", "")
+	c.Providers.Vsphere.WorkerNumCPUs = getenv("VSPHERE_WORKER_NUM_CPUS", "")
+	c.Providers.Vsphere.WorkerNumCoresPerSocket = getenv("VSPHERE_WORKER_NUM_CORES_PER_SOCKET", "")
+	c.Providers.Vsphere.WorkerMemoryMiB = getenv("VSPHERE_WORKER_MEMORY_MIB", "")
+	c.Providers.Vsphere.WorkerDiskGiB = getenv("VSPHERE_WORKER_DISK_GIB", "")
 	c.Providers.Hetzner.ControlPlaneMachineType = getenv("HCLOUD_CONTROL_PLANE_MACHINE_TYPE", "cx23")
 	c.Providers.Hetzner.NodeMachineType = getenv("HCLOUD_NODE_MACHINE_TYPE", "cx23")
 	c.Providers.Hetzner.Location = getenv("HCLOUD_REGION", "fsn1")

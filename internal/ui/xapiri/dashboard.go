@@ -3,8 +3,7 @@
 
 package xapiri
 
-// dashboard.go — full-screen bubbletea dashboard that replaces the
-// charmbracelet/huh wizard when YAGE_XAPIRI_TUI=huh is set.
+// dashboard.go — full-screen bubbletea dashboard, the sole xapiri UI.
 //
 // Design goals (user's request verbatim):
 //   "look more a gui but textual, all values at once, detailed bill

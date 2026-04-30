@@ -129,8 +129,7 @@ var geoRegionLikeFieldNames = []string{"Region", "Location"}
 // so callers can log "from --data-center-location IT".
 //
 // No-op when the location is empty or unknown to pricing.CountryCentroid.
-// This is the non-TUI counterpart to xapiri.stampGeoRegions; main()
-// can call it right after config.Load to make --data-center-location
+// Call it right after config.Load to make --data-center-location
 // drive provider regions even on non-interactive runs.
 func ApplyDataCenterLocationDefaults(cfg *config.Config) []string {
 	if cfg == nil {
@@ -183,43 +182,6 @@ func applyGeoRegionDefaults(cfg *config.Config, lat, lon float64) []string {
 		}
 	}
 	return lines
-}
-
-// geoBracketDefault returns a bracket default for a prompted provider
-// string field when geo lookup succeeded.
-func geoBracketDefault(provider, fieldName string, lat, lon float64, geoOK bool) string {
-	if !geoOK || !geoHasCentroids(provider) {
-		return ""
-	}
-	for _, fname := range geoRegionLikeFieldNames {
-		if fname == fieldName {
-			return geoNearestRegionID(provider, lat, lon)
-		}
-	}
-	return ""
-}
-
-// stampGeoRegions resolves the outbound IP once, stamps cfg, and prints
-// a single user-visible line. context completes "geo: <label> — …".
-func (s *state) stampGeoRegions(contextLine string) {
-	s.ensureGeoLookup()
-	if !s.geoOK {
-		return
-	}
-	fills := applyGeoRegionDefaults(s.cfg, s.geoLat, s.geoLon)
-	if s.geoLabel != "" {
-		s.r.info("geo: %s — %s (YAGE_XAPIRI_NO_GEO=1 to skip).", s.geoLabel, contextLine)
-	} else {
-		s.r.info("geo: outbound IP resolved — %s (YAGE_XAPIRI_NO_GEO=1 to skip).", contextLine)
-	}
-	if len(fills) > 0 {
-		s.r.info("  geo fills applied:")
-		for _, ln := range fills {
-			s.r.info("    %s", ln)
-		}
-	} else {
-		s.r.info("  geo fills: none (regions already set, or no centroid table for this provider set).")
-	}
 }
 
 func (s *state) ensureGeoLookup() {

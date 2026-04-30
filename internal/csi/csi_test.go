@@ -17,7 +17,10 @@ import (
 	// fail.
 	_ "github.com/lpasquali/yage/internal/csi/awsebs"
 	_ "github.com/lpasquali/yage/internal/csi/azuredisk"
+	_ "github.com/lpasquali/yage/internal/csi/cindercsi"
 	_ "github.com/lpasquali/yage/internal/csi/gcppd"
+	_ "github.com/lpasquali/yage/internal/csi/hcloud"
+	_ "github.com/lpasquali/yage/internal/csi/vspherecsi"
 )
 
 func names(ds []csi.Driver) []string {
@@ -38,6 +41,7 @@ func TestSelectorEmptyCfgUsesProviderDefault(t *testing.T) {
 		{"aws", []string{"aws-ebs"}},
 		{"azure", []string{"azure-disk"}},
 		{"gcp", []string{"gcp-pd"}},
+		{"hetzner", []string{"hcloud-csi"}},
 	}
 	for _, c := range cases {
 		t.Run(c.provider, func(t *testing.T) {
@@ -107,12 +111,12 @@ func TestSelectorNoProviderNoExplicit(t *testing.T) {
 	}
 }
 
-// TestRegisteredContainsScopedDrivers: the three drivers this
-// commit ships should all be in Registered().
+// TestRegisteredContainsScopedDrivers: the shipped drivers should all
+// be in Registered().
 func TestRegisteredContainsScopedDrivers(t *testing.T) {
 	got := csi.Registered()
 	sort.Strings(got)
-	for _, want := range []string{"aws-ebs", "azure-disk", "gcp-pd"} {
+	for _, want := range []string{"aws-ebs", "azure-disk", "gcp-pd", "hcloud-csi", "openstack-cinder", "vsphere-csi"} {
 		found := false
 		for _, n := range got {
 			if n == want {
@@ -129,15 +133,16 @@ func TestRegisteredContainsScopedDrivers(t *testing.T) {
 // TestDefaultsForOnlyImplementedProviders: DefaultsFor returns
 // non-nil only for providers we ship drivers for. Phase F scoped
 // shipped AWS/Azure/GCP; Wave 3 added Proxmox (migrated off
-// Provider.EnsureCSISecret onto the registry).
+// Provider.EnsureCSISecret onto the registry); issue #84 adds Hetzner;
+// issue #88 added OpenStack (openstack-cinder).
 func TestDefaultsForOnlyImplementedProviders(t *testing.T) {
-	for _, p := range []string{"aws", "azure", "gcp", "proxmox"} {
+	for _, p := range []string{"aws", "azure", "gcp", "hetzner", "openstack", "proxmox", "vsphere"} {
 		if got := csi.DefaultsFor(p); len(got) == 0 {
 			t.Errorf("DefaultsFor(%q) = empty, expected at least one driver", p)
 		}
 	}
 	// Unimplemented-yet providers get nil.
-	for _, p := range []string{"hetzner", "linode", "oci", "digitalocean", "ibmcloud", "openstack", "vsphere"} {
+	for _, p := range []string{"linode", "oci", "digitalocean", "ibmcloud"} {
 		if got := csi.DefaultsFor(p); got != nil {
 			t.Errorf("DefaultsFor(%q) = %v, expected nil (driver not yet shipped)", p, got)
 		}

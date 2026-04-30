@@ -370,18 +370,19 @@ var dashFields = []fieldMeta{
 type dashTab int
 
 const (
-	tabConfig dashTab = iota // 0 — interactive config form
-	tabEditor                // 1 — opens $EDITOR on the YAML config file
-	tabCosts                 // 2 — full provider comparison table + bar chart
-	tabLogs                  // 3 — scrollable ring buffer
-	tabDeploy                // 4 — save-to-kind + start-deploy actions
-	tabDeps                  // 5 — CLI deps check + upgrade; provider image arm64 status
-	tabHelp                  // 6 — keyboard shortcuts reference (always second-to-last)
-	tabAbout                 // 7 — version / license / URL (always last)
-	tabCount                 // must be last
+	tabConfig    dashTab = iota // 0 — config file selection
+	tabProvision                // 1 — full interactive provision form
+	tabEditor                   // 2 — opens $EDITOR on the YAML config file
+	tabCosts                    // 3 — full provider comparison table + bar chart
+	tabLogs                     // 4 — scrollable ring buffer
+	tabDeploy                   // 5 — save-to-kind + start-deploy actions
+	tabDeps                     // 6 — CLI deps check + upgrade; provider image arm64 status
+	tabHelp                     // 7 — keyboard shortcuts reference (always second-to-last)
+	tabAbout                    // 8 — version / license / URL (always last)
+	tabCount                    // must be last
 )
 
-var tabLabels = [tabCount]string{"config", "editor", "costs", "logs", "deploy", "deps", "help", "about"}
+var tabLabels = [tabCount]string{"config", "provision", "editor", "costs", "logs", "deploy", "deps", "help", "about"}
 
 // ─── config-tab sub-screen state ─────────────────────────────────────────────
 
@@ -391,7 +392,6 @@ type cfgScreenKind int
 const (
 	cfgScreenList    cfgScreenKind = iota // show list of existing configs
 	cfgScreenNewName                       // enter name for a new config
-	cfgScreenEdit                          // full interactive edit form (all tabs accessible)
 )
 
 // ─── cost-tab credential input slots ─────────────────────────────────────────
@@ -594,8 +594,9 @@ type dashModel struct {
 	saveKindErr     error
 	deployRequested bool
 
-	// config tab selection state (cfgScreenList / cfgScreenNewName / cfgScreenEdit)
+	// config tab selection state (cfgScreenList / cfgScreenNewName)
 	cfgScreen     cfgScreenKind
+	cfgSelected   bool // true once a config entry is chosen; gates tabProvision and other tabs
 	cfgCandidates []kindsync.BootstrapCandidate
 	cfgListCursor int
 	cfgLoading    bool
@@ -864,17 +865,18 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	fi.Width = 40
 	m.logFilterInput = fi
 
-	// Config selection state: skip the list when --config-name was passed explicitly.
+	// Config selection: skip the list when --config-name was passed explicitly.
+	ni := textinput.New()
+	ni.Placeholder = "e.g. prod-eu-low-cost"
+	ni.Prompt = "> "
+	ni.Width = 40
+	m.cfgNewInput = ni
 	if cfg.ConfigNameExplicit {
-		m.cfgScreen = cfgScreenEdit
+		m.cfgSelected = true
+		m.activeTab = tabProvision
 	} else {
 		m.cfgScreen = cfgScreenList
 		m.cfgLoading = true
-		ni := textinput.New()
-		ni.Placeholder = "e.g. prod-eu-low-cost"
-		ni.Prompt = "> "
-		ni.Width = 40
-		m.cfgNewInput = ni
 	}
 
 	// Focus the first visible input.
@@ -1141,9 +1143,11 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Action == tea.MouseActionPress &&
 			msg.Button == tea.MouseButtonLeft &&
 			msg.Y == 0 {
-			if tab, ok := tabAtX(msg.X); ok && tab != tabEditor && m.cfgReady() {
-				m.activeTab = tab
-				return m, nil
+			if tab, ok := tabAtX(msg.X); ok && tab != tabEditor {
+				if tab == tabConfig || m.cfgReady() {
+					m.activeTab = tab
+					return m, nil
+				}
 			}
 		}
 		// Scroll wheel: route to the active tab.
@@ -1165,15 +1169,23 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case tabConfig:
-				m = m.moveFocus(!up) // wheel-up = move backward = up the list
+				// Scroll the config selection list.
+				total := len(m.cfgCandidates) + 1
+				if up && m.cfgListCursor > 0 {
+					m.cfgListCursor--
+				} else if !up && m.cfgListCursor < total-1 {
+					m.cfgListCursor++
+				}
+			case tabProvision:
+				m = m.moveFocus(!up) // wheel-up = move backward = up the form
 			}
 			return m, nil
 		}
-		// Left-click in config content area: click-to-focus a field.
+		// Left-click in provision content area: click-to-focus a field.
 		if msg.Action == tea.MouseActionPress &&
 			msg.Button == tea.MouseButtonLeft &&
 			msg.Y >= 1 &&
-			m.activeTab == tabConfig {
+			m.activeTab == tabProvision {
 			if fid, ok := m.focusAtConfigRow(msg.Y - 1); ok {
 				m = m.jumpFocus(fid)
 			}
@@ -1244,12 +1256,12 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cfg.ConfigFile != "" {
 			_ = config.ApplyYAMLFile(m.cfg, m.cfg.ConfigFile)
 			m2 := newDashModel(m.cfg, m.s)
-			m2.activeTab = tabConfig
+			m2.activeTab = tabProvision
 			m2.width = m.width
 			m2.height = m.height
 			return m2, tea.Batch(textinput.Blink, m2.kickRefreshCmd())
 		}
-		m.activeTab = tabConfig
+		m.activeTab = tabProvision
 		return m, nil
 
 	case editorResourcesMsg:
@@ -1375,8 +1387,8 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.s.initFromConfig(m.cfg)
 		// Rebuild all text inputs / selects / toggles from the loaded cfg.
 		newM := newDashModel(m.cfg, m.s)
-		newM.cfgScreen = cfgScreenEdit
-		newM.activeTab = tabConfig
+		newM.cfgSelected = true
+		newM.activeTab = tabProvision
 		newM.width = m.width
 		newM.height = m.height
 		newM.costRows = m.costRows
@@ -1433,53 +1445,56 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// ── Ctrl+Alt+1..8: universal tab switching — works even inside text fields ──
-		// Tab switching is locked until a config entry is selected (cfgScreenEdit).
+		// Tab 1 (config) is always reachable; others require cfgSelected.
+		switch keyStr {
+		case "ctrl+alt+1":
+			m.activeTab = tabConfig
+			return m, nil
+		}
 		if m.cfgReady() {
 			switch keyStr {
-			case "ctrl+alt+1":
-				m.activeTab = tabConfig
-				return m, nil
 			case "ctrl+alt+2":
+				m.activeTab = tabProvision
+				return m, nil
+			case "ctrl+alt+3":
 				m.activeTab = tabEditor
 				return m, m.switchToEditorTab()
-			case "ctrl+alt+3":
+			case "ctrl+alt+4":
 				m.activeTab = tabCosts
 				return m, nil
-			case "ctrl+alt+4":
+			case "ctrl+alt+5":
 				m.activeTab = tabLogs
 				return m, nil
-			case "ctrl+alt+5":
+			case "ctrl+alt+6":
 				m.activeTab = tabDeploy
 				return m, nil
-			case "ctrl+alt+6":
+			case "ctrl+alt+7":
 				m.activeTab = tabDeps
 				return m, nil
-			case "ctrl+alt+7":
-				m.activeTab = tabHelp
-				return m, nil
 			case "ctrl+alt+8":
-				m.activeTab = tabAbout
+				m.activeTab = tabHelp
 				return m, nil
 			}
 		}
 
 		// ── Ctrl+Left/Right: universal tab cycling — works even inside text fields ──
-		// Locked until a config entry is selected.
-		if m.cfgReady() {
+		// tabConfig is always reachable; other tabs require cfgReady.
+		if key == tea.KeyCtrlLeft || key == tea.KeyCtrlRight {
+			next := m.activeTab
 			if key == tea.KeyCtrlLeft {
-				m.activeTab = (m.activeTab - 1 + tabCount) % tabCount
-				if m.activeTab == tabEditor {
-					return m, m.switchToEditorTab()
-				}
-				return m, nil
+				next = (m.activeTab - 1 + tabCount) % tabCount
+			} else {
+				next = (m.activeTab + 1) % tabCount
 			}
-			if key == tea.KeyCtrlRight {
-				m.activeTab = (m.activeTab + 1) % tabCount
-				if m.activeTab == tabEditor {
-					return m, m.switchToEditorTab()
-				}
-				return m, nil
+			// Skip tabs that require cfgReady when not ready.
+			if next != tabConfig && !m.cfgReady() {
+				next = tabConfig
 			}
+			m.activeTab = next
+			if m.activeTab == tabEditor {
+				return m, m.switchToEditorTab()
+			}
+			return m, nil
 		}
 
 		// ── Ctrl+T: start embedded terminal / toggle focus ──
@@ -1568,37 +1583,38 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// ── tab switching: left/right arrows or number keys 1-8 ──
-		// (Only when not in a text input on the config tab, and a config is selected.)
-		inTextField := (m.activeTab == tabConfig && m.cfgReady() && dashFields[m.focus].kind == fkText) ||
+		// ── tab switching: left/right arrows or number keys 1-9 ──
+		// (Only when not in a text input on the provision tab, and a config is selected.)
+		inTextField := (m.activeTab == tabProvision && dashFields[m.focus].kind == fkText) ||
+			(m.activeTab == tabConfig && m.cfgScreen == cfgScreenNewName) ||
 			(m.activeTab == tabLogs && m.logFiltering)
 		switch {
-		case !inTextField && keyStr == "1" && m.cfgReady():
+		case !inTextField && keyStr == "1":
 			m.activeTab = tabConfig
 			return m, nil
 		case !inTextField && keyStr == "2" && m.cfgReady():
+			m.activeTab = tabProvision
+			return m, nil
+		case !inTextField && keyStr == "3" && m.cfgReady():
 			m.activeTab = tabEditor
 			return m, m.switchToEditorTab()
-		case !inTextField && keyStr == "3" && m.cfgReady():
+		case !inTextField && keyStr == "4" && m.cfgReady():
 			m.activeTab = tabCosts
 			return m, nil
-		case !inTextField && keyStr == "4" && m.cfgReady():
+		case !inTextField && keyStr == "5" && m.cfgReady():
 			m.activeTab = tabLogs
 			return m, nil
-		case !inTextField && keyStr == "5" && m.cfgReady():
+		case !inTextField && keyStr == "6" && m.cfgReady():
 			m.activeTab = tabDeploy
 			return m, nil
-		case !inTextField && keyStr == "6" && m.cfgReady():
+		case !inTextField && keyStr == "7" && m.cfgReady():
 			m.activeTab = tabDeps
 			return m, nil
-		case !inTextField && keyStr == "7" && m.cfgReady():
+		case !inTextField && keyStr == "8" && m.cfgReady():
 			m.activeTab = tabHelp
 			return m, nil
-		case !inTextField && keyStr == "8" && m.cfgReady():
-			m.activeTab = tabAbout
-			return m, nil
-		case (key == tea.KeyLeft || key == tea.KeyRight) && !inTextField && m.activeTab != tabConfig && m.cfgReady():
-			// Only cycle tabs with arrows when not on config (config uses arrows for fields).
+		case (key == tea.KeyLeft || key == tea.KeyRight) && !inTextField && m.activeTab != tabConfig && m.activeTab != tabProvision && m.cfgReady():
+			// Only cycle tabs with arrows when not on config/provision (those use arrows for fields/list).
 			if key == tea.KeyLeft {
 				m.activeTab = (m.activeTab - 1 + tabCount) % tabCount
 			} else {
@@ -1615,6 +1631,11 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tabConfig:
 			return m.updateConfigTab(msg)
+
+		case tabProvision:
+			if m.cfgReady() {
+				return m.updateProvisionTab(msg)
+			}
 
 		case tabEditor:
 			if m.cfgReady() {
@@ -1653,9 +1674,13 @@ func (m dashModel) updateConfigTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateCfgListScreen(msg)
 	case cfgScreenNewName:
 		return m.updateCfgNewNameScreen(msg)
-	default:
-		return m.updateCfgEditScreen(msg)
 	}
+	return m, nil
+}
+
+// updateProvisionTab handles key events on the provision tab (full edit form).
+func (m dashModel) updateProvisionTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	return m.updateCfgEditScreen(msg)
 }
 
 // updateCfgListScreen handles keys on the config-list screen.
@@ -1716,7 +1741,8 @@ func (m dashModel) updateCfgNewNameScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cfg.ConfigName = name
 			m.cfg.ConfigNameExplicit = true
 		}
-		m.cfgScreen = cfgScreenEdit
+		m.cfgSelected = true
+		m.activeTab = tabProvision
 		return m, textinput.Blink
 	default:
 		var cmd tea.Cmd
@@ -2009,9 +2035,9 @@ func (m *dashModel) saveCostCredsCmd() tea.Cmd {
 
 // ─── editor tab ───────────────────────────────────────────────────────────────
 
-// cfgReady reports whether a configuration entry has been selected and the
-// full edit form is active. When false, tab switching is locked.
-func (m dashModel) cfgReady() bool { return m.cfgScreen == cfgScreenEdit }
+// cfgReady reports whether a config entry has been chosen (cfgSelected). When
+// false, tab switching is locked — only tabConfig is reachable.
+func (m dashModel) cfgReady() bool { return m.cfgSelected }
 
 // loadCfgListCmd fetches all bootstrap-config Secrets from the kind cluster.
 func (m dashModel) loadCfgListCmd() tea.Cmd {
@@ -3008,6 +3034,8 @@ func (m dashModel) View() string {
 	switch m.activeTab {
 	case tabConfig:
 		content = m.renderConfigTab(m.width, usable)
+	case tabProvision:
+		content = m.renderProvisionTab(m.width, usable)
 	case tabEditor:
 		content = m.renderEditorTab(m.width, usable)
 	case tabCosts:
@@ -3155,7 +3183,7 @@ func tabAtX(x int) (dashTab, bool) {
 func (m dashModel) renderBottomStrip() string {
 	line := stMuted.Render(strings.Repeat("─", m.width)) + "\n"
 	if !m.cfg.CostCompareEnabled {
-		return line + stMuted.Render("  cost estimation: go to [costs] tab (alt+3) to enter API credentials")
+		return line + stMuted.Render("  cost estimation: go to [costs] tab (4 / ctrl+alt+4) to enter API credentials")
 	}
 	if len(m.costRows) == 0 {
 		var suffix string
@@ -3285,18 +3313,20 @@ func (m dashModel) renderFooter() string {
 				stMuted.Render("esc/q") + " quit"
 		case cfgScreenNewName:
 			keys = stMuted.Render("enter") + " confirm  " +
-				stMuted.Render("esc") + " back  " +
+				stMuted.Render("esc") + " back to list  " +
 				stMuted.Render("esc/q") + " quit"
 		default:
-			keys = stMuted.Render("tab/⇧tab") + " navigate  " +
-				stMuted.Render("space") + " toggle  " +
-				stMuted.Render("◄ ►") + " select  " +
-				shellHint +
-				stMuted.Render("ctrl+l") + " logs  " +
-				tabHint +
-				stAccent.Render("ctrl+s") + " save  " +
-				stMuted.Render("esc/q") + " abort"
+			keys = stMuted.Render("esc/q") + " quit"
 		}
+	case tabProvision:
+		keys = stMuted.Render("tab/⇧tab") + " navigate  " +
+			stMuted.Render("space") + " toggle  " +
+			stMuted.Render("◄ ►") + " select  " +
+			shellHint +
+			stMuted.Render("ctrl+l") + " logs  " +
+			tabHint +
+			stAccent.Render("ctrl+s") + " save  " +
+			stMuted.Render("esc/q") + " abort"
 	case tabLogs:
 		keys = stMuted.Render("j/k") + " scroll  " +
 			stMuted.Render("g/G") + " top/bottom  " +
@@ -3349,13 +3379,16 @@ const inputW = 13
 // renderConfigTab dispatches to the active config sub-screen renderer.
 func (m dashModel) renderConfigTab(w, h int) string {
 	switch m.cfgScreen {
-	case cfgScreenList:
-		return m.renderCfgListScreen(w, h)
 	case cfgScreenNewName:
 		return m.renderCfgNewNameScreen(w, h)
 	default:
-		return m.renderCfgEditScreen(w, h)
+		return m.renderCfgListScreen(w, h)
 	}
+}
+
+// renderProvisionTab renders the full interactive provision edit form.
+func (m dashModel) renderProvisionTab(w, h int) string {
+	return m.renderCfgEditScreen(w, h)
 }
 
 // renderCfgListScreen renders the list of existing bootstrap configs.
@@ -3397,7 +3430,11 @@ func (m dashModel) renderCfgListScreen(w, h int) string {
 		lines = append(lines, stMuted.Render("  ↑/↓  navigate    enter  select    n  new config    r  refresh    esc/q  quit"))
 	}
 	lines = append(lines, "")
-	lines = append(lines, stWarn.Render("  ⚠ Select a configuration to unlock all tabs"))
+	if m.cfgSelected {
+		lines = append(lines, stOK.Render("  config: "+m.cfg.ConfigName+"  — select another to switch, or press 2 to return to provision"))
+	} else {
+		lines = append(lines, stWarn.Render("  ⚠ Select a configuration to unlock all tabs"))
+	}
 
 	for len(lines) < h {
 		lines = append(lines, "")
@@ -3411,8 +3448,8 @@ func (m dashModel) renderCfgNewNameScreen(w, h int) string {
 	lines = append(lines, stHdr.Render(" New configuration name"))
 	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
 	lines = append(lines, "")
-	lines = append(lines, stMuted.Render("  Enter a name for the new bootstrap config."))
-	lines = append(lines, stMuted.Render("  This becomes the Secret name prefix in yage-system."))
+	lines = append(lines, stMuted.Render("  Enter a name for the new configuration."))
+	lines = append(lines, stMuted.Render("  A dedicated namespace yage-<name> will be created on the kind cluster."))
 	lines = append(lines, "  (leave blank to use the workload cluster name as the default)")
 	lines = append(lines, "")
 	lines = append(lines, "  "+m.cfgNewInput.View())
@@ -3930,12 +3967,18 @@ func (m dashModel) renderHelpTab(w, h int) string {
 		stMuted.Render(strings.Repeat("─", w)),
 		"",
 		stBold.Render("  Tab switching"),
-		"  " + stAccent.Render("1-8") + "              switch tabs (when not in text field)",
-		"  " + stAccent.Render("ctrl+alt+1-8") + "       switch tabs (works from any context)",
-		"  " + stAccent.Render("ctrl+← →") + "         cycle tabs (works from any context)",
-		"  " + stAccent.Render("← →") + "              cycle tabs (when not in text field)",
+		"  " + stAccent.Render("1") + "                config (always)  " + stAccent.Render("2-8") + " other tabs (after config selected)",
+		"  " + stAccent.Render("ctrl+alt+1") + "         config  " + stAccent.Render("ctrl+alt+2-8") + " other tabs",
+		"  " + stAccent.Render("ctrl+← →") + "          cycle tabs (works from any context)",
+		"  " + stAccent.Render("← →") + "               cycle tabs (when not in text field)",
 		"",
-		stBold.Render("  Config tab"),
+		stBold.Render("  Config tab  (config selection)"),
+		"  " + stAccent.Render("↑ ↓ / j k") + "      navigate list",
+		"  " + stAccent.Render("enter") + "           select config (→ provision tab)",
+		"  " + stAccent.Render("n") + "               new config",
+		"  " + stAccent.Render("r") + "               refresh list",
+		"",
+		stBold.Render("  Provision tab  (edit form)"),
 		"  " + stAccent.Render("↑ ↓ / j k / tab ⇧tab") + "  move between fields",
 		"  " + stAccent.Render("space / enter") + "          toggle booleans",
 		"  " + stAccent.Render("← →") + "                    cycle select options",

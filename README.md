@@ -39,7 +39,7 @@ Makefile          build / test / install
 ## Environment variables
 
 User-facing knobs are namespaced `YAGE_*` (e.g.
-`YAGE_PRICING_DISABLED`, `YAGE_CURRENCY`); cloud credentials use
+`YAGE_PRICING_DISABLED`, `YAGE_TALLER_CURRENCY`); cloud credentials use
 their vendor-native names (`PROXMOX_*`, `AWS_*`, `HCLOUD_TOKEN`,
 …). See `bin/yage --help` for the full list.
 

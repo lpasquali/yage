@@ -58,11 +58,14 @@ func TestRenderValues(t *testing.T) {
 	if !strings.Contains(out, secretName) {
 		t.Errorf("RenderValues output missing secret name %q: %s", secretName, out)
 	}
-	if !strings.Contains(out, secretNamespace) {
-		t.Errorf("RenderValues output missing namespace %q: %s", secretNamespace, out)
+	if !strings.Contains(out, "secret:") {
+		t.Errorf("RenderValues output missing secret: key: %s", out)
 	}
 	if !strings.Contains(out, "storageClass:") {
 		t.Errorf("RenderValues output missing storageClass key: %s", out)
+	}
+	if !strings.Contains(out, "hostMount: false") {
+		t.Errorf("RenderValues should disable hostMount: %s", out)
 	}
 }
 
@@ -70,7 +73,6 @@ func TestEnsureSecretNotApplicableWhenFieldsEmpty(t *testing.T) {
 	tests := []struct {
 		name  string
 		cloud string
-		// OS_AUTH_URL is unset in tests (env is clean)
 	}{
 		{name: "empty cloud name", cloud: ""},
 		{name: "non-empty cloud but no OS_AUTH_URL", cloud: "devstack"},
@@ -78,35 +80,57 @@ func TestEnsureSecretNotApplicableWhenFieldsEmpty(t *testing.T) {
 	d := driver{}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// Ensure OS_AUTH_URL is unset for deterministic behaviour
+			// regardless of the developer's environment.
+			t.Setenv("OS_AUTH_URL", "")
 			cfg := &config.Config{}
 			cfg.Providers.OpenStack.Cloud = tc.cloud
-			// OS_AUTH_URL is not set in test environment; cloud="" cases
-			// also exercise the Cloud guard.
 			err := d.EnsureSecret(cfg, "/nonexistent/kubeconfig")
 			if err != csi.ErrNotApplicable {
-				t.Errorf("EnsureSecret(%q, no OS_AUTH_URL) = %v, want ErrNotApplicable", tc.cloud, err)
+				t.Errorf("EnsureSecret(%q, OS_AUTH_URL='') = %v, want ErrNotApplicable", tc.cloud, err)
 			}
 		})
 	}
 }
 
-func TestBuildCloudsYAML(t *testing.T) {
+func TestBuildCloudConf(t *testing.T) {
+	// Set env vars for this test, restore on exit.
+	t.Setenv("OS_USERNAME", "testuser")
+	t.Setenv("OS_PASSWORD", "testpass")
+	t.Setenv("OS_PROJECT_NAME", "")
+	t.Setenv("OS_USER_DOMAIN_NAME", "Default")
+	t.Setenv("OS_DOMAIN_NAME", "")
+
 	cfg := &config.Config{}
 	cfg.Providers.OpenStack.ProjectName = "myproject"
 	cfg.Providers.OpenStack.Region = "RegionOne"
 
-	out := buildCloudsYAML("devstack", "https://keystone.example.com:5000/v3", cfg)
+	out := buildCloudConf("https://keystone.example.com:5000/v3", cfg)
 
-	if !strings.Contains(out, "devstack:") {
-		t.Errorf("missing cloud name: %s", out)
+	if !strings.HasPrefix(out, "[Global]\n") {
+		t.Errorf("cloud.conf must start with [Global]: %s", out)
 	}
-	if !strings.Contains(out, "auth_url: https://keystone.example.com:5000/v3") {
-		t.Errorf("missing auth_url: %s", out)
+	if !strings.Contains(out, "auth-url=https://keystone.example.com:5000/v3") {
+		t.Errorf("missing auth-url: %s", out)
 	}
-	if !strings.Contains(out, "project_name: myproject") {
-		t.Errorf("missing project_name: %s", out)
+	if !strings.Contains(out, "username=testuser") {
+		t.Errorf("missing username: %s", out)
 	}
-	if !strings.Contains(out, "region_name: RegionOne") {
-		t.Errorf("missing region_name: %s", out)
+	if !strings.Contains(out, "password=testpass") {
+		t.Errorf("missing password: %s", out)
+	}
+	// OS_PROJECT_NAME empty, falls back to cfg field.
+	if !strings.Contains(out, "tenant-name=myproject") {
+		t.Errorf("missing tenant-name: %s", out)
+	}
+	if !strings.Contains(out, "domain-name=Default") {
+		t.Errorf("missing domain-name: %s", out)
+	}
+	if !strings.Contains(out, "region=RegionOne") {
+		t.Errorf("missing region: %s", out)
+	}
+	// YAML keys (clouds.yaml format) must NOT appear in INI output.
+	if strings.Contains(out, "auth_url") || strings.Contains(out, "clouds:") {
+		t.Errorf("cloud.conf must be INI format, not YAML: %s", out)
 	}
 }

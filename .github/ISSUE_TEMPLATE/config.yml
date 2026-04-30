@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Architecture ADRs
+    url: https://lpasquali.github.io/yage-docs/architecture/adrs/
+    about: Read the ADR index before opening an architectural issue

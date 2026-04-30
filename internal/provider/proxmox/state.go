@@ -5,7 +5,8 @@ package proxmox
 
 // State-handoff hooks for Proxmox: KindSyncFields (kind-side
 // Secret), TemplateVars (clusterctl manifest substitution), Purge
-// (cleanup of yage-managed Proxmox state).
+// (cleanup of yage-managed Proxmox state), RolloutMachineAnnotations
+// (reconcile nudge for ProxmoxMachine objects during rollout).
 //
 // See docs/abstraction-plan.md §11 + §14.D.
 
@@ -15,6 +16,8 @@ import (
 	"os"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
@@ -131,6 +134,41 @@ func (p *Provider) Purge(cfg *config.Config) error {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("purge proxmox file %s: %w", path, err)
 		}
+	}
+	return nil
+}
+
+// RolloutMachineAnnotations patches every ProxmoxMachine in the
+// workload cluster namespace that matches selector with the
+// "reconcile.cluster.x-k8s.io/request" annotation, nudging the
+// CAPMOX controller to re-evaluate each machine. Best-effort:
+// individual patch failures are silently ignored (the controller
+// will reconcile on its own watch loop regardless).
+func (p *Provider) RolloutMachineAnnotations(cfg *config.Config, ctxName, ns, selector, now string) error {
+	cli, err := k8sclient.ForContext(ctxName)
+	if err != nil {
+		return fmt.Errorf("proxmox RolloutMachineAnnotations: cannot build kube client for %s: %w", ctxName, err)
+	}
+	pmGVR := schema.GroupVersionResource{
+		Group:    "infrastructure.cluster.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "proxmoxmachines",
+	}
+	bg := context.Background()
+	ul, err := cli.Dynamic.Resource(pmGVR).Namespace(ns).
+		List(bg, metav1.ListOptions{LabelSelector: selector})
+	if err != nil || ul == nil {
+		// CRD may not exist or no machines present — not an error.
+		return nil
+	}
+	annPatch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"reconcile.cluster.x-k8s.io/request":"%s"}}}`, now))
+	for _, item := range ul.Items {
+		name := item.GetName()
+		if name == "" {
+			continue
+		}
+		_, _ = cli.Dynamic.Resource(pmGVR).Namespace(ns).
+			Patch(bg, name, types.MergePatchType, annPatch, metav1.PatchOptions{})
 	}
 	return nil
 }
@@ -259,10 +297,9 @@ func (p *Provider) AbsorbConfigYAML(cfg *config.Config, kv map[string]string) bo
 //
 // Layout:
 //  1. Single-Secret branch (PROXMOX_BOOTSTRAP_SECRET_NAME set): one
-//     combined CAPI+CSI Secret; the legacy "proxmox-bootstrap-credentials"
-//     name is included as a fallback; the admin Secret is conditional.
+//     combined CAPI+CSI Secret; the admin Secret is conditional.
 //  2. Default split (PROXMOX_BOOTSTRAP_SECRET_NAME empty): CAPMOX Secret,
-//     CSI Secret (with fallback), admin Secret.
+//     CSI Secret, admin Secret.
 //  3. Always: capmox-system/capmox-manager-credentials as a last-chance
 //     fallback for URL/token/secret (only queried when those fields are
 //     still empty at absorption time — controlled by the generic dispatcher).
@@ -323,8 +360,6 @@ func (p *Provider) BootstrapSecrets(cfg *config.Config) []provider.BootstrapSecr
 	refs := []provider.BootstrapSecretRef{
 		{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapCAPMOXSecretName, OnAbsorbed: markKindSecretUsed},
 		{Namespace: ns, Name: cfg.Providers.Proxmox.BootstrapCSISecretName, OnAbsorbed: markKindSecretUsed},
-		// Fallback to the pre-split Secret name (legacy)
-		{Namespace: ns, Name: "proxmox-bootstrap-credentials", OnAbsorbed: markKindSecretUsed},
 	}
 	if cfg.Providers.Proxmox.BootstrapAdminSecretName != "" {
 		refs = append(refs, provider.BootstrapSecretRef{

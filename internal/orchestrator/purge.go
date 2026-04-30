@@ -344,7 +344,6 @@ func WorkloadRolloutCAPITouchRollout(cfg *config.Config) {
 
 	kcpGVR := schema.GroupVersionResource{Group: "controlplane.cluster.x-k8s.io", Version: "v1beta2", Resource: "kubeadmcontrolplanes"}
 	mdGVR := schema.GroupVersionResource{Group: "cluster.x-k8s.io", Version: "v1beta2", Resource: "machinedeployments"}
-	pmGVR := schema.GroupVersionResource{Group: "infrastructure.cluster.x-k8s.io", Version: "v1alpha1", Resource: "proxmoxmachines"}
 
 	listNames := func(gvr schema.GroupVersionResource) []string {
 		ul, err := cli.Dynamic.Resource(gvr).Namespace(cfg.WorkloadClusterNamespace).
@@ -460,12 +459,13 @@ func WorkloadRolloutCAPITouchRollout(cfg *config.Config) {
 	_, _ = cli.Dynamic.Resource(capiClusterGVR).Namespace(cfg.WorkloadClusterNamespace).
 		Patch(bg, cfg.WorkloadClusterName, types.MergePatchType, annPatch, metav1.PatchOptions{})
 
-	pms := listNames(pmGVR)
-	for _, pm := range pms {
-		pmAnn := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"reconcile.cluster.x-k8s.io/request":"%s"}}}`,
-			time.Now().UTC().Format("2006-01-02T15:04:05Z")))
-		_, _ = cli.Dynamic.Resource(pmGVR).Namespace(cfg.WorkloadClusterNamespace).
-			Patch(bg, pm, types.MergePatchType, pmAnn, metav1.PatchOptions{})
+	// Delegate provider-specific infrastructure-machine annotations to
+	// the active provider (e.g. ProxmoxMachines for the Proxmox
+	// provider). Providers with no extra machines to nudge return nil.
+	if prov, perr := provider.For(cfg); perr == nil {
+		if err := prov.RolloutMachineAnnotations(cfg, ctxName, cfg.WorkloadClusterNamespace, selector, now); err != nil {
+			logx.Warn("workload-rollout: provider %s RolloutMachineAnnotations: %v (continuing)", prov.Name(), err)
+		}
 	}
 }
 

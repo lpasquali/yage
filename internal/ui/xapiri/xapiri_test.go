@@ -5,8 +5,6 @@ package xapiri
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -41,7 +39,7 @@ func TestProperCase_RegisteredProviders(t *testing.T) {
 
 // TestProperCase_FallbackOnUnknown: an unknown name falls back to
 // "first-letter-uppercased" so a newly-registered provider doesn't
-// silently disappear from step6_providerDetails.
+// silently disappear from applyGeoRegionDefaults.
 func TestProperCase_FallbackOnUnknown(t *testing.T) {
 	if got := properCase("acmecloud"); got != "Acmecloud" {
 		t.Errorf("properCase(acmecloud) = %q, want fallback Acmecloud", got)
@@ -53,7 +51,7 @@ func TestProperCase_FallbackOnUnknown(t *testing.T) {
 
 // TestProperCase_ResolvesViaReflection: the strings properCase
 // returns must match a real exported field on cfg.Providers, or
-// providerSubStruct returns (zero, false) and step6 silently skips.
+// providerSubStruct returns (zero, false) and geo fills silently skip.
 // This is the load-bearing invariant.
 func TestProperCase_ResolvesViaReflection(t *testing.T) {
 	cfg := &config.Config{}
@@ -64,82 +62,8 @@ func TestProperCase_ResolvesViaReflection(t *testing.T) {
 		field := properCase(name)
 		v := reflect.ValueOf(&cfg.Providers).Elem().FieldByName(field)
 		if !v.IsValid() {
-			t.Errorf("properCase(%q) → %q which is NOT a field on Providers — step 6 would silently skip", name, field)
+			t.Errorf("properCase(%q) → %q which is NOT a field on Providers — geo fill would silently skip", name, field)
 		}
-	}
-}
-
-// TestIsSensitiveFieldName: any field whose name ends in one of the
-// known credential suffixes must be flagged. Missing one only
-// degrades the echo-mask, never security, but the masking is part
-// of the UX promise.
-func TestIsSensitiveFieldName(t *testing.T) {
-	sensitive := []string{
-		"Token", "APIKey", "Password", "Secret", "Passphrase",
-		"AdminToken", "HetznerToken", "GCPAPIKey",
-		"BootstrapAdminPassword", "EncryptionPassphrase",
-	}
-	for _, n := range sensitive {
-		if !isSensitiveFieldName(n) {
-			t.Errorf("isSensitiveFieldName(%q) = false, want true", n)
-		}
-	}
-	notSensitive := []string{
-		"Region", "URL", "Node", "ClusterName", "Pool", "Bridge", "TokenID", // TokenID is the user-half, not the secret half
-	}
-	for _, n := range notSensitive {
-		if isSensitiveFieldName(n) {
-			t.Errorf("isSensitiveFieldName(%q) = true, want false", n)
-		}
-	}
-}
-
-// TestIsInternalBookkeeping: bootstrap-Secret names + kindsync /
-// identity bookkeeping fields shouldn't be hand-tuned during the
-// walkthrough — they'd clutter the prompt list with internals.
-func TestIsInternalBookkeeping(t *testing.T) {
-	internal := []string{
-		"BootstrapAdminSecretName",
-		"BootstrapConfigSecretName",
-		"KindCAPMOXSecretName",
-		"IdentityTF",
-	}
-	for _, n := range internal {
-		if !isInternalBookkeeping(n) {
-			t.Errorf("isInternalBookkeeping(%q) = false, want true", n)
-		}
-	}
-	external := []string{
-		"URL", "Token", "Region", "Node", "ClusterName",
-		"AdminToken", // user-facing credential, prompted via promptSecret
-	}
-	for _, n := range external {
-		if isInternalBookkeeping(n) {
-			t.Errorf("isInternalBookkeeping(%q) = true, want false", n)
-		}
-	}
-}
-
-// TestHasPrefixSuffix: the inline helpers exist so we don't import
-// strings twice. Verify they handle empty + edge cases.
-func TestHasPrefixSuffix(t *testing.T) {
-	if !hasPrefix("BootstrapFoo", "Bootstrap") {
-		t.Errorf("hasPrefix BootstrapFoo/Bootstrap = false")
-	}
-	if hasPrefix("foo", "longer-than-foo") {
-		t.Errorf("hasPrefix foo/longer-than-foo = true (string shorter than prefix)")
-	}
-	if !hasPrefix("foo", "") {
-		t.Errorf("hasPrefix foo/'' = false (empty prefix should match anything)")
-	}
-	if !hasSuffix("AdminToken", "Token") {
-		t.Errorf("hasSuffix AdminToken/Token = false")
-	}
-	if hasSuffix("foo", "longer-than-foo") {
-		t.Errorf("hasSuffix foo/longer-than-foo = true (string shorter than suffix)")
-	}
-	if !hasSuffix("foo", "") {
-		t.Errorf("hasSuffix foo/'' = false (empty suffix should match anything)")
 	}
 }
 
@@ -159,8 +83,8 @@ func TestForkType_String(t *testing.T) {
 }
 
 // TestFeasibilityVerdict_SymbolAndString: the unicode tick / warn /
-// cross plus their human strings, used in the step-5 review line and
-// the persisted Secret. Stable visible API.
+// cross plus their human strings, used in the dashboard feasibility
+// display and persisted Secret. Stable visible API.
 func TestFeasibilityVerdict_SymbolAndString(t *testing.T) {
 	cases := []struct {
 		v       FeasibilityVerdict
@@ -196,18 +120,13 @@ func TestRun_NilCfgReturnsTwo(t *testing.T) {
 }
 
 // TestNewState_HeadroomDefault: every state starts with the §23.4
-// default headroom of 20% so step-4 cost-compare uses the same gate
+// default headroom of 20% so the cost-compare uses the same gate
 // as the feasibility check itself.
 func TestNewState_HeadroomDefault(t *testing.T) {
 	cfg := &config.Config{}
 	s := newState(&bytes.Buffer{}, cfg)
 	if s.headroomPct != 0.20 {
 		t.Errorf("newState headroomPct = %v, want 0.20", s.headroomPct)
-	}
-	// newStateWithReader must agree.
-	s2 := newStateWithReader(&bytes.Buffer{}, cfg, &bytes.Buffer{})
-	if s2.headroomPct != 0.20 {
-		t.Errorf("newStateWithReader headroomPct = %v, want 0.20", s2.headroomPct)
 	}
 }
 
@@ -246,27 +165,6 @@ func TestSyncWorkloadShapeToCfg_OnPremEgressDefault(t *testing.T) {
 	}
 }
 
-func TestAwsCredentialsHint_accessKey(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("AWS_PROFILE", "")
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
-	if got := awsCredentialsHint(); got != "AWS_ACCESS_KEY_ID ✓" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestAwsCredentialsHint_profile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("AWS_ACCESS_KEY_ID", "")
-	t.Setenv("AWS_PROFILE", "yage-pricing")
-	want := "AWS_PROFILE=yage-pricing ✓"
-	if got := awsCredentialsHint(); got != want {
-		t.Fatalf("got %q want %q", got, want)
-	}
-}
-
 func TestGeoNearestRegionID_nearLondon(t *testing.T) {
 	// Roughly London — does not require provider.Registered() (test
 	// binary may not link every provider init).
@@ -275,23 +173,5 @@ func TestGeoNearestRegionID_nearLondon(t *testing.T) {
 	}
 	if got := geoNearestRegionID("azure", 51.5, -0.12); got != "uksouth" {
 		t.Fatalf("azure nearest=%q want uksouth", got)
-	}
-}
-
-func TestAwsCredentialsHint_sharedConfigFile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("AWS_ACCESS_KEY_ID", "")
-	t.Setenv("AWS_PROFILE", "")
-	if err := os.Mkdir(filepath.Join(home, ".aws"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(home, ".aws", "credentials")
-	if err := os.WriteFile(path, []byte("[default]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	want := filepath.Join("~", ".aws/credentials") + " ✓"
-	if got := awsCredentialsHint(); got != want {
-		t.Fatalf("got %q want %q", got, want)
 	}
 }

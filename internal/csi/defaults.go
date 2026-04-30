@@ -30,6 +30,8 @@ func DefaultsFor(provider string) []string {
 		return []string{"gcp-pd"}
 	case "hetzner":
 		return []string{"hcloud-csi"}
+	case "openstack":
+		return []string{"openstack-cinder"}
 	case "proxmox":
 		return []string{"proxmox-csi"}
 	case "vsphere":

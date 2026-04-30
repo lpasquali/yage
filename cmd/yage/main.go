@@ -46,10 +46,12 @@ import (
 
 	// CSI driver registrations: importing each driver package runs
 	// its init() which calls csi.Register. AWS-EBS, Azure-Disk,
-	// GCP-PD, and Proxmox-CSI are wired through the §20 registry.
-	// The rest of the §20.1 matrix lands as drivers are added.
+	// GCP-PD, OpenStack-Cinder, and Proxmox-CSI are wired through
+	// the §20 registry. The rest of the §20.1 matrix lands as
+	// drivers are added.
 	_ "github.com/lpasquali/yage/internal/csi/awsebs"
 	_ "github.com/lpasquali/yage/internal/csi/azuredisk"
+	_ "github.com/lpasquali/yage/internal/csi/cindercsi"
 	_ "github.com/lpasquali/yage/internal/csi/gcppd"
 	_ "github.com/lpasquali/yage/internal/csi/hcloud"
 	_ "github.com/lpasquali/yage/internal/csi/proxmoxcsi"

@@ -119,6 +119,7 @@ func Run(w io.Writer, cfg *config.Config) int {
 	if useHuhTUI() {
 		return runHuhBranch(w, cfg, s)
 	}
+	// Deprecated: use YAGE_XAPIRI_TUI=legacy to opt back; removed in a future release.
 	s.greet()
 	if err := s.stepKindClusterName(); err != nil {
 		return s.exit(err)
@@ -166,14 +167,16 @@ func Run(w io.Writer, cfg *config.Config) int {
 	return s.runCloudFork()
 }
 
-// useHuhTUI reports whether YAGE_XAPIRI_TUI=huh asks for the spike
-// flow. Any other value (or unset) keeps the legacy bufio-driven
-// walkthrough.
+// useHuhTUI reports whether the bubbletea dashboard should run.
+// Default (env unset or empty) and YAGE_XAPIRI_TUI=huh both select
+// the dashboard. Set YAGE_XAPIRI_TUI=legacy or YAGE_XAPIRI_TUI=bufio
+// to opt back to the legacy bufio-driven walkthrough (deprecated).
 func useHuhTUI() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("YAGE_XAPIRI_TUI")), "huh")
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("YAGE_XAPIRI_TUI")))
+	return v != "legacy" && v != "bufio"
 }
 
-// runHuhBranch is the YAGE_XAPIRI_TUI=huh entry. The kind prelude brings
+// runHuhBranch is the bubbletea dashboard entry point. The kind prelude brings
 // the management cluster up; the dashboard handles config selection and all
 // subsequent steps interactively.
 func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {

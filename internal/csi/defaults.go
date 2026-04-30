@@ -17,7 +17,7 @@ package csi
 // cfg.CSI.DefaultClass is empty, the first installable driver in
 // the slice supplies the default StorageClass.
 //
-// Adding hetzner/digitalocean/linode/etc. is a follow-up commit —
+// Adding hetzner/linode/etc. is a follow-up commit —
 // same shape, drop a new package under internal/csi/<name>/ and add
 // an entry here.
 func DefaultsFor(provider string) []string {
@@ -26,6 +26,8 @@ func DefaultsFor(provider string) []string {
 		return []string{"aws-ebs"}
 	case "azure":
 		return []string{"azure-disk"}
+	case "digitalocean":
+		return []string{"do-block-storage"}
 	case "gcp":
 		return []string{"gcp-pd"}
 	case "hetzner":

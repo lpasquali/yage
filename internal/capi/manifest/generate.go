@@ -372,7 +372,7 @@ func GenerateWorkloadManifestIfMissing(
 			"--infrastructure", cfg.InfraProvider,
 		}
 		cmd = exec.Command("clusterctl", args...)
-		cmd.Env = append(os.Environ(),
+		cmd.Env = BuildEnv(
 			"PROXMOX_URL="+cfg.Providers.Proxmox.URL,
 			"PROXMOX_REGION="+cfg.Providers.Proxmox.Region,
 			"PROXMOX_NODE="+cfg.Providers.Proxmox.Node,
@@ -421,7 +421,7 @@ func GenerateWorkloadManifestIfMissing(
 		if nodeType == "" {
 			nodeType = "t3.medium"
 		}
-		cmd.Env = append(os.Environ(),
+		cmd.Env = BuildEnv(
 			"AWS_REGION="+region,
 			"AWS_CONTROL_PLANE_MACHINE_TYPE="+cpType,
 			"AWS_NODE_MACHINE_TYPE="+nodeType,
@@ -590,6 +590,31 @@ func EnsureWorkloadClusterLabel(cfg *config.Config, manifestPath, clusterName st
 }
 
 // --- helpers ---
+
+// BuildEnv returns os.Environ() with any keys present in overrides
+// removed, then appends overrides. This prevents duplicate env
+// entries — and avoids E2BIG ("argument list too long") — when a
+// var we are about to set (e.g. VM_SSH_KEYS) is already present and
+// possibly large in the parent-process environment.
+func BuildEnv(overrides ...string) []string {
+	block := make(map[string]struct{}, len(overrides))
+	for _, kv := range overrides {
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			block[kv[:i]] = struct{}{}
+		}
+	}
+	base := os.Environ()
+	out := make([]string, 0, len(base)+len(overrides))
+	for _, kv := range base {
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			if _, dup := block[kv[:i]]; dup {
+				continue
+			}
+		}
+		out = append(out, kv)
+	}
+	return append(out, overrides...)
+}
 
 func fileExists(p string) bool {
 	_, err := os.Stat(p)

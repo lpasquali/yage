@@ -303,6 +303,7 @@ func GenerateWorkloadManifestIfMissing(
 		logx.Log("%s not found — generating workload cluster manifest with clusterctl...", cfg.CAPIManifest)
 	}
 
+	// TODO(#71): derive CSIURL via Provider method rather than direct Proxmox field access.
 	if cfg.InfraProvider == "proxmox" && cfg.Providers.Proxmox.CSIURL == "" {
 		cfg.Providers.Proxmox.CSIURL = api.APIJSONURL(cfg)
 	}
@@ -315,6 +316,8 @@ func GenerateWorkloadManifestIfMissing(
 	// K3s-only KThreesControlPlane / KThreesConfigTemplate documents
 	// (PatchKubeadmSkipKubeProxyForCilium is a no-op against them).
 	if cfg.BootstrapMode == "k3s" {
+		// TODO(#71): replace with prov.K3sTemplate check (ErrNotApplicable)
+		// once non-Proxmox K3s support is planned.
 		if cfg.InfraProvider != "proxmox" {
 			logx.Die("BOOTSTRAP_MODE=k3s is only supported with --infra-provider proxmox today.")
 		}
@@ -333,6 +336,8 @@ func GenerateWorkloadManifestIfMissing(
 	if ensureClusterctlConfig != nil {
 		ctlCfg = ensureClusterctlConfig()
 	}
+	// TODO(#71): move clusterctl config requirement check into Provider or
+	// SyncClusterctlConfigFile so this explicit provider check goes away.
 	if cfg.InfraProvider == "proxmox" {
 		if ctlCfg == "" || !fileExists(ctlCfg) {
 			logx.Die("clusterctl config is not available after bootstrap_sync_clusterctl_config_file (set PROXMOX_URL, PROXMOX_TOKEN, PROXMOX_SECRET, or CLUSTERCTL_CFG).")

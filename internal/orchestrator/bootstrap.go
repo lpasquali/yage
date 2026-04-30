@@ -362,7 +362,7 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		logx.Die("ensure_opentofu failed: %v", err)
 	}
 	shell.RequireCmd("tofu")
-	// TODO: move to Provider.EnsureIdentity or a new Provider.InstallDependencies method.
+	// TODO(#71): move to Provider.InstallDependencies once that interface method exists.
 	if !skipHeavy && cfg.InfraProvider == "proxmox" {
 		if err := opentofux.InstallBPGProvider(cfg); err != nil {
 			logx.Die("install_bpg_proxmox_provider failed: %v", err)
@@ -382,6 +382,8 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	)
 	recreateOpenTofuDone := false
 	phase0IdentityBootstrap := false
+	// TODO(#71): replace with prov.EnsureIdentity(cfg) once the identity
+	// bootstrap logic is fully delegated to the provider interface.
 	if cfg.InfraProvider == "proxmox" {
 		if !cfg.ClusterctlCfgFilePresent() && !cfg.HaveClusterctlCredsInEnv() {
 			phase0IdentityBootstrap = true
@@ -454,6 +456,8 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		}
 	}
 
+	// TODO(#71): RecreateIdentities flag should live behind Provider.EnsureIdentity
+	// once the full identity lifecycle is delegated to the provider interface.
 	if cfg.InfraProvider == "proxmox" && cfg.Providers.Proxmox.RecreateIdentities && !recreateOpenTofuDone {
 		if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 			EnsureProxmoxAdminConfig(cfg,
@@ -472,6 +476,9 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	phIdentity.End()
 
 	var clusterctlCfgPath string
+	// TODO(#71): the interactive clusterctl credential collection below is
+	// Proxmox-specific. Move to Provider.EnsureIdentity once other providers
+	// have a parallel interactive credential-prompt path.
 	if cfg.InfraProvider == "proxmox" {
 		// --- Ensure clusterctl credentials ---
 		if !cfg.ClusterctlCfgFilePresent() && !cfg.HaveClusterctlCredsInEnv() {
@@ -598,7 +605,7 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	}
 
 	// --- Resolve CAPMOX image tag (Proxmox only) ---
-	// TODO: move to Provider.ProviderImage or a new Provider.ResolveImages method.
+	// TODO(#71): move to Provider.ResolveImages once that interface method exists.
 	var capmoxImage, capmoxTag string
 	if cfg.InfraProvider == "proxmox" {
 		logx.Log("Resolving CAPMOX image tag...")
@@ -666,7 +673,7 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		if i := strings.LastIndex(cfg.IPAMImage, ":"); i >= 0 {
 			ipamTag = cfg.IPAMImage[i+1:]
 		}
-		// TODO: move to Provider.ResolveImages or a new Provider.LoadImages method.
+		// TODO(#71): move to Provider.LoadImages once that interface method exists.
 		if cfg.InfraProvider == "proxmox" && capmoxImage != "" {
 			_ = installer.BuildIfNoArm64(cfg, capmoxImage, cfg.CAPMOXRepo, capmoxTag, cfg.CAPMOXBuildDir, cfg.KindClusterName)
 		}
@@ -768,27 +775,29 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	}
 	phCapacity.End()
 
-	// --- Pre-create Proxmox pools (organizational + ACL grouping).
-	// CAPMOX rejects a pool reference that doesn't exist, so we
-	// create the workload pool here and (when --pivot is enabled) the
-	// mgmt pool too. Idempotent: existing pools are silently kept.
+	// --- Pre-create provider groups (Proxmox pools / vSphere folders /
+	// etc.) before any workload VMs are created. EnsureGroup is
+	// idempotent; ErrNotApplicable is silently ignored (providers that
+	// have no grouping concept skip cleanly via MinStub).
 	ctx, phGroup := obs.StartPhase(ctx, "group-ensure",
 		obs.Str("provider", cfg.InfraProvider),
 	)
-	// TODO: move to prov.EnsureGroup(cfg, cfg.Providers.Proxmox.Pool) once EnsureGroup covers pool semantics.
-	if cfg.InfraProvider == "proxmox" && cfg.Providers.Proxmox.Pool != "" {
-		if err := api.EnsurePool(cfg, cfg.Providers.Proxmox.Pool); err != nil {
-			logx.Warn("Proxmox pool %s: %v — VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Pool, err)
-		} else {
-			logx.Log("Proxmox pool '%s' ensured (workload).", cfg.Providers.Proxmox.Pool)
+	if groupProv, gpErr := provider.For(cfg); gpErr == nil {
+		if workloadGroup := cfg.WorkloadGroupName(); workloadGroup != "" {
+			if err := groupProv.EnsureGroup(cfg, workloadGroup); err != nil && !errors.Is(err, provider.ErrNotApplicable) {
+				logx.Warn("EnsureGroup(%s workload): %v — VMs may fail to register; create it manually if needed.", workloadGroup, err)
+			} else if err == nil {
+				logx.Log("Provider group '%s' ensured (workload).", workloadGroup)
+			}
 		}
-	}
-	// TODO: move to prov.EnsureGroup(cfg, cfg.Providers.Proxmox.Mgmt.Pool) once EnsureGroup covers pool semantics.
-	if cfg.InfraProvider == "proxmox" && cfg.Pivot.Enabled && cfg.Providers.Proxmox.Mgmt.Pool != "" {
-		if err := api.EnsurePool(cfg, cfg.Providers.Proxmox.Mgmt.Pool); err != nil {
-			logx.Warn("Proxmox pool %s: %v — mgmt VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Mgmt.Pool, err)
-		} else {
-			logx.Log("Proxmox pool '%s' ensured (management).", cfg.Providers.Proxmox.Mgmt.Pool)
+		if cfg.Pivot.Enabled {
+			if mgmtGroup := cfg.MgmtGroupName(); mgmtGroup != "" {
+				if err := groupProv.EnsureGroup(cfg, mgmtGroup); err != nil && !errors.Is(err, provider.ErrNotApplicable) {
+					logx.Warn("EnsureGroup(%s mgmt): %v — mgmt VMs may fail to register; create it manually if needed.", mgmtGroup, err)
+				} else if err == nil {
+					logx.Log("Provider group '%s' ensured (management).", mgmtGroup)
+				}
+			}
 		}
 	}
 	phGroup.End()

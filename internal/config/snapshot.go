@@ -305,21 +305,6 @@ func (c *Config) Snapshot() []SnapshotField {
 					}
 					apps = append(apps, AppGroup{Count: n, Template: tpl})
 				}
-				// Fallback: old Secrets store JSON [{"Count":N,"Template":"..."}]
-				if len(apps) == 0 && strings.HasPrefix(strings.TrimSpace(v), "[") {
-					var legacy []struct {
-						Count    int    `json:"Count"`
-						Template string `json:"Template"`
-					}
-					if err := json.Unmarshal([]byte(v), &legacy); err == nil {
-						for _, a := range legacy {
-							tpl := strings.ToLower(a.Template)
-							if a.Count > 0 && (tpl == "light" || tpl == "medium" || tpl == "heavy") {
-								apps = append(apps, AppGroup{Count: a.Count, Template: tpl})
-							}
-						}
-					}
-				}
 				if len(apps) > 0 {
 					c.Workload.Apps = apps
 				}

@@ -2,10 +2,8 @@ openstack — OpenStack / CAPO flags
 
     --openstack-cloud NAME            Named cloud entry in clouds.yaml (e.g. "devstack").
                                       Env: OPENSTACK_CLOUD.
-    --openstack-project-name NAME     Keystone project / tenant. Env: OPENSTACK_PROJECT_NAME
-                                      (falls back to OS_PROJECT_NAME).
-    --openstack-region REGION         Region scope (e.g. "RegionOne"). Env: OPENSTACK_REGION
-                                      (falls back to OS_REGION_NAME).
+    --openstack-project-name NAME     Keystone project / tenant. Env: OPENSTACK_PROJECT_NAME.
+    --openstack-region REGION         Region scope (e.g. "RegionOne"). Env: OPENSTACK_REGION.
     --openstack-failure-domain Z      Availability zone CAPO targets for control-plane VMs.
                                       Env: OPENSTACK_FAILURE_DOMAIN.
     --openstack-image-name NAME       Glance image used for VM boot.

@@ -25,9 +25,8 @@ import (
 //
 // Resolution order for the active taller currency code:
 //   1. env YAGE_TALLER_CURRENCY  (explicit override)
-//   2. env YAGE_CURRENCY         (legacy alias)
-//   3. IP geolocation → ISO country → currency  (default)
-//   4. "USD" fallback if both geolocation and the FX API fail
+//   2. IP geolocation → ISO country → currency  (default)
+//   3. "USD" fallback if both geolocation and the FX API fail
 //
 // FX endpoint: https://open.er-api.com/v6/latest/<base>
 //   - auth-free, free tier
@@ -109,8 +108,8 @@ var (
 //
 // Resolution order:
 //  1. cfg.Cost.Currency.DisplayCurrency (explicit code via flag/env)
-//  2. YAGE_TALLER_CURRENCY / YAGE_CURRENCY env (when SetCurrency
-//     hasn't been called yet — tests, embedded use)
+//  2. YAGE_TALLER_CURRENCY env (when SetCurrency hasn't been called yet —
+//     tests, embedded use)
 //  3. cfg.Cost.Currency.DataCenterLocation (--data-center-location):
 //     country code → ISO currency
 //  4. Geo-IP detection
@@ -138,10 +137,6 @@ func resolveTallerCurrency() (string, string) {
 			return
 		}
 		if v, n, ok := pickOrFallback(os.Getenv("YAGE_TALLER_CURRENCY"), "env override"); ok {
-			tallerCurrency, tallerNote = v, n
-			return
-		}
-		if v, n, ok := pickOrFallback(os.Getenv("YAGE_CURRENCY"), "legacy env override"); ok {
 			tallerCurrency, tallerNote = v, n
 			return
 		}

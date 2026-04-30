@@ -55,8 +55,8 @@ func TestCostCredentialsLoad(t *testing.T) {
 			want:      "yi",
 		},
 		{
-			name:      "currency prefers YAGE_TALLER_CURRENCY",
-			envs:      map[string]string{"YAGE_TALLER_CURRENCY": "EUR", "YAGE_CURRENCY": "USD"},
+			name:      "YAGE_TALLER_CURRENCY sets display currency",
+			envs:      map[string]string{"YAGE_TALLER_CURRENCY": "EUR"},
 			wantField: func(c *Config) string { return c.Cost.Currency.DisplayCurrency },
 			want:      "EUR",
 		},
@@ -76,7 +76,7 @@ func TestCostCredentialsLoad(t *testing.T) {
 				"YAGE_HCLOUD_TOKEN", "HCLOUD_TOKEN",
 				"YAGE_DO_TOKEN", "DIGITALOCEAN_TOKEN",
 				"YAGE_IBMCLOUD_API_KEY", "IBMCLOUD_API_KEY",
-				"YAGE_TALLER_CURRENCY", "YAGE_CURRENCY", "YAGE_DATA_CENTER_LOCATION",
+				"YAGE_TALLER_CURRENCY", "YAGE_DATA_CENTER_LOCATION",
 			} {
 				t.Setenv(k, "")
 			}
@@ -110,10 +110,7 @@ func TestHetznerTokenCrossFill(t *testing.T) {
 
 // TestProviderConfigEnvBackcompat covers the env-var → cfg wiring for
 // the per-provider fields landed in commit f6ca113 (Azure / GCP /
-// OpenStack / vSphere). One case per field on the spec sheet, plus
-// the OPENSTACK_ vs. OS_ legacy-fallback contract for the two fields
-// that already have a clouds.yaml convention (OS_PROJECT_NAME,
-// OS_REGION_NAME).
+// OpenStack / vSphere). One case per field on the spec sheet.
 func TestProviderConfigEnvBackcompat(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -197,7 +194,7 @@ func TestProviderConfigEnvBackcompat(t *testing.T) {
 			want:      "service-account",
 		},
 
-		// OpenStack — primary spelling
+		// OpenStack
 		{
 			name:      "OPENSTACK_CLOUD populates Providers.OpenStack.Cloud",
 			envs:      map[string]string{"OPENSTACK_CLOUD": "devstack"},
@@ -205,28 +202,16 @@ func TestProviderConfigEnvBackcompat(t *testing.T) {
 			want:      "devstack",
 		},
 		{
-			name:      "OPENSTACK_PROJECT_NAME wins over OS_PROJECT_NAME",
-			envs:      map[string]string{"OPENSTACK_PROJECT_NAME": "primary", "OS_PROJECT_NAME": "legacy"},
+			name:      "OPENSTACK_PROJECT_NAME populates Providers.OpenStack.ProjectName",
+			envs:      map[string]string{"OPENSTACK_PROJECT_NAME": "my-project"},
 			wantField: func(c *Config) string { return c.Providers.OpenStack.ProjectName },
-			want:      "primary",
+			want:      "my-project",
 		},
 		{
-			name:      "OS_PROJECT_NAME falls back when OPENSTACK_PROJECT_NAME is unset",
-			envs:      map[string]string{"OS_PROJECT_NAME": "legacy"},
-			wantField: func(c *Config) string { return c.Providers.OpenStack.ProjectName },
-			want:      "legacy",
-		},
-		{
-			name:      "OPENSTACK_REGION wins over OS_REGION_NAME",
-			envs:      map[string]string{"OPENSTACK_REGION": "RegionOne", "OS_REGION_NAME": "RegionTwo"},
+			name:      "OPENSTACK_REGION populates Providers.OpenStack.Region",
+			envs:      map[string]string{"OPENSTACK_REGION": "RegionOne"},
 			wantField: func(c *Config) string { return c.Providers.OpenStack.Region },
 			want:      "RegionOne",
-		},
-		{
-			name:      "OS_REGION_NAME falls back when OPENSTACK_REGION is unset",
-			envs:      map[string]string{"OS_REGION_NAME": "RegionTwo"},
-			wantField: func(c *Config) string { return c.Providers.OpenStack.Region },
-			want:      "RegionTwo",
 		},
 		{
 			name:      "OPENSTACK_FAILURE_DOMAIN populates Providers.OpenStack.FailureDomain",
@@ -335,8 +320,8 @@ func TestProviderConfigEnvBackcompat(t *testing.T) {
 		"AZURE_VNET_NAME", "AZURE_SUBNET_NAME", "AZURE_CLIENT_ID",
 		"AZURE_IDENTITY_MODEL",
 		"GCP_NETWORK_NAME", "GCP_IMAGE_FAMILY", "GCP_IDENTITY_MODEL",
-		"OPENSTACK_CLOUD", "OPENSTACK_PROJECT_NAME", "OS_PROJECT_NAME",
-		"OPENSTACK_REGION", "OS_REGION_NAME", "OPENSTACK_FAILURE_DOMAIN",
+		"OPENSTACK_CLOUD", "OPENSTACK_PROJECT_NAME",
+		"OPENSTACK_REGION", "OPENSTACK_FAILURE_DOMAIN",
 		"OPENSTACK_IMAGE_NAME", "OPENSTACK_CONTROL_PLANE_FLAVOR",
 		"OPENSTACK_WORKER_FLAVOR", "OPENSTACK_DNS_NAMESERVERS",
 		"OPENSTACK_SSH_KEY_NAME",

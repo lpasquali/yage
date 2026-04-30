@@ -20,6 +20,7 @@ import (
 	_ "github.com/lpasquali/yage/internal/csi/cindercsi"
 	_ "github.com/lpasquali/yage/internal/csi/gcppd"
 	_ "github.com/lpasquali/yage/internal/csi/hcloud"
+	_ "github.com/lpasquali/yage/internal/csi/vspherecsi"
 )
 
 func names(ds []csi.Driver) []string {
@@ -115,7 +116,7 @@ func TestSelectorNoProviderNoExplicit(t *testing.T) {
 func TestRegisteredContainsScopedDrivers(t *testing.T) {
 	got := csi.Registered()
 	sort.Strings(got)
-	for _, want := range []string{"aws-ebs", "azure-disk", "gcp-pd", "hcloud-csi", "openstack-cinder"} {
+	for _, want := range []string{"aws-ebs", "azure-disk", "gcp-pd", "hcloud-csi", "openstack-cinder", "vsphere-csi"} {
 		found := false
 		for _, n := range got {
 			if n == want {
@@ -135,13 +136,13 @@ func TestRegisteredContainsScopedDrivers(t *testing.T) {
 // Provider.EnsureCSISecret onto the registry); issue #84 adds Hetzner;
 // issue #88 added OpenStack (openstack-cinder).
 func TestDefaultsForOnlyImplementedProviders(t *testing.T) {
-	for _, p := range []string{"aws", "azure", "gcp", "hetzner", "openstack", "proxmox"} {
+	for _, p := range []string{"aws", "azure", "gcp", "hetzner", "openstack", "proxmox", "vsphere"} {
 		if got := csi.DefaultsFor(p); len(got) == 0 {
 			t.Errorf("DefaultsFor(%q) = empty, expected at least one driver", p)
 		}
 	}
 	// Unimplemented-yet providers get nil.
-	for _, p := range []string{"linode", "oci", "digitalocean", "ibmcloud", "vsphere"} {
+	for _, p := range []string{"linode", "oci", "digitalocean", "ibmcloud"} {
 		if got := csi.DefaultsFor(p); got != nil {
 			t.Errorf("DefaultsFor(%q) = %v, expected nil (driver not yet shipped)", p, got)
 		}

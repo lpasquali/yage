@@ -56,6 +56,7 @@ import (
 	_ "github.com/lpasquali/yage/internal/csi/hcloud"
 	_ "github.com/lpasquali/yage/internal/csi/proxmoxcsi"
 	_ "github.com/lpasquali/yage/internal/csi/rookceph"
+	_ "github.com/lpasquali/yage/internal/csi/vspherecsi"
 )
 
 func main() {

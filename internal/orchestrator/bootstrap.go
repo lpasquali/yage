@@ -102,7 +102,6 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		shell.RequireCmd("kubectl")
 		kindsync.MergeBootstrapSecretsFromKind(cfg)
 		_ = kindsync.SyncBootstrapConfigToKind(cfg)
-		_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 		if ctx, ok := kubectl.ResolveBootstrapContext(cfg); ok {
 			cfg.KindClusterName = strings.TrimPrefix(ctx, "kind-")
 		}
@@ -197,7 +196,6 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		shell.RequireCmd("kubectl")
 		kindsync.MergeBootstrapSecretsFromKind(cfg)
 		_ = kindsync.SyncBootstrapConfigToKind(cfg)
-		_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 		if ctx, ok := kubectl.ResolveBootstrapContext(cfg); ok {
 			cfg.KindClusterName = strings.TrimPrefix(ctx, "kind-")
 		}
@@ -336,7 +334,6 @@ func Run(ctx context.Context, cfg *config.Config) int {
 
 	kindsync.MergeBootstrapSecretsFromKind(cfg)
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
-	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 
 	// Determine whether to skip heavy maintenance (upgrade Docker, BPG provider).
 	skipHeavy := false
@@ -365,6 +362,7 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		logx.Die("ensure_opentofu failed: %v", err)
 	}
 	shell.RequireCmd("tofu")
+	// TODO: move to Provider.EnsureIdentity or a new Provider.InstallDependencies method.
 	if !skipHeavy && cfg.InfraProvider == "proxmox" {
 		if err := opentofux.InstallBPGProvider(cfg); err != nil {
 			logx.Die("install_bpg_proxmox_provider failed: %v", err)
@@ -422,8 +420,7 @@ func Run(ctx context.Context, cfg *config.Config) int {
 			if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 				EnsureProxmoxAdminConfig(cfg,
 					func() { kindsync.MergeBootstrapSecretsFromKind(cfg) },
-					func() { _ = kindsync.SyncBootstrapConfigToKind(cfg) },
-					func() { _ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg) })
+					func() { _ = kindsync.SyncBootstrapConfigToKind(cfg) })
 			}
 			var missingAdmin []string
 			if cfg.Providers.Proxmox.URL == "" {
@@ -461,8 +458,7 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		if cfg.Providers.Proxmox.URL == "" || cfg.Providers.Proxmox.AdminUsername == "" || cfg.Providers.Proxmox.AdminToken == "" {
 			EnsureProxmoxAdminConfig(cfg,
 				func() { kindsync.MergeBootstrapSecretsFromKind(cfg) },
-				func() { _ = kindsync.SyncBootstrapConfigToKind(cfg) },
-				func() { _ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg) })
+				func() { _ = kindsync.SyncBootstrapConfigToKind(cfg) })
 		}
 		if err := api.ResolveRegionAndNodeFromAdminAPI(cfg); err != nil {
 			logx.Warn("%v", err)
@@ -488,7 +484,6 @@ func Run(ctx context.Context, cfg *config.Config) int {
 				fmt.Fprint(os.Stderr, "\033[1;36m[?]\033[0m Proxmox API Token secret (UUID): ")
 				cfg.Providers.Proxmox.CAPISecret = promptx.ReadLine()
 				_ = kindsync.SyncBootstrapConfigToKind(cfg)
-				_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 				logx.Log("Proxmox API identity updated in kind when the management cluster is reachable. clusterctl on disk is not used by default (temp file for CLI only).")
 			} else {
 				logx.Warn("Skipping interactive creation. Set PROXMOX_URL, PROXMOX_CAPI_TOKEN, and PROXMOX_CAPI_SECRET, or add them to %s on kind, or set CLUSTERCTL_CFG to a local YAML you maintain.",
@@ -603,6 +598,7 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	}
 
 	// --- Resolve CAPMOX image tag (Proxmox only) ---
+	// TODO: move to Provider.ProviderImage or a new Provider.ResolveImages method.
 	var capmoxImage, capmoxTag string
 	if cfg.InfraProvider == "proxmox" {
 		logx.Log("Resolving CAPMOX image tag...")
@@ -670,6 +666,7 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		if i := strings.LastIndex(cfg.IPAMImage, ":"); i >= 0 {
 			ipamTag = cfg.IPAMImage[i+1:]
 		}
+		// TODO: move to Provider.ResolveImages or a new Provider.LoadImages method.
 		if cfg.InfraProvider == "proxmox" && capmoxImage != "" {
 			_ = installer.BuildIfNoArm64(cfg, capmoxImage, cfg.CAPMOXRepo, capmoxTag, cfg.CAPMOXBuildDir, cfg.KindClusterName)
 		}
@@ -679,7 +676,6 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		_ = installer.BuildIfNoArm64(cfg, cfg.IPAMImage, cfg.IPAMRepo, ipamTag, "./cluster-api-ipam-provider-in-cluster", cfg.KindClusterName)
 	}
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
-	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 
 	// --- Management cluster CNI ---
 	logx.Log("Using kind's default CNI (kindnet) on the management cluster; skipping Cilium install.")
@@ -779,6 +775,7 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	ctx, phGroup := obs.StartPhase(ctx, "group-ensure",
 		obs.Str("provider", cfg.InfraProvider),
 	)
+	// TODO: move to prov.EnsureGroup(cfg, cfg.Providers.Proxmox.Pool) once EnsureGroup covers pool semantics.
 	if cfg.InfraProvider == "proxmox" && cfg.Providers.Proxmox.Pool != "" {
 		if err := api.EnsurePool(cfg, cfg.Providers.Proxmox.Pool); err != nil {
 			logx.Warn("Proxmox pool %s: %v — VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Pool, err)
@@ -786,6 +783,7 @@ func Run(ctx context.Context, cfg *config.Config) int {
 			logx.Log("Proxmox pool '%s' ensured (workload).", cfg.Providers.Proxmox.Pool)
 		}
 	}
+	// TODO: move to prov.EnsureGroup(cfg, cfg.Providers.Proxmox.Mgmt.Pool) once EnsureGroup covers pool semantics.
 	if cfg.InfraProvider == "proxmox" && cfg.Pivot.Enabled && cfg.Providers.Proxmox.Mgmt.Pool != "" {
 		if err := api.EnsurePool(cfg, cfg.Providers.Proxmox.Mgmt.Pool); err != nil {
 			logx.Warn("Proxmox pool %s: %v — mgmt VMs may fail to register; create it manually if needed.", cfg.Providers.Proxmox.Mgmt.Pool, err)

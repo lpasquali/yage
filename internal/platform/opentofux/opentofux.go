@@ -349,7 +349,6 @@ func RecreateResyncCapmox(cfg *config.Config) {
 	}
 	logx.Log("Re-syncing in-cluster CAPI/capmox credentials after Proxmox provider is installed (recreate mode)...")
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
-	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 	kindsync.RolloutRestartCapmoxController(cfg)
 }
 
@@ -385,7 +384,6 @@ func RecreateIdentitiesWorkloadCSISecrets(cfg *config.Config) {
 		kindsync.RolloutRestartProxmoxCSIOnWorkload(cfg)
 	}
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
-	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 	logx.Log("Proxmox CAPI/CSI identity re-creation: workload-side CSI updates and final syncs finished (recreate mode).")
 }
 

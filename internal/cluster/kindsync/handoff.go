@@ -11,9 +11,8 @@ package kindsync
 //   - applySecret:   server-side-apply on the destination (mgmt) side.
 //   - k8sclient.FieldManager / k8sclient.ForContext / ForKubeconfigFile.
 //
-// The set of Secrets handled mirrors what
-// SyncBootstrapConfigToKind + SyncProxmoxBootstrapLiteralCredentialsToKind
-// write into kind, plus the live capmox-system/capmox-manager-credentials
+// The set of Secrets handled mirrors what SyncBootstrapConfigToKind
+// writes into kind, plus the live capmox-system/capmox-manager-credentials
 // copy that ships across as part of the same hand-off.
 //
 // CAPI inventory (Cluster, Machines, KubeadmConfig, etc.) is *not* this

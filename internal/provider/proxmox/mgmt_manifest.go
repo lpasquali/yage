@@ -103,7 +103,7 @@ func (p *Provider) RenderMgmtManifest(cfg *config.Config, clusterctlCfgPath stri
 		"--infrastructure", cfg.InfraProvider,
 	}
 	cmd := exec.Command("clusterctl", args...)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = capimanifest.BuildEnv(
 		"PROXMOX_URL="+cfg.Providers.Proxmox.URL,
 		"PROXMOX_REGION="+cfg.Providers.Proxmox.Region,
 		"PROXMOX_NODE="+cfg.Providers.Proxmox.Node,

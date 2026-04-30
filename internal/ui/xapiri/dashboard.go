@@ -886,6 +886,39 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	return m
 }
 
+// preserveTransientState copies display state that survives a config reload.
+// Add new persistent display fields here — not in the cfgEntryLoadMsg handler.
+func preserveTransientState(old, next dashModel) dashModel {
+	next.costRows = old.costRows
+	next.costLoading = old.costLoading
+	next.costPeriodIdx = old.costPeriodIdx
+	next.logLines = old.logLines
+	next.logSub = old.logSub
+	next.sysSampler = old.sysSampler
+	next.sysStats = old.sysStats
+	next.width = old.width
+	next.height = old.height
+	next.cfg = old.cfg
+	return next
+}
+
+// inTextField reports whether the active tab has a text input focused, so
+// global shortcuts (number keys, [ / ] timeframe, etc.) yield to typing.
+func (m dashModel) inTextField() bool {
+	switch m.activeTab {
+	case tabProvision:
+		return m.focus < len(dashFields) && dashFields[m.focus].kind == fkText
+	case tabConfig:
+		return m.cfgScreen == cfgScreenNewName
+	case tabLogs:
+		return m.logFiltering
+	case tabCosts:
+		return m.costCredsMode
+	default:
+		return false
+	}
+}
+
 func (m dashModel) Init() tea.Cmd {
 	m.lastDirty = time.Now()
 	cmds := []tea.Cmd{
@@ -1389,17 +1422,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newM := newDashModel(m.cfg, m.s)
 		newM.cfgSelected = true
 		newM.activeTab = tabProvision
-		newM.width = m.width
-		newM.height = m.height
-		newM.costRows = m.costRows
-		newM.costLoading = m.costLoading
-		newM.costPeriodIdx = m.costPeriodIdx
-		newM.logLines = m.logLines
-		newM.logSub = m.logSub
-		newM.sysSampler = m.sysSampler
-		newM.sysStats = m.sysStats
-		// Keep the original cfg pointer so callers stay in sync.
-		newM.cfg = m.cfg
+		newM = preserveTransientState(m, newM)
 		return newM, tea.Batch(textinput.Blink, newM.kickRefreshCmd(), newM.watchLogsCmd())
 
 	case saveCostCredsMsg:
@@ -1585,35 +1608,32 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// ── tab switching: left/right arrows or number keys 1-9 ──
 		// (Only when not in a text input on the provision tab, and a config is selected.)
-		inTextField := (m.activeTab == tabProvision && dashFields[m.focus].kind == fkText) ||
-			(m.activeTab == tabConfig && m.cfgScreen == cfgScreenNewName) ||
-			(m.activeTab == tabLogs && m.logFiltering)
 		switch {
-		case !inTextField && keyStr == "1":
+		case !m.inTextField() && keyStr == "1":
 			m.activeTab = tabConfig
 			return m, nil
-		case !inTextField && keyStr == "2" && m.cfgReady():
+		case !m.inTextField() && keyStr == "2" && m.cfgReady():
 			m.activeTab = tabProvision
 			return m, nil
-		case !inTextField && keyStr == "3" && m.cfgReady():
+		case !m.inTextField() && keyStr == "3" && m.cfgReady():
 			m.activeTab = tabEditor
 			return m, m.switchToEditorTab()
-		case !inTextField && keyStr == "4" && m.cfgReady():
+		case !m.inTextField() && keyStr == "4" && m.cfgReady():
 			m.activeTab = tabCosts
 			return m, nil
-		case !inTextField && keyStr == "5" && m.cfgReady():
+		case !m.inTextField() && keyStr == "5" && m.cfgReady():
 			m.activeTab = tabLogs
 			return m, nil
-		case !inTextField && keyStr == "6" && m.cfgReady():
+		case !m.inTextField() && keyStr == "6" && m.cfgReady():
 			m.activeTab = tabDeploy
 			return m, nil
-		case !inTextField && keyStr == "7" && m.cfgReady():
+		case !m.inTextField() && keyStr == "7" && m.cfgReady():
 			m.activeTab = tabDeps
 			return m, nil
-		case !inTextField && keyStr == "8" && m.cfgReady():
+		case !m.inTextField() && keyStr == "8" && m.cfgReady():
 			m.activeTab = tabHelp
 			return m, nil
-		case (key == tea.KeyLeft || key == tea.KeyRight) && !inTextField && m.activeTab != tabConfig && m.activeTab != tabProvision && m.cfgReady():
+		case (key == tea.KeyLeft || key == tea.KeyRight) && !m.inTextField() && m.activeTab != tabConfig && m.activeTab != tabProvision && m.cfgReady():
 			// Only cycle tabs with arrows when not on config/provision (those use arrows for fields/list).
 			if key == tea.KeyLeft {
 				m.activeTab = (m.activeTab - 1 + tabCount) % tabCount
@@ -1692,11 +1712,11 @@ func (m dashModel) updateCfgListScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	keyStr := msg.String()
 	total := len(m.cfgCandidates) + 1 // +1 for the "[ + New config ]" sentinel
 	switch {
-	case key == tea.KeyUp || keyStr == "k":
+	case key == tea.KeyUp:
 		if m.cfgListCursor > 0 {
 			m.cfgListCursor--
 		}
-	case key == tea.KeyDown || keyStr == "j":
+	case key == tea.KeyDown:
 		if m.cfgListCursor < total-1 {
 			m.cfgListCursor++
 		}
@@ -1757,23 +1777,15 @@ func (m dashModel) updateCfgEditScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	keyStr := msg.String()
 
 	switch {
-	case key == tea.KeyTab:
-		m = m.moveFocus(true)
-		return m, textinput.Blink
-
-	case key == tea.KeyShiftTab:
-		m = m.moveFocus(false)
-		return m, textinput.Blink
-
 	case keyStr == "ctrl+l":
 		m.activeTab = tabLogs
 		return m, nil
 
-	case key == tea.KeyUp || keyStr == "k":
+	case key == tea.KeyUp:
 		m = m.moveFocus(false)
 		return m, textinput.Blink
 
-	case key == tea.KeyDown || keyStr == "j":
+	case key == tea.KeyDown:
 		m = m.moveFocus(true)
 		return m, textinput.Blink
 	}
@@ -1862,9 +1874,9 @@ func (m dashModel) updateLogsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Clear active filter.
 		m.logFilter = ""
 		m.logFilterInput.SetValue("")
-	case key == tea.KeyUp || keyStr == "k":
+	case key == tea.KeyUp:
 		m.logScroll++
-	case key == tea.KeyDown || keyStr == "j":
+	case key == tea.KeyDown:
 		if m.logScroll > 0 {
 			m.logScroll--
 		}
@@ -1931,11 +1943,11 @@ func (m dashModel) updateCostsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.costCredsMode = true
 		m.costCredsInputs[m.costCredsFocus].Focus()
 		return m, textinput.Blink
-	case key == tea.KeyUp || keyStr == "k":
+	case key == tea.KeyUp:
 		if len(m.costRows) > 0 {
 			m.costVendor = (m.costVendor - 1 + len(m.costRows)) % len(m.costRows)
 		}
-	case key == tea.KeyDown || keyStr == "j":
+	case key == tea.KeyDown:
 		if len(m.costRows) > 0 {
 			m.costVendor = (m.costVendor + 1) % len(m.costRows)
 		}
@@ -3606,6 +3618,12 @@ func (m dashModel) renderCostsTab(w, h int) string {
 	lines = append(lines, title)
 	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
 
+	if m.cfg.CostCompareEnabled && !m.cfg.GeoIPEnabled && m.cfg.Cost.Currency.DataCenterLocation == "" {
+		lines = append(lines, stMuted.Render("  DataCenter location unset — cost comparison unavailable."))
+		lines = append(lines, stMuted.Render("  Set YAGE_DATA_CENTER_LOCATION or enable GeoIP to activate region-aware pricing."))
+		lines = append(lines, "")
+	}
+
 	if m.costCredsMode {
 		lines = append(lines, m.renderCostsCredsForm()...)
 	} else if len(m.costRows) == 0 {
@@ -3973,19 +3991,20 @@ func (m dashModel) renderHelpTab(w, h int) string {
 		"  " + stAccent.Render("← →") + "               cycle tabs (when not in text field)",
 		"",
 		stBold.Render("  Config tab  (config selection)"),
-		"  " + stAccent.Render("↑ ↓ / j k") + "      navigate list",
+		"  " + stAccent.Render("↑ ↓") + "           navigate list",
 		"  " + stAccent.Render("enter") + "           select config (→ provision tab)",
 		"  " + stAccent.Render("n") + "               new config",
 		"  " + stAccent.Render("r") + "               refresh list",
 		"",
 		stBold.Render("  Provision tab  (edit form)"),
-		"  " + stAccent.Render("↑ ↓ / j k / tab ⇧tab") + "  move between fields",
+		"  " + stAccent.Render("↑ ↓") + "                    move between fields",
 		"  " + stAccent.Render("space / enter") + "          toggle booleans",
 		"  " + stAccent.Render("← →") + "                    cycle select options",
 		"  " + stAccent.Render("ctrl+l") + "                 switch to logs tab",
 		"",
 		stBold.Render("  Costs tab"),
-		"  " + stAccent.Render("j / k") + "            scroll vendor list",
+		"  " + stAccent.Render("↑ ↓") + "              scroll vendor list",
+		"  " + stAccent.Render("[ / ]") + "            previous / next time window",
 		"  " + stAccent.Render("c") + "                edit API credentials",
 		"  " + stAccent.Render("tab / shift+tab") + "  move between credential fields",
 		"  " + stAccent.Render("enter") + "            advance / save credentials",
@@ -3995,7 +4014,7 @@ func (m dashModel) renderHelpTab(w, h int) string {
 		"  " + stAccent.Render("enter") + "            activate focused button",
 		"",
 		stBold.Render("  Logs tab"),
-		"  " + stAccent.Render("j / k") + "            scroll down / up",
+		"  " + stAccent.Render("↑ ↓") + "              scroll down / up",
 		"  " + stAccent.Render("PgUp / PgDn") + "      scroll by 10 lines",
 		"  " + stAccent.Render("g / G") + "            jump to top / bottom (follow)",
 		"  " + stAccent.Render("/") + "                filter (vim-style, esc to clear)",

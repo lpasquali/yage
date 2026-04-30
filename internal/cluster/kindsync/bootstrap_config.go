@@ -425,6 +425,10 @@ func pickBootstrapConfig(candidates []BootstrapCandidate, title string) *Bootstr
 	for i, c := range candidates {
 		options[i] = huh.NewOption(c.Label(), i)
 	}
+	km := huh.NewDefaultKeyMap()
+	km.Select.Up.SetKeys("up")
+	km.Select.Down.SetKeys("down")
+
 	var chosen int
 	form := huh.NewForm(
 		huh.NewGroup(
@@ -433,7 +437,7 @@ func pickBootstrapConfig(candidates []BootstrapCandidate, title string) *Bootstr
 				Options(options...).
 				Value(&chosen),
 		),
-	)
+	).WithKeyMap(km)
 	if err := form.Run(); err != nil {
 		// User cancelled (Ctrl+C) or non-TTY fallback.
 		fmt.Fprintf(os.Stderr, "kindsync: selection cancelled: %v\n", err)
@@ -522,13 +526,17 @@ func SelectBootstrapConfigForXapiri(cfg *config.Config) error {
 	}
 	options[len(candidates)] = huh.NewOption("  [ create new draft... ]", newDraftSentinel)
 
+	km := huh.NewDefaultKeyMap()
+	km.Select.Up.SetKeys("up")
+	km.Select.Down.SetKeys("down")
+
 	var chosen string
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title(fmt.Sprintf("Load a saved config on kind cluster %q (or create new draft)", cfg.KindClusterName)).
 			Options(options...).
 			Value(&chosen),
-	)).Run(); err != nil {
+	)).WithKeyMap(km).Run(); err != nil {
 		return err
 	}
 

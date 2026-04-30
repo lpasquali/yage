@@ -22,7 +22,7 @@ import (
 //  3. Interactive prompts (only if stdin is a TTY).
 //
 // Dies when it still can't satisfy all three admin fields.
-func EnsureProxmoxAdminConfig(cfg *config.Config, merge, syncConfig, syncCreds func()) {
+func EnsureProxmoxAdminConfig(cfg *config.Config, merge, syncConfig func()) {
 	if merge != nil {
 		merge()
 	}
@@ -65,9 +65,6 @@ func EnsureProxmoxAdminConfig(cfg *config.Config, merge, syncConfig, syncCreds f
 		}
 		if syncConfig != nil {
 			syncConfig()
-		}
-		if syncCreds != nil {
-			syncCreds()
 		}
 		if !cfg.PersistLocalSecrets() {
 			logx.Log("Local CSI / extra file persistence is off; admin API identity is still synced to kind when the cluster is reachable. No proxmox-admin file is written by default.")

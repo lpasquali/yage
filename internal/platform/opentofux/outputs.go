@@ -40,7 +40,6 @@ func GenerateConfigsFromOutputs(cfg *config.Config) {
 	api.RefreshDerivedIdentityTokenIDs(cfg)
 
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
-	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 	if !cfg.PersistLocalSecrets() {
 		logx.Log("Local CSI YAML persistence is off; bootstrap config was still pushed to kind when the cluster is reachable (use --persist-local-secrets to also write PROXMOX_CSI_CONFIG when set).")
 	}
@@ -61,7 +60,6 @@ func WriteClusterctlConfigIfMissing(cfg *config.Config) {
 		return
 	}
 	_ = kindsync.SyncBootstrapConfigToKind(cfg)
-	_ = kindsync.SyncProxmoxBootstrapLiteralCredentialsToKind(cfg)
 	switch {
 	case cfg.Providers.Proxmox.BootstrapSecretName != "" && cfg.Providers.Proxmox.BootstrapAdminSecretName != cfg.Providers.Proxmox.BootstrapSecretName:
 		logx.Log("Bootstrap state synced to kind: %s (config.yaml), %s (CAPI+CSI), %s (proxmox-admin.yaml) when the management cluster is reachable; clusterctl uses a temp file for the CLI only.",

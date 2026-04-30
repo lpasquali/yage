@@ -30,62 +30,6 @@ func kindClusterExists(name string) bool {
 	return false
 }
 
-// proxmoxEnvMap returns the set of PROXMOX_* / ARGO_WORKLOAD_POSTSYNC_*
-// values to round-trip into the kind Secret, keyed by their upper-snake
-// env-var name so the kindSecret.LookupValue callback stays simple.
-//
-// Values are read from cfg, not os.Environ(), so CLI flags correctly win
-// over the shell. Only non-empty keys go into the map — a missing lookup
-// returns "" which is the "skip" signal.
-func proxmoxEnvMap(cfg *config.Config) map[string]string {
-	put := func(m map[string]string, k, v string) {
-		if v != "" {
-			m[k] = v
-		}
-	}
-	m := map[string]string{}
-	put(m, "PROXMOX_URL", cfg.Providers.Proxmox.URL)
-	put(m, "PROXMOX_CAPI_TOKEN", cfg.Providers.Proxmox.CAPIToken)
-	put(m, "PROXMOX_CAPI_SECRET", cfg.Providers.Proxmox.CAPISecret)
-	put(m, "PROXMOX_REGION", cfg.Providers.Proxmox.Region)
-	put(m, "PROXMOX_NODE", cfg.Providers.Proxmox.Node)
-	put(m, "PROXMOX_ADMIN_USERNAME", cfg.Providers.Proxmox.AdminUsername)
-	put(m, "PROXMOX_ADMIN_TOKEN", cfg.Providers.Proxmox.AdminToken)
-	put(m, "PROXMOX_ADMIN_INSECURE", cfg.Providers.Proxmox.AdminInsecure)
-	put(m, "PROXMOX_CSI_URL", cfg.Providers.Proxmox.CSIURL)
-	put(m, "PROXMOX_CSI_TOKEN_ID", cfg.Providers.Proxmox.CSITokenID)
-	put(m, "PROXMOX_CSI_TOKEN_SECRET", cfg.Providers.Proxmox.CSITokenSecret)
-	put(m, "PROXMOX_CSI_USER_ID", cfg.Providers.Proxmox.CSIUserID)
-	put(m, "PROXMOX_CSI_TOKEN_PREFIX", cfg.Providers.Proxmox.CSITokenPrefix)
-	put(m, "PROXMOX_CSI_INSECURE", cfg.Providers.Proxmox.CSIInsecure)
-	put(m, "PROXMOX_CSI_STORAGE_CLASS_NAME", cfg.Providers.Proxmox.CSIStorageClassName)
-	put(m, "PROXMOX_CSI_STORAGE", cfg.Providers.Proxmox.CSIStorage)
-	put(m, "PROXMOX_CSI_RECLAIM_POLICY", cfg.Providers.Proxmox.CSIReclaimPolicy)
-	put(m, "PROXMOX_CSI_FSTYPE", cfg.Providers.Proxmox.CSIFsType)
-	put(m, "PROXMOX_CSI_DEFAULT_CLASS", cfg.Providers.Proxmox.CSIDefaultClass)
-	put(m, "PROXMOX_CSI_TOPOLOGY_LABELS", cfg.Providers.Proxmox.CSITopologyLabels)
-	put(m, "PROXMOX_TOPOLOGY_REGION", cfg.Providers.Proxmox.TopologyRegion)
-	put(m, "PROXMOX_TOPOLOGY_ZONE", cfg.Providers.Proxmox.TopologyZone)
-	put(m, "PROXMOX_CSI_CHART_REPO_URL", cfg.Providers.Proxmox.CSIChartRepoURL)
-	put(m, "PROXMOX_CSI_CHART_NAME", cfg.Providers.Proxmox.CSIChartName)
-	put(m, "PROXMOX_CSI_CHART_VERSION", cfg.Providers.Proxmox.CSIChartVersion)
-	put(m, "PROXMOX_CSI_NAMESPACE", cfg.Providers.Proxmox.CSINamespace)
-	put(m, "PROXMOX_CSI_CONFIG_PROVIDER", cfg.Providers.Proxmox.CSIConfigProvider)
-	put(m, "PROXMOX_CSI_SMOKE_ENABLED", boolStr(cfg.Providers.Proxmox.CSISmokeEnabled))
-	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_URL", cfg.ArgoCD.PostsyncHooksGitURL)
-	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_PATH", cfg.ArgoCD.PostsyncHooksGitPath)
-	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_REF", cfg.ArgoCD.PostsyncHooksGitRef)
-	put(m, "ARGO_WORKLOAD_POSTSYNC_HOOKS_KUBECTL_IMAGE", cfg.ArgoCD.PostsyncHooksKubectlImg)
-	return m
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
-}
-
 // writeWorkloadKubeconfig fetches the workload cluster's kubeconfig out
 // of the Cluster's CAPI-managed Secret (<name>-kubeconfig on kind) and
 // writes the decoded body to a tmp file. The file is readable by the

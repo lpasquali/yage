@@ -193,9 +193,12 @@ func (s *state) initFromConfig(cfg *config.Config) {
 	}
 	// Restore fork from saved InfraProvider so the dashboard opens in
 	// the correct on-prem/cloud view without a manual mode switch.
-	if provider.AirgapCompatible(cfg.InfraProvider) {
+	// When InfraProvider is not yet set, fall back to env-var heuristics.
+	if cfg.InfraProvider == "" {
+		s.fork = detectFork(cfg)
+	} else if provider.AirgapCompatible(cfg.InfraProvider) {
 		s.fork = forkOnPrem
-	} else if cfg.InfraProvider != "" {
+	} else {
 		s.fork = forkCloud
 	}
 	switch cfg.Workload.Environment {

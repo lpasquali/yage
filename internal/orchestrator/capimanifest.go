@@ -299,6 +299,10 @@ func WorkloadClusterctlIsStale(cfg *config.Config) bool {
 // infrastructure providers (AWS, Azure, …) CAP* credentials come
 // from the process environment; clusterctl's --config is optional —
 // returns "" so init/generate omit it.
+//
+// TODO(#71): move the ephemeral-config generation into a provider method
+// (e.g. Provider.ClusterctlConfigBody) so non-Proxmox providers can
+// return "" and this function becomes provider-agnostic.
 func SyncClusterctlConfigFile(cfg *config.Config) string {
 	if cfg.ClusterctlCfgFilePresent() {
 		return cfg.ClusterctlCfg

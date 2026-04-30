@@ -80,6 +80,36 @@ func (c *Config) SyncCAPIControllerImagesToClusterctlVersion() {
 	c.CAPIControlplaneImage = "registry.k8s.io/cluster-api/kubeadm-control-plane-controller:" + v
 }
 
+// WorkloadGroupName returns the provider-specific grouping name for the
+// workload cluster's VMs (Proxmox pool, vSphere folder, …). Returns ""
+// when the active provider has no grouping concept or none is configured.
+// Callers should skip EnsureGroup when the returned name is empty.
+func (c *Config) WorkloadGroupName() string {
+	switch c.InfraProvider {
+	case "proxmox":
+		return c.Providers.Proxmox.Pool
+	case "vsphere":
+		return c.Providers.Vsphere.Folder
+	default:
+		return ""
+	}
+}
+
+// MgmtGroupName returns the provider-specific grouping name for the
+// management cluster's VMs (Proxmox pool, vSphere folder, …). Returns ""
+// when the active provider has no grouping concept or none is configured.
+// Callers should skip EnsureGroup when the returned name is empty.
+func (c *Config) MgmtGroupName() string {
+	switch c.InfraProvider {
+	case "proxmox":
+		return c.Providers.Proxmox.Mgmt.Pool
+	case "vsphere":
+		return c.Providers.Vsphere.Folder
+	default:
+		return ""
+	}
+}
+
 func isRegularFile(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && !fi.IsDir()

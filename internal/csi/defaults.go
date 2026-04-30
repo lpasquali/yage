@@ -28,6 +28,8 @@ func DefaultsFor(provider string) []string {
 		return []string{"azure-disk"}
 	case "gcp":
 		return []string{"gcp-pd"}
+	case "hetzner":
+		return []string{"hcloud-csi"}
 	case "proxmox":
 		return []string{"proxmox-csi"}
 	default:

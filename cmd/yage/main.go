@@ -54,6 +54,7 @@ import (
 	_ "github.com/lpasquali/yage/internal/csi/doblock"
 	_ "github.com/lpasquali/yage/internal/csi/gcppd"
 	_ "github.com/lpasquali/yage/internal/csi/hcloud"
+	_ "github.com/lpasquali/yage/internal/csi/linodebs"
 	_ "github.com/lpasquali/yage/internal/csi/longhorn"
 	_ "github.com/lpasquali/yage/internal/csi/ociblock"
 	_ "github.com/lpasquali/yage/internal/csi/openebs"

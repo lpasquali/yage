@@ -24,7 +24,8 @@ import (
 	"github.com/lpasquali/yage/internal/cluster/capacity"
 	"github.com/lpasquali/yage/internal/capi/manifest"
 	"github.com/lpasquali/yage/internal/config"
-	"github.com/lpasquali/yage/internal/capi/csi"
+	"github.com/lpasquali/yage/internal/csi"
+	"github.com/lpasquali/yage/internal/csi/proxmoxcsi"
 	"github.com/lpasquali/yage/internal/platform/installer"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/cluster/kind"
@@ -948,19 +949,33 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		}
 	}
 
-	// Proxmox CSI config Secret on the workload.
-	if cfg.Providers.Proxmox.CSIEnabled && cfg.ArgoCD.Enabled && cfg.ArgoCD.WorkloadEnabled {
-		csi.LoadVarsFromConfig(cfg)
+	// CSI driver Secrets on the workload.
+	// LoadVarsFromConfig fills credential fields from the on-disk YAML
+	// before Selector picks up the driver list; the fallback URL comes
+	// from the Proxmox API endpoint when CSIURL is not set explicitly.
+	// EnsureSecret owns kubeconfig-file cleanup via defer, so no
+	// os.Remove calls are needed here.  ErrNotApplicable (disabled or
+	// missing creds) is a silent skip; any other error is a warning.
+	if cfg.ArgoCD.Enabled && cfg.ArgoCD.WorkloadEnabled {
+		proxmoxcsi.LoadVarsFromConfig(cfg)
 		if cfg.Providers.Proxmox.CSIURL == "" {
 			cfg.Providers.Proxmox.CSIURL = api.APIJSONURL(cfg)
 		}
-		if cfg.Providers.Proxmox.CSIURL != "" && cfg.Providers.Proxmox.CSITokenID != "" &&
-			cfg.Providers.Proxmox.CSITokenSecret != "" && cfg.Providers.Proxmox.Region != "" {
-			csi.ApplyConfigSecretToWorkload(cfg, func() (string, error) {
-				return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
-			})
-		} else {
-			logx.Warn("Proxmox CSI token material incomplete — push %s-proxmox-csi-config to the workload yourself before syncing the CSI app.", cfg.WorkloadClusterName)
+		for _, d := range csi.Selector(cfg) {
+			wk, err := writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
+			if err != nil {
+				logx.Warn("CSI driver %s: cannot get workload kubeconfig: %v", d.Name(), err)
+				continue
+			}
+			if err := d.EnsureSecret(cfg, wk); err != nil {
+				// applyConfigSecretToWorkload owns cleanup via defer when it
+				// runs; for early returns (ErrNotApplicable, kubeconfig error)
+				// we must clean up the temp file ourselves.
+				os.Remove(wk)
+				if !errors.Is(err, csi.ErrNotApplicable) {
+					logx.Warn("CSI driver %s: EnsureSecret: %v", d.Name(), err)
+				}
+			}
 		}
 	}
 

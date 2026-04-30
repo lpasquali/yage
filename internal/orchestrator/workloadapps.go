@@ -14,8 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/lpasquali/yage/internal/config"
-	"github.com/lpasquali/yage/internal/capi/csi"
 	"github.com/lpasquali/yage/internal/capi/helmvalues"
+	"github.com/lpasquali/yage/internal/csi/proxmoxcsi"
 	"github.com/lpasquali/yage/internal/cost"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/logx"
@@ -69,7 +69,7 @@ func ApplyWorkloadArgoCDApplications(cfg *config.Config) {
 	}
 
 	if cfg.Providers.Proxmox.CSIEnabled {
-		csi.LoadVarsFromConfig(cfg)
+		proxmoxcsi.LoadVarsFromConfig(cfg)
 		if cfg.Providers.Proxmox.CSIURL == "" {
 			cfg.Providers.Proxmox.CSIURL = api.APIJSONURL(cfg)
 		}
@@ -77,7 +77,7 @@ func ApplyWorkloadArgoCDApplications(cfg *config.Config) {
 			cfg.Providers.Proxmox.CSITokenSecret == "" || cfg.Providers.Proxmox.Region == "" {
 			logx.Die("Proxmox CSI credentials incomplete — cannot render in-cluster Argo Application.")
 		}
-		csi.ApplyConfigSecretToWorkload(cfg, func() (string, error) {
+		proxmoxcsi.ApplyConfigSecretToWorkload(cfg, func() (string, error) {
 			return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
 		})
 		csiValues := fmt.Sprintf(`existingConfigSecret: "%s-proxmox-csi-config"

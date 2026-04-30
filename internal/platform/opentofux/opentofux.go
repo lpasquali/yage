@@ -20,7 +20,7 @@ import (
 
 	"github.com/lpasquali/yage/internal/capi/manifest"
 	"github.com/lpasquali/yage/internal/config"
-	"github.com/lpasquali/yage/internal/capi/csi"
+	"github.com/lpasquali/yage/internal/csi/proxmoxcsi"
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/provider/proxmox/api"
@@ -368,7 +368,7 @@ func RecreateIdentitiesWorkloadCSISecrets(cfg *config.Config) {
 				cfg.Providers.Proxmox.CSIURL != "" && cfg.Providers.Proxmox.CSITokenID != "" &&
 				cfg.Providers.Proxmox.CSITokenSecret != "" && cfg.Providers.Proxmox.Region != "" {
 				ctx := "kind-" + cfg.KindClusterName
-				csi.ApplyConfigSecretToWorkload(cfg, func() (string, error) {
+				proxmoxcsi.ApplyConfigSecretToWorkload(cfg, func() (string, error) {
 					return writeWorkloadKubeconfigToTemp(cfg, ctx)
 				})
 			} else {

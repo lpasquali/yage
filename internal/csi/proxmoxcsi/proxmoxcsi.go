@@ -71,7 +71,21 @@ func (driver) RenderValues(cfg *config.Config) (string, error) {
 // cluster. The Secret name, namespace, and aliasing
 // (<cluster>-proxmox-csi-config plus the short proxmox-csi-config
 // mirror) are an upstream-chart contract.
+//
+// Returns csi.ErrNotApplicable when PROXMOX_CSI_ENABLED is false or
+// required credentials (URL / token ID / token secret / region) are
+// not populated; the orchestrator loop treats this as a silent skip.
 func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) error {
+	if !cfg.Providers.Proxmox.CSIEnabled {
+		return csi.ErrNotApplicable
+	}
+	if cfg.Providers.Proxmox.CSIURL == "" ||
+		cfg.Providers.Proxmox.CSITokenID == "" ||
+		cfg.Providers.Proxmox.CSITokenSecret == "" ||
+		cfg.Providers.Proxmox.Region == "" {
+		logx.Warn("proxmox-csi: skipping EnsureSecret — one or more required fields (CSIURL, CSITokenID, CSITokenSecret, Region) are empty.")
+		return csi.ErrNotApplicable
+	}
 	return applyConfigSecretToWorkload(cfg, func() (string, error) {
 		return workloadKubeconfigPath, nil
 	})

@@ -950,6 +950,12 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	}
 
 	// CSI driver Secrets on the workload.
+	// LoadVarsFromConfig fills credential fields from the on-disk YAML
+	// before Selector picks up the driver list; the fallback URL comes
+	// from the Proxmox API endpoint when CSIURL is not set explicitly.
+	// EnsureSecret owns kubeconfig-file cleanup via defer, so no
+	// os.Remove calls are needed here.  ErrNotApplicable (disabled or
+	// missing creds) is a silent skip; any other error is a warning.
 	if cfg.ArgoCD.Enabled && cfg.ArgoCD.WorkloadEnabled {
 		proxmoxcsi.LoadVarsFromConfig(cfg)
 		if cfg.Providers.Proxmox.CSIURL == "" {
@@ -962,11 +968,14 @@ func Run(ctx context.Context, cfg *config.Config) int {
 				continue
 			}
 			if err := d.EnsureSecret(cfg, wk); err != nil {
+				// applyConfigSecretToWorkload owns cleanup via defer when it
+				// runs; for early returns (ErrNotApplicable, kubeconfig error)
+				// we must clean up the temp file ourselves.
 				os.Remove(wk)
-				logx.Warn("CSI driver %s: EnsureSecret: %v", d.Name(), err)
-				continue
+				if !errors.Is(err, csi.ErrNotApplicable) {
+					logx.Warn("CSI driver %s: EnsureSecret: %v", d.Name(), err)
+				}
 			}
-			os.Remove(wk)
 		}
 	}
 

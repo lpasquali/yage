@@ -51,6 +51,7 @@ import (
 	_ "github.com/lpasquali/yage/internal/csi/awsebs"
 	_ "github.com/lpasquali/yage/internal/csi/azuredisk"
 	_ "github.com/lpasquali/yage/internal/csi/gcppd"
+	_ "github.com/lpasquali/yage/internal/csi/hcloud"
 	_ "github.com/lpasquali/yage/internal/csi/proxmoxcsi"
 	_ "github.com/lpasquali/yage/internal/csi/rookceph"
 )

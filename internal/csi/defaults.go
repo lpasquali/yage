@@ -34,6 +34,8 @@ func DefaultsFor(provider string) []string {
 		return []string{"openstack-cinder"}
 	case "proxmox":
 		return []string{"proxmox-csi"}
+	case "oci":
+		return []string{"oci-block-storage"}
 	case "vsphere":
 		return []string{"vsphere-csi"}
 	default:

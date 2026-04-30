@@ -18,6 +18,7 @@ import (
 	_ "github.com/lpasquali/yage/internal/csi/awsebs"
 	_ "github.com/lpasquali/yage/internal/csi/azuredisk"
 	_ "github.com/lpasquali/yage/internal/csi/cindercsi"
+	_ "github.com/lpasquali/yage/internal/csi/doblock"
 	_ "github.com/lpasquali/yage/internal/csi/gcppd"
 	_ "github.com/lpasquali/yage/internal/csi/hcloud"
 	_ "github.com/lpasquali/yage/internal/csi/ociblock"
@@ -117,7 +118,7 @@ func TestSelectorNoProviderNoExplicit(t *testing.T) {
 func TestRegisteredContainsScopedDrivers(t *testing.T) {
 	got := csi.Registered()
 	sort.Strings(got)
-	for _, want := range []string{"aws-ebs", "azure-disk", "gcp-pd", "hcloud-csi", "oci-block-storage", "openstack-cinder", "vsphere-csi"} {
+	for _, want := range []string{"aws-ebs", "azure-disk", "do-block-storage", "gcp-pd", "hcloud-csi", "oci-block-storage", "openstack-cinder", "vsphere-csi"} {
 		found := false
 		for _, n := range got {
 			if n == want {
@@ -135,15 +136,15 @@ func TestRegisteredContainsScopedDrivers(t *testing.T) {
 // non-nil only for providers we ship drivers for. Phase F scoped
 // shipped AWS/Azure/GCP; Wave 3 added Proxmox (migrated off
 // Provider.EnsureCSISecret onto the registry); issue #84 adds Hetzner;
-// issue #88 added OpenStack (openstack-cinder); Wave 4 added OCI.
+// issue #88 added OpenStack (openstack-cinder); Wave 4 added OCI and DigitalOcean.
 func TestDefaultsForOnlyImplementedProviders(t *testing.T) {
-	for _, p := range []string{"aws", "azure", "gcp", "hetzner", "oci", "openstack", "proxmox", "vsphere"} {
+	for _, p := range []string{"aws", "azure", "digitalocean", "gcp", "hetzner", "oci", "openstack", "proxmox", "vsphere"} {
 		if got := csi.DefaultsFor(p); len(got) == 0 {
 			t.Errorf("DefaultsFor(%q) = empty, expected at least one driver", p)
 		}
 	}
 	// Unimplemented-yet providers get nil.
-	for _, p := range []string{"digitalocean", "ibmcloud", "linode"} {
+	for _, p := range []string{"ibmcloud", "linode"} {
 		if got := csi.DefaultsFor(p); got != nil {
 			t.Errorf("DefaultsFor(%q) = %v, expected nil (driver not yet shipped)", p, got)
 		}

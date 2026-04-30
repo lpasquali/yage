@@ -6,7 +6,7 @@
 //
 // xapiri are sacred spirits in the Yanomami people's cosmology.
 // yage runs xapiri to get help from the spirits to create a
-// visionary deployment — an interactive walkthrough that surfaces
+// visionary deployment — a full-screen dashboard that surfaces
 // every config knob, validates choices against the active provider,
 // and persists the result to a Secret in the local kind cluster
 // (yage-system namespace) before any state is changed on the target
@@ -14,18 +14,13 @@
 // Secrets; local disk is used only for encrypted kind cluster
 // backup/restore archives.
 //
-// The walkthrough is shaped per docs/abstraction-plan.md §22:
-// budget-first / product-shape-first, with an on-prem-vs-cloud
-// fork at step 0. Steps 1, 2, 3 share their shape across forks
-// (with fork-tweaked options); step 4 diverges (provider-pick on
-// on-prem; budget on cloud); step 5 diverges (capacity check on
-// on-prem; cost-compare + feasibility-merge on cloud); steps 6
-// (provider details), 7 (review + cost line), and 8 (persist +
-// decide) are identical in code on both forks.
+// The dashboard is shaped per docs/abstraction-plan.md §22:
+// budget-first / product-shape-first, with on-prem-vs-cloud mode
+// selection, live cost comparison, and a review+deploy confirmation
+// step. The resolved config is persisted via kindsync so a subsequent
+// non-interactive `yage` run picks it up without re-prompting.
 //
-// Tone: calm, walkthrough-shaped, never an interrogation. The
-// resolved config is echoed back via plan.NewTextWriter at step 7
-// so the review style matches `--dry-run`.
+// Tone: calm, walkthrough-shaped, never an interrogation.
 package xapiri
 
 import (
@@ -38,7 +33,6 @@ import (
 	"strings"
 
 	"github.com/lpasquali/yage/internal/cluster/kind"
-	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/obs"
 )
@@ -93,19 +87,17 @@ func installLogTee() {
 	obs.SetGlobal(obs.NewLoggerFromHandler(teeHandler))
 }
 
-// Run starts the interactive walkthrough. Returns the exit code
+// Run starts the interactive dashboard. Returns the exit code
 // main should propagate: 0 on a clean exit (whether persisted to
 // kind, persisted to local fallback, or user-cancelled at the
 // review step); non-zero only on hard I/O failures we can't
 // recover from.
 //
-// First question is the kind management cluster name — every later
-// step (cost-compare, persist) needs it, and it doubles as the
-// kubectl context. Then the prelude brings that cluster up so step
-// 8 can persist into the kind Secret without silently falling back
-// to local disk. The kind cluster is created without any CAPI
-// infrastructure provider — those land later, in the orchestrator's
-// normal phases, once the user has picked one.
+// The kind management cluster is brought up before the dashboard
+// opens so the dashboard can persist into the kind Secret without
+// silently falling back to local disk. The kind cluster is created
+// without any CAPI infrastructure provider — those land later, in
+// the orchestrator's normal phases, once the user has picked one.
 // Skipped when YAGE_XAPIRI_SKIP_KIND=1 (offline review mode).
 //
 // Caller contract: cmd/yage's `--xapiri` branch passes os.Stdout +
@@ -116,67 +108,10 @@ func Run(w io.Writer, cfg *config.Config) int {
 		return 2
 	}
 	s := newState(w, cfg)
-	if useHuhTUI() {
-		return runHuhBranch(w, cfg, s)
-	}
-	// Deprecated: use YAGE_XAPIRI_TUI=legacy to opt back; removed in a future release.
-	s.greet()
-	if err := s.stepKindClusterName(); err != nil {
-		return s.exit(err)
-	}
-	// Pick (or create) the bootstrap config to load before merging.
-	// Must run after stepKindClusterName so cfg.KindClusterName is set.
-	if err := s.stepConfigSelection(); err != nil {
-		return s.exit(err)
-	}
-	// Load all previously saved state. Two stores exist:
-	//   1. yage-system/proxmox-bootstrap-config — the Proxmox provider
-	//      snapshot written after a real deployment (network fields,
-	//      provider URL/tokens, workload cluster name).
-	//   2. yage-system/<ConfigName>-bootstrap-config — xapiri's per-config
-	//      store, written at the end of each walkthrough. Contains a full
-	//      snapshot that wins over store 1 on overlap (fresher).
-	// Both are best-effort no-ops when the cluster or Secret is not yet
-	// reachable (first-run case).
-	kindsync.MergeBootstrapSecretsFromKind(cfg)
-	_ = kindsync.MergeBootstrapConfigFromKind(cfg)
-	_ = kindsync.ReadCostCompareSecret(cfg) // sets CostCompareEnabled + loads credentials when secret exists
-	disableProvidersMissingCredentials(cfg)
-	s.initFromConfig(cfg) // re-seed walkthrough state now that kind merges have run
-	if cfg.CostCompareEnabled {
-		if err := s.stepCostCompareSetup(); err != nil {
-			return s.exit(err)
-		}
-	}
-	if err := s.stepKubernetesVersion(); err != nil {
-		return s.exit(err)
-	}
-	if !skipKindPrelude() {
-		if err := kind.EnsureClusterUp(cfg, w); err != nil {
-			fmt.Fprintf(w, "xapiri: kind management cluster could not be brought up: %v\n", err)
-			fmt.Fprintln(w, "  set YAGE_XAPIRI_SKIP_KIND=1 to run the wizard offline (config will not be persisted into kind).")
-			return 1
-		}
-	}
-	if err := s.step0_modePick(); err != nil {
-		return s.exit(err)
-	}
-	if s.fork == forkOnPrem {
-		return s.runOnPremFork()
-	}
-	return s.runCloudFork()
+	return runHuhBranch(w, cfg, s)
 }
 
-// useHuhTUI reports whether the bubbletea dashboard should run.
-// Default (env unset or empty) and YAGE_XAPIRI_TUI=huh both select
-// the dashboard. Set YAGE_XAPIRI_TUI=legacy or YAGE_XAPIRI_TUI=bufio
-// to opt back to the legacy bufio-driven walkthrough (deprecated).
-func useHuhTUI() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("YAGE_XAPIRI_TUI")))
-	return v != "legacy" && v != "bufio"
-}
-
-// runHuhBranch is the bubbletea dashboard entry point. The kind prelude brings
+// runHuhBranch is the dashboard entry. The kind prelude brings
 // the management cluster up; the dashboard handles config selection and all
 // subsequent steps interactively.
 func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
@@ -199,7 +134,8 @@ func runHuhBranch(w io.Writer, cfg *config.Config, s *state) int {
 		return 0
 	}
 	if strings.TrimSpace(cfg.InfraProvider) == "" {
-		return s.exit(fmt.Errorf("xapiri: no infrastructure provider selected for deployment; choose a provider in the config tab before deploying"))
+		fmt.Fprintln(w, "xapiri: no infrastructure provider selected for deployment; choose a provider in the config tab before deploying")
+		return 1
 	}
 	s.cfg.XapiriDeployNow = true
 	return 0
@@ -213,20 +149,11 @@ func skipKindPrelude() bool {
 	return v == "1" || strings.EqualFold(v, "true")
 }
 
-// stepConfigSelection offers the user a huh picker to choose (or create)
-// a bootstrap config on the already-set cfg.KindClusterName. It sets
-// cfg.ConfigName so the subsequent MergeBootstrapConfigFromKind call
-// reads the right Secret. No-op when cfg.ConfigNameExplicit is true.
-// Always uses huh regardless of which xapiri path is active.
-func (s *state) stepConfigSelection() error {
-	return kindsync.SelectBootstrapConfigForXapiri(s.cfg)
-}
-
 // providerSubStruct resolves cfg.Providers.<ProperCase(name)> via
 // reflection. Returns the Value + a bool reporting whether the
 // field was found — providers registered by name but missing a
 // sub-struct (the "minstub" path used in tests) silently skip the
-// section. Used by step6_providerDetails in shared.go.
+// section. Used by applyGeoRegionDefaults in georegions.go.
 func providerSubStruct(cfg *config.Config, name string) (reflect.Value, bool) {
 	pv := reflect.ValueOf(&cfg.Providers).Elem()
 	sub := pv.FieldByName(properCase(name))
@@ -276,57 +203,3 @@ func properCase(name string) string {
 		return string(name[0]-32) + name[1:]
 	}
 }
-
-// isSensitiveFieldName recognises field names that should be masked
-// in the review pass and prompted via promptSecret. We match by
-// suffix on common conventions; missing a field here only loses the
-// echo-mask, never functionality.
-func isSensitiveFieldName(name string) bool {
-	for _, suf := range []string{"Token", "Secret", "Password", "APIKey", "Passphrase"} {
-		if hasSuffix(name, suf) {
-			return true
-		}
-	}
-	return false
-}
-
-// isInternalBookkeeping spots provider-config fields that aren't
-// meant to be hand-tuned during the walkthrough — e.g. cached
-// kindsync-side flags and bootstrap-Secret name placeholders. They'd
-// just clutter the prompt list with bookkeeping the user shouldn't
-// be touching.
-func isInternalBookkeeping(name string) bool {
-	for _, pre := range []string{"Bootstrap", "KindCAPMOX", "Identity"} {
-		if hasPrefix(name, pre) {
-			return true
-		}
-	}
-	return false
-}
-
-// isOverheadField spots provider-config fields whose values were
-// already priced into the cost-compare row using defaults derived
-// from resilience tier + workload shape. Re-prompting for them in
-// step6 would let the operator type a number that silently disagrees
-// with the headline figure they just picked from. They remain
-// settable via the corresponding --<provider>-<flag>; the wizard
-// just doesn't ask. Match by suffix on overhead-shaped names.
-func isOverheadField(name string) bool {
-	for _, suf := range []string{
-		"GatewayCount", "ALBCount", "NLBCount",
-		"DataTransferGB", "CloudWatchLogsGB", "Route53HostedZones",
-		"LogAnalyticsGB", "PublicIPCount", "DNSZones",
-	} {
-		if hasSuffix(name, suf) {
-			return true
-		}
-	}
-	return false
-}
-
-// hasPrefix / hasSuffix — tiny helpers so we don't pull in the
-// strings package twice for two trivial calls. Equivalent to
-// strings.HasPrefix / strings.HasSuffix but kept inline so the
-// file is self-describing.
-func hasPrefix(s, p string) bool { return len(s) >= len(p) && s[:len(p)] == p }
-func hasSuffix(s, p string) bool { return len(s) >= len(p) && s[len(s)-len(p):] == p }

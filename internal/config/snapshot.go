@@ -121,6 +121,7 @@ func (c *Config) Snapshot() []SnapshotField {
 		sp("KIND_CLUSTER_NAME", &c.KindClusterName),
 		sp("CLUSTER_ID", &c.ClusterID),
 		sp("PROXMOX_URL", &c.Providers.Proxmox.URL),
+		sp("PROXMOX_ADMIN_USERNAME", &c.Providers.Proxmox.AdminUsername),
 		sp("PROXMOX_ADMIN_INSECURE", &c.Providers.Proxmox.AdminInsecure),
 		sp("PROXMOX_REGION", &c.Providers.Proxmox.Region),
 		sp("PROXMOX_NODE", &c.Providers.Proxmox.Node),

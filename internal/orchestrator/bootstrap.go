@@ -1051,6 +1051,20 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	}
 	phArgo.End()
 
+	// --- Issuing CA + cert-manager ClusterIssuer (Phase H gap 2) ---
+	// EnsureIssuingCA is a no-op when IssuingCARootCert / IssuingCARootKey are
+	// absent. When cert-manager CRDs are not yet installed (Argo CD applies them
+	// asynchronously), the function logs a warning and returns nil so the rest of
+	// the bootstrap completes. Re-run --workload-rollout once cert-manager is ready.
+	if wk, wkErr := writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName); wkErr == nil {
+		defer os.Remove(wk)
+		if err := opentofux.EnsureIssuingCA(ctx, wk, cfg); err != nil && !errors.Is(err, opentofux.ErrNotApplicable) {
+			logx.Warn("EnsureIssuingCA: %v (continuing — cert-manager ClusterIssuer not wired)", err)
+		}
+	} else {
+		logx.Warn("EnsureIssuingCA: cannot get workload kubeconfig: %v (skipping issuing CA wiring)", wkErr)
+	}
+
 	// --- Pivot teardown: delete the kind cluster after a successful pivot
 	// (skipped when --pivot-keep-kind / --no-delete-kind / pivot disabled).
 	if cfg.Pivot.Enabled {

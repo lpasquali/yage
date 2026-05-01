@@ -22,6 +22,9 @@
     ◦ skip: AWS uses operator-supplied IAM (env: AWS_ACCESS_KEY_ID / _SECRET_ACCESS_KEY / AWS_PROFILE)
     ◦ skip: CAPA bootstrap stack created out-of-band — `clusterawsadm bootstrap iam create-cloudformation-stack`
 
+▸ Phase H — Platform Services
+    ◦ skip: no YAGE_REGISTRY_NODE or YAGE_ISSUING_CA_ROOT_CERT set
+
 ▸ clusterctl credentials
     • synthesize ephemeral clusterctl config from provider env vars
 

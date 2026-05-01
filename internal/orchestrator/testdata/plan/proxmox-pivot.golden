@@ -24,6 +24,9 @@
     • tofu apply: create CSI user 'csi@pve' + token prefix 'csi-token'
     • outputs piped into clusterctl + CSI configs
 
+▸ Phase H — Platform Services
+    ◦ skip: no YAGE_REGISTRY_NODE or YAGE_ISSUING_CA_ROOT_CERT set
+
 ▸ clusterctl credentials
     • synthesize ephemeral clusterctl config from provider env vars
 

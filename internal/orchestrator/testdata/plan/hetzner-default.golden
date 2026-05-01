@@ -21,6 +21,9 @@
 ▸ Identity bootstrap — Hetzner Cloud
     ◦ skip: HCLOUD_TOKEN supplied via env (operator-managed, not minted by yage)
 
+▸ Phase H — Platform Services
+    ◦ skip: no YAGE_REGISTRY_NODE or YAGE_ISSUING_CA_ROOT_CERT set
+
 ▸ clusterctl credentials
     • synthesize ephemeral clusterctl config from provider env vars
 

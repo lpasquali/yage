@@ -107,22 +107,19 @@ func (j *JobRunner) Destroy(ctx context.Context, module string) error {
 	return j.runJob(ctx, module, "destroy", nil)
 }
 
-// Output implements Runner. Creates a Job that runs `tofu output -json`,
-// collects stdout, and returns the decoded map.
+// Output implements Runner.
 //
-// NOTE: for the output case we do not stream logs — we collect pod stdout.
-// For simplicity we return an empty map with an error when the Job fails;
-// callers that need structured output should use LocalRunner.Output after
-// copying state.
-func (j *JobRunner) Output(ctx context.Context, module string) (map[string]any, error) {
-	if err := j.runJob(ctx, module, "output", nil); err != nil {
-		return nil, err
-	}
-	// Structured JSON parsing from a completed pod requires reading the
-	// terminated container logs. Return empty map — callers that need the
-	// map should use LocalRunner for now.
-	// TODO: stream pod stdout into a buffer and json.Unmarshal.
-	return map[string]any{}, nil
+// NOTE: JobRunner.Output is not yet implemented. Returning a structured JSON
+// map from a completed pod requires reading terminated container logs into a
+// buffer, which is not yet wired. Callers that need structured output should
+// use LocalRunner.Output (available when the state directory is on the local
+// filesystem, i.e. before pivot). Returning an error rather than an empty map
+// so that gaps are discoverable.
+//
+// TODO(#125): implement JobRunner.Output once the pre-kind ordering issue is
+// resolved and the JobRunner is the primary code path for post-pivot modules.
+func (j *JobRunner) Output(_ context.Context, _ string) (map[string]any, error) {
+	return nil, fmt.Errorf("JobRunner.Output not yet implemented; use LocalRunner.Output for structured tofu output")
 }
 
 // runJob is the shared implementation for Apply/Destroy/Output.

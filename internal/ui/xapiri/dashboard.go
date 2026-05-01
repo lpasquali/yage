@@ -1544,6 +1544,10 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// User skipped token entry — leave AdminToken empty.
 				m.tokenPromptActive = false
 				return m, nil
+			case tea.KeyUp, tea.KeyDown:
+				// The overlay is a single-line prompt; arrow keys have no
+				// meaning here and must not be consumed silently.
+				return m, nil
 			default:
 				ti, cmd := m.tokenPromptInput.Update(msg)
 				m.tokenPromptInput = ti

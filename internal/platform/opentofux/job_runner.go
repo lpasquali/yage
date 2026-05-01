@@ -303,6 +303,14 @@ func (j *JobRunner) buildJob(ns, jobName, cmName, secretName, module, operation 
 									Name:  "KUBE_NAMESPACE",
 									Value: yageNamespace,
 								},
+								{
+									// Redirect tofu's plugin cache and lock file to
+									// a writable path. The module ConfigMap is mounted
+									// read-only, so tofu init cannot write .terraform/
+									// into -chdir=/workspace/module.
+									Name:  "TF_DATA_DIR",
+									Value: "/tmp/.terraform",
+								},
 							},
 							EnvFrom: []corev1.EnvFromSource{
 								{

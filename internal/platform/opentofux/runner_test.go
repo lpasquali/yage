@@ -275,14 +275,16 @@ func TestBuildJobSpec(t *testing.T) {
 		t.Errorf("envFrom: %+v", containers[0].EnvFrom)
 	}
 	// KUBE_NAMESPACE must be set so the kubernetes backend targets yage-system.
-	kubeNsFound := false
-	for _, e := range containers[0].Env {
-		if e.Name == "KUBE_NAMESPACE" && e.Value == "yage-system" {
-			kubeNsFound = true
-		}
+	// TF_DATA_DIR must redirect tofu's plugin cache off the read-only ConfigMap mount.
+	wantEnvs := map[string]string{
+		"KUBE_NAMESPACE": "yage-system",
+		"TF_DATA_DIR":    "/tmp/.terraform",
 	}
-	if !kubeNsFound {
-		t.Errorf("container missing KUBE_NAMESPACE=yage-system env var; got: %+v", containers[0].Env)
+	for _, e := range containers[0].Env {
+		delete(wantEnvs, e.Name)
+	}
+	if len(wantEnvs) > 0 {
+		t.Errorf("container missing required env vars: %v; got: %+v", wantEnvs, containers[0].Env)
 	}
 	// No state volume — state lives in a Kubernetes Secret via the backend.
 	for _, vol := range podSpec.Volumes {

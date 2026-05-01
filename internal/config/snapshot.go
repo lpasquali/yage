@@ -331,6 +331,7 @@ func (c *Config) Snapshot() []SnapshotField {
 		sp("YAGE_REGISTRY_STORAGE", &c.RegistryStorage),
 		sp("YAGE_REGISTRY_FLAVOR", &c.RegistryFlavor),
 		sp("YAGE_TOFU_REF", &c.TofuRef),
+		sp("YAGE_MANIFESTS_REF", &c.ManifestsRef),
 	}
 }
 

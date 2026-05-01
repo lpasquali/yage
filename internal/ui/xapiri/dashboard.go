@@ -130,18 +130,26 @@ const (
 	tiDCLoc
 	tiBudget
 	tiHeadroom
+	// Phase H — Platform Services
+	tiRegistryNode    // YAGE_REGISTRY_NODE
+	tiRegistryVMFlav  // YAGE_REGISTRY_VM_FLAVOR
+	tiRegistryNetwork // YAGE_REGISTRY_NETWORK
+	tiRegistryStorage // YAGE_REGISTRY_STORAGE
+	tiIssuingCACert   // YAGE_ISSUING_CA_ROOT_CERT (PEM)
+	tiIssuingCAKey    // YAGE_ISSUING_CA_ROOT_KEY (PEM)
 	tiCount // must be last
 )
 
 // ─── select slot indices ─────────────────────────────────────────────────────
 
 const (
-	siMode      = 0 // cloud | on-prem
-	siEnv       = 1 // dev | staging | prod
-	siResil     = 2 // single-az | ha | ha-multi-region
-	siBootstrap = 3 // kubeadm | k3s  (on-prem only)
-	siProvider  = 4 // infra provider (auto | aws | gcp | …)
-	siCount     = 5
+	siMode         = 0 // cloud | on-prem
+	siEnv          = 1 // dev | staging | prod
+	siResil        = 2 // single-az | ha | ha-multi-region
+	siBootstrap    = 3 // kubeadm | k3s  (on-prem only)
+	siProvider     = 4 // infra provider (auto | aws | gcp | …)
+	siRegistryFlav = 5 // Phase H registry flavor: harbor | zot
+	siCount        = 6
 )
 
 // ─── toggle (bool) slot indices ──────────────────────────────────────────────
@@ -247,7 +255,15 @@ const (
 	focHWWatts                  // 69
 	focHWKWH                    // 70
 	focHWSupport                // 71
-	focCount                    // 72 — must be last
+	// Phase H — Platform Services (on-prem only)
+	focRegistryNode    // 72 — YAGE_REGISTRY_NODE (proxmox only)
+	focRegistryVMFlav  // 73
+	focRegistryNetwork // 74
+	focRegistryStorage // 75
+	focRegistryFlavor  // 76 — harbor | zot
+	focIssuingCACert   // 77 — YAGE_ISSUING_CA_ROOT_CERT
+	focIssuingCAKey    // 78 — YAGE_ISSUING_CA_ROOT_KEY
+	focCount           // 79 — must be last
 )
 
 // ─── per-field metadata ───────────────────────────────────────────────────────
@@ -362,6 +378,15 @@ var dashFields = []fieldMeta{
 	{fkText, tiHWWatts, "  HW watts", "", false},
 	{fkText, tiHWKWH, "  kWh rate USD", "", false},
 	{fkText, tiHWSupport, "  support USD/mo", "", false},
+	// ── Registry (proxmox only) ───────────────────────────────────────────
+	{fkText, tiRegistryNode, "registry node", "Registry", false},
+	{fkText, tiRegistryVMFlav, "  VM flavor", "", false},
+	{fkText, tiRegistryNetwork, "  network", "", false},
+	{fkText, tiRegistryStorage, "  storage", "", false},
+	{fkSelect, siRegistryFlav, "  flavor", "", false},
+	// ── Issuing CA (on-prem only) ─────────────────────────────────────────
+	{fkText, tiIssuingCACert, "issuing CA cert", "Issuing CA", false},
+	{fkText, tiIssuingCAKey, "issuing CA key", "", false},
 }
 
 // ─── tab IDs ─────────────────────────────────────────────────────────────────
@@ -768,6 +793,14 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.textInputs[tiHWKWH].Validate = validateNonNegativeFloatOptional
 	m.textInputs[tiHWSupport].Validate = validateNonNegativeFloatOptional
 
+	// Phase H — Platform Services.
+	m.textInputs[tiRegistryNode].SetValue(cfg.RegistryNode)
+	m.textInputs[tiRegistryVMFlav].SetValue(cfg.RegistryVMFlavor)
+	m.textInputs[tiRegistryNetwork].SetValue(cfg.RegistryNetwork)
+	m.textInputs[tiRegistryStorage].SetValue(cfg.RegistryStorage)
+	m.textInputs[tiIssuingCACert].SetValue(cfg.IssuingCARootCert)
+	m.textInputs[tiIssuingCAKey].SetValue(cfg.IssuingCARootKey)
+
 	// Selects.
 	m.selects[siMode] = selectState{options: []string{"cloud", "on-prem"}, cur: 0}
 	if s.fork == forkOnPrem {
@@ -809,6 +842,12 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 		}
 	}
 	m.selects[siProvider] = selectState{options: provOptions, cur: provCur}
+
+	// Registry flavor: harbor (default) or zot.
+	m.selects[siRegistryFlav] = selectState{options: []string{"harbor", "zot"}, cur: 0}
+	if cfg.RegistryFlavor == "zot" {
+		m.selects[siRegistryFlav].cur = 1
+	}
 
 	// Toggles.
 	m.toggles[toiQueue] = s.workload.HasQueue
@@ -1053,6 +1092,12 @@ func (m *dashModel) isHidden(fid int) bool {
 		return isCloud
 	case focHWCost, focHWWatts, focHWKWH, focHWSupport:
 		return isCloud || !m.toggles[toiTCO]
+	// Registry: proxmox-only (bootstrap registry is an on-prem / bare-metal concern).
+	case focRegistryNode, focRegistryVMFlav, focRegistryNetwork, focRegistryStorage, focRegistryFlavor:
+		return m.selects[siProvider].value() != "proxmox"
+	// Issuing CA: on-prem only.
+	case focIssuingCACert, focIssuingCAKey:
+		return isCloud
 	}
 	return false
 }
@@ -1464,39 +1509,6 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if keyStr == "q" && !m.termFocused {
 			m.done = false
 			return m, tea.Quit
-		}
-
-		// ── Ctrl+Alt+1..8: universal tab switching — works even inside text fields ──
-		// Tab 1 (config) is always reachable; others require cfgSelected.
-		switch keyStr {
-		case "ctrl+alt+1":
-			m.activeTab = tabConfig
-			return m, nil
-		}
-		if m.cfgReady() {
-			switch keyStr {
-			case "ctrl+alt+2":
-				m.activeTab = tabProvision
-				return m, nil
-			case "ctrl+alt+3":
-				m.activeTab = tabEditor
-				return m, m.switchToEditorTab()
-			case "ctrl+alt+4":
-				m.activeTab = tabCosts
-				return m, nil
-			case "ctrl+alt+5":
-				m.activeTab = tabLogs
-				return m, nil
-			case "ctrl+alt+6":
-				m.activeTab = tabDeploy
-				return m, nil
-			case "ctrl+alt+7":
-				m.activeTab = tabDeps
-				return m, nil
-			case "ctrl+alt+8":
-				m.activeTab = tabHelp
-				return m, nil
-			}
 		}
 
 		// ── Ctrl+Left/Right: universal tab cycling — works even inside text fields ──
@@ -1939,6 +1951,22 @@ func (m dashModel) updateDeployTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m dashModel) updateCostsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.Type
 	keyStr := msg.String()
+
+	// Intercept [ / ] before any inner form so they always navigate the
+	// timeframe window — even when the credential form is active (#154).
+	switch keyStr {
+	case "[":
+		if m.costPeriodIdx > 0 {
+			m.costPeriodIdx--
+		}
+		return m, nil
+	case "]":
+		if m.costPeriodIdx < len(costWindows)-1 {
+			m.costPeriodIdx++
+		}
+		return m, nil
+	}
+
 	if m.costCredsMode {
 		return m.updateCostsCredsForm(msg)
 	}
@@ -1954,14 +1982,6 @@ func (m dashModel) updateCostsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key == tea.KeyDown:
 		if len(m.costRows) > 0 {
 			m.costVendor = (m.costVendor + 1) % len(m.costRows)
-		}
-	case keyStr == "[":
-		if m.costPeriodIdx > 0 {
-			m.costPeriodIdx--
-		}
-	case keyStr == "]":
-		if m.costPeriodIdx < len(costWindows)-1 {
-			m.costPeriodIdx++
 		}
 	}
 	return m, nil
@@ -2824,6 +2844,15 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 		snap.HardwareSupportUSDMonth = v
 	}
 
+	// Phase H — Platform Services.
+	snap.RegistryNode = strings.TrimSpace(m.textInputs[tiRegistryNode].Value())
+	snap.RegistryVMFlavor = strings.TrimSpace(m.textInputs[tiRegistryVMFlav].Value())
+	snap.RegistryNetwork = strings.TrimSpace(m.textInputs[tiRegistryNetwork].Value())
+	snap.RegistryStorage = strings.TrimSpace(m.textInputs[tiRegistryStorage].Value())
+	snap.RegistryFlavor = m.selects[siRegistryFlav].value()
+	snap.IssuingCARootCert = strings.TrimSpace(m.textInputs[tiIssuingCACert].Value())
+	snap.IssuingCARootKey = strings.TrimSpace(m.textInputs[tiIssuingCAKey].Value())
+
 	mode := m.selects[siMode].value()
 	fork := forkCloud
 	if mode == "on-prem" {
@@ -3003,6 +3032,13 @@ func (m *dashModel) flushToCfg() {
 	m.cfg.HardwareWatts = snap.HardwareWatts
 	m.cfg.HardwareKWHRateUSD = snap.HardwareKWHRateUSD
 	m.cfg.HardwareSupportUSDMonth = snap.HardwareSupportUSDMonth
+	m.cfg.RegistryNode = snap.RegistryNode
+	m.cfg.RegistryVMFlavor = snap.RegistryVMFlavor
+	m.cfg.RegistryNetwork = snap.RegistryNetwork
+	m.cfg.RegistryStorage = snap.RegistryStorage
+	m.cfg.RegistryFlavor = snap.RegistryFlavor
+	m.cfg.IssuingCARootCert = snap.IssuingCARootCert
+	m.cfg.IssuingCARootKey = snap.IssuingCARootKey
 
 	// Derive s.fork / s.env / s.resil for the rest of the walkthrough.
 	if m.selects[siMode].value() == "on-prem" {
@@ -3203,7 +3239,7 @@ func tabAtX(x int) (dashTab, bool) {
 func (m dashModel) renderBottomStrip() string {
 	line := stMuted.Render(strings.Repeat("─", m.width)) + "\n"
 	if !m.cfg.CostCompareEnabled {
-		return line + stMuted.Render("  cost estimation: go to [costs] tab (4 / ctrl+alt+4) to enter API credentials")
+		return line + stMuted.Render("  cost estimation: go to [costs] tab (4) to enter API credentials")
 	}
 	if len(m.costRows) == 0 {
 		var suffix string
@@ -3320,7 +3356,7 @@ func (m dashModel) renderBottomStrip() string {
 
 func (m dashModel) renderFooter() string {
 	shellHint := stMuted.Render("ctrl+t") + " terminal  "
-	tabHint := stMuted.Render("1-8/ctrl+alt+1-8/ctrl+◄►") + " tabs  "
+	tabHint := stMuted.Render("1-8/ctrl+◄►") + " tabs  "
 	var keys string
 	switch m.activeTab {
 	case tabConfig:
@@ -3994,7 +4030,6 @@ func (m dashModel) renderHelpTab(w, h int) string {
 		"",
 		stBold.Render("  Tab switching"),
 		"  " + stAccent.Render("1") + "                config (always)  " + stAccent.Render("2-8") + " other tabs (after config selected)",
-		"  " + stAccent.Render("ctrl+alt+1") + "         config  " + stAccent.Render("ctrl+alt+2-8") + " other tabs",
 		"  " + stAccent.Render("ctrl+← →") + "          cycle tabs (works from any context)",
 		"  " + stAccent.Render("← →") + "               cycle tabs (when not in text field)",
 		"",

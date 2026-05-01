@@ -60,30 +60,21 @@ func TestLocalRunnerDestroyNoopWhenMissing(t *testing.T) {
 
 // --- Fetcher unit tests ---
 
-func TestCacheRoot(t *testing.T) {
-	home, _ := os.UserHomeDir()
-	got := cacheRoot()
-	want := filepath.Join(home, ".yage", "tofu-cache")
+func TestFetcherModulePathDefault(t *testing.T) {
+	f := &Fetcher{}
+	got := f.ModulePath("proxmox")
+	want := "/repos/yage-tofu/proxmox"
 	if got != want {
-		t.Errorf("cacheRoot: got %q, want %q", got, want)
+		t.Errorf("ModulePath (default root): got %q, want %q", got, want)
 	}
 }
 
-func TestModulePath(t *testing.T) {
-	got := ModulePath("/cache", "proxmox")
-	if got != "/cache/proxmox" {
-		t.Errorf("ModulePath: got %q, want %q", got, "/cache/proxmox")
-	}
-}
-
-func TestNewFetcher(t *testing.T) {
-	cfg := config.Load()
-	f := NewFetcher(cfg)
-	if f == nil {
-		t.Fatal("NewFetcher returned nil")
-	}
-	if f.cfg != cfg {
-		t.Fatal("NewFetcher did not store cfg")
+func TestFetcherModulePathCustomRoot(t *testing.T) {
+	f := &Fetcher{MountRoot: "/mnt/repos"}
+	got := f.ModulePath("registry")
+	want := "/mnt/repos/yage-tofu/registry"
+	if got != want {
+		t.Errorf("ModulePath (custom root): got %q, want %q", got, want)
 	}
 }
 
@@ -254,12 +245,13 @@ func TestYageLabels(t *testing.T) {
 }
 
 func TestEnsureModuleConfigMapWithRealDir(t *testing.T) {
-	// Create a temp dir as a fake module directory (mimics yage-tofu cache).
-	tempHome := t.TempDir()
-	t.Setenv("HOME", tempHome)
+	// Create a temp dir as a fake yage-repos PVC mount (mimics /repos inside a Job pod).
+	// After the ADR 0010 refactor, Fetcher.ModulePath resolves to <MountRoot>/yage-tofu/<module>.
+	// We pass a custom MountRoot via the fetcher field on JobRunner so the test is hermetic.
+	tempMount := t.TempDir()
 
-	// Create fake .tf files.
-	modDir := filepath.Join(tempHome, ".yage", "tofu-cache", "mymod")
+	// Simulate the PVC layout: <tempMount>/yage-tofu/mymod/
+	modDir := filepath.Join(tempMount, "yage-tofu", "mymod")
 	if err := os.MkdirAll(modDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -276,7 +268,7 @@ func TestEnsureModuleConfigMapWithRealDir(t *testing.T) {
 
 	cfg := config.Load()
 	cl := fakeClient()
-	j := &JobRunner{cfg: cfg, client: cl}
+	j := &JobRunner{cfg: cfg, client: cl, fetcher: &Fetcher{MountRoot: tempMount}}
 	ctx := context.Background()
 
 	if err := j.ensureModuleConfigMap(ctx, "yage-system", "tofu-module-mymod", "mymod"); err != nil {

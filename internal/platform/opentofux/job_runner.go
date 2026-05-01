@@ -40,8 +40,18 @@ const (
 // interface must not assume either ordering; callers must decide which Runner
 // implementation to use based on whether a cluster is available.
 type JobRunner struct {
-	cfg    *config.Config
-	client *k8sclient.Client
+	cfg     *config.Config
+	client  *k8sclient.Client
+	fetcher *Fetcher
+}
+
+// fetcher returns the Fetcher to use for resolving module paths.
+// Falls back to a zero-value Fetcher (MountRoot defaults to /repos).
+func (j *JobRunner) fetcherOrDefault() *Fetcher {
+	if j.fetcher != nil {
+		return j.fetcher
+	}
+	return &Fetcher{}
 }
 
 // NewJobRunner returns a JobRunner connected to the management cluster via
@@ -162,10 +172,13 @@ func (j *JobRunner) runJob(ctx context.Context, module, operation string, vars m
 // ensureModuleConfigMap reads all .tf files from the module directory on disk
 // and uploads them as a ConfigMap. The caller must have fetched the yage-tofu
 // repo before calling (or provided HCL files through another means).
+//
+// TODO(#144): modDir resolves to the yage-repos PVC mount (/repos/yage-tofu/<module>),
+// which is only accessible inside Job pods. This will be empty when running on an
+// operator workstation; full implementation is tracked in issue #144 (EnsureRepoSync).
 func (j *JobRunner) ensureModuleConfigMap(ctx context.Context, ns, cmName, module string) error {
-	// Locate the module directory in the local cache.
-	root := cacheRoot()
-	modDir := ModulePath(root, module)
+	// Locate the module directory from the in-cluster PVC mount.
+	modDir := j.fetcherOrDefault().ModulePath(module)
 
 	data := map[string]string{}
 	err := filepath.WalkDir(modDir, func(path string, d fs.DirEntry, err error) error {

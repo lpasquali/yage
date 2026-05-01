@@ -17,7 +17,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lpasquali/yage/internal/config"
@@ -31,7 +30,12 @@ const (
 )
 
 // JobRunner implements Runner by creating Kubernetes resources (ConfigMap,
-// PVC, Secret, Job) on the management cluster and streaming pod logs.
+// Secret, Job) on the management cluster and streaming pod logs.
+//
+// State is stored in Kubernetes Secrets via the OpenTofu kubernetes backend
+// (one Secret per module, named tfstate-default-<module> in yage-system).
+// No PVCs are created for tofu state; the yage-repos PVC (EnsureRepoSync,
+// issue #144) is a separate concern for HCL module content.
 //
 // TODO(#125): pre-kind ordering conflict — JobRunner requires a reachable
 // management cluster and a yage-system namespace. The Fetcher (and thus the
@@ -88,25 +92,11 @@ func (j *JobRunner) tofuImageRef() string {
 	return tofuImage
 }
 
-// storageClassName returns the StorageClass to use for the PVC. Priority:
-//
-//  1. cfg.CSI.DefaultClass (provider-agnostic; set by --csi-default-class)
-//  2. cfg.Providers.Proxmox.CSIStorageClassName (Proxmox-specific fallback)
-//  3. "standard" (kind's local-path provisioner default)
-func (j *JobRunner) storageClassName() string {
-	if j.cfg.CSI.DefaultClass != "" {
-		return j.cfg.CSI.DefaultClass
-	}
-	if j.cfg.Providers.Proxmox.CSIStorageClassName != "" {
-		return j.cfg.Providers.Proxmox.CSIStorageClassName
-	}
-	return "standard"
-}
-
 // Apply implements Runner. Creates (or updates) a ConfigMap with the HCL
-// module files, a PVC for state, a Secret for credentials, and a Job that
-// runs `tofu init && tofu apply`. Streams pod logs in real time and waits
-// for the Job to complete.
+// module files, a Secret for credentials, and a Job that runs
+// `tofu init && tofu apply`. State is kept in a Kubernetes Secret via the
+// OpenTofu kubernetes backend; no PVC is created for tofu state.
+// Streams pod logs in real time and waits for the Job to complete.
 func (j *JobRunner) Apply(ctx context.Context, module string, vars map[string]string) error {
 	return j.runJob(ctx, module, "apply", vars)
 }
@@ -145,13 +135,9 @@ func (j *JobRunner) runJob(ctx context.Context, module, operation string, vars m
 		return fmt.Errorf("job runner: module configmap (%s): %w", module, err)
 	}
 
-	// 2. Ensure PVC for state.
-	pvcName := "tofu-state-" + module
-	if err := j.ensureStatePVC(ctx, ns, pvcName); err != nil {
-		return fmt.Errorf("job runner: state pvc (%s): %w", module, err)
-	}
-
-	// 3. Create (or replace) credentials Secret.
+	// 2. Create (or replace) credentials Secret.
+	// State is stored in a Kubernetes Secret via the OpenTofu kubernetes
+	// backend (tfstate-default-<module> in yage-system); no state PVC needed.
 	secretName := "tofu-creds-" + module
 	if vars == nil {
 		vars = map[string]string{}
@@ -160,9 +146,9 @@ func (j *JobRunner) runJob(ctx context.Context, module, operation string, vars m
 		return fmt.Errorf("job runner: creds secret (%s): %w", module, err)
 	}
 
-	// 4. Create and run the Job.
+	// 3. Create and run the Job.
 	jobName := fmt.Sprintf("tofu-%s-%s", module, operation)
-	if err := j.createAndWaitJob(ctx, ns, jobName, cmName, pvcName, secretName, module, operation); err != nil {
+	if err := j.createAndWaitJob(ctx, ns, jobName, cmName, secretName, module, operation); err != nil {
 		return fmt.Errorf("job runner: job %s: %w", jobName, err)
 	}
 
@@ -220,37 +206,6 @@ func (j *JobRunner) ensureModuleConfigMap(ctx context.Context, ns, cmName, modul
 	return err
 }
 
-// ensureStatePVC creates the PVC if it does not already exist.
-func (j *JobRunner) ensureStatePVC(ctx context.Context, ns, pvcName string) error {
-	_, err := j.client.Typed.CoreV1().PersistentVolumeClaims(ns).Get(ctx, pvcName, metav1.GetOptions{})
-	if err == nil {
-		return nil // already exists
-	}
-	if !apierrors.IsNotFound(err) {
-		return err
-	}
-	sc := j.storageClassName()
-	pvc := &corev1.PersistentVolumeClaim{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "PersistentVolumeClaim"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      pvcName,
-			Namespace: ns,
-			Labels:    yageLabels(),
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse("1Gi"),
-				},
-			},
-			StorageClassName: &sc,
-		},
-	}
-	_, err = j.client.Typed.CoreV1().PersistentVolumeClaims(ns).Create(ctx, pvc, metav1.CreateOptions{})
-	return err
-}
-
 // ensureCredsSecret creates (or updates) the credentials Secret. The vars map
 // is encoded as TF_VAR_<key> environment variables so OpenTofu picks them up
 // without extra -var flags. The Secret is never logged.
@@ -284,14 +239,14 @@ func (j *JobRunner) ensureCredsSecret(ctx context.Context, ns, secretName string
 
 // createAndWaitJob creates the Job, waits for a pod to start running, streams
 // logs, then waits for the Job to complete or fail.
-func (j *JobRunner) createAndWaitJob(ctx context.Context, ns, jobName, cmName, pvcName, secretName, module, operation string) error {
+func (j *JobRunner) createAndWaitJob(ctx context.Context, ns, jobName, cmName, secretName, module, operation string) error {
 	// Delete pre-existing job with the same name (from a previous run).
 	background := metav1.DeletePropagationBackground
 	_ = j.client.Typed.BatchV1().Jobs(ns).Delete(ctx, jobName, metav1.DeleteOptions{
 		PropagationPolicy: &background,
 	})
 
-	job := j.buildJob(ns, jobName, cmName, pvcName, secretName, module, operation)
+	job := j.buildJob(ns, jobName, cmName, secretName, module, operation)
 	if _, err := j.client.Typed.BatchV1().Jobs(ns).Create(ctx, job, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("create job: %w", err)
 	}
@@ -313,7 +268,12 @@ func (j *JobRunner) createAndWaitJob(ctx context.Context, ns, jobName, cmName, p
 }
 
 // buildJob constructs the Job spec.
-func (j *JobRunner) buildJob(ns, jobName, cmName, pvcName, secretName, module, operation string) *batchv1.Job {
+//
+// The pod runs as the yage-job-runner ServiceAccount, which has RBAC to
+// read and write Secrets in yage-system. This is required by the OpenTofu
+// kubernetes backend to store state as a Secret (tfstate-default-<module>).
+// KUBE_NAMESPACE instructs the backend client which namespace to target.
+func (j *JobRunner) buildJob(ns, jobName, cmName, secretName, module, operation string) *batchv1.Job {
 	cmd := j.buildCommand(module, operation)
 	backoffLimit := int32(0) // no retries — fail fast so the caller can react
 
@@ -329,12 +289,21 @@ func (j *JobRunner) buildJob(ns, jobName, cmName, pvcName, secretName, module, o
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: yageLabels()},
 				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
+					RestartPolicy:      corev1.RestartPolicyNever,
+					ServiceAccountName: "yage-job-runner",
 					Containers: []corev1.Container{
 						{
 							Name:    "tofu",
 							Image:   j.tofuImageRef(),
 							Command: []string{"/bin/sh", "-c", cmd},
+							Env: []corev1.EnvVar{
+								{
+									// Tells the OpenTofu kubernetes backend which
+									// namespace to store state Secrets in.
+									Name:  "KUBE_NAMESPACE",
+									Value: yageNamespace,
+								},
+							},
 							EnvFrom: []corev1.EnvFromSource{
 								{
 									SecretRef: &corev1.SecretEnvSource{
@@ -348,10 +317,6 @@ func (j *JobRunner) buildJob(ns, jobName, cmName, pvcName, secretName, module, o
 									MountPath: "/workspace/module",
 									ReadOnly:  true,
 								},
-								{
-									Name:      "state",
-									MountPath: "/workspace/state",
-								},
 							},
 						},
 					},
@@ -364,14 +329,6 @@ func (j *JobRunner) buildJob(ns, jobName, cmName, pvcName, secretName, module, o
 								},
 							},
 						},
-						{
-							Name: "state",
-							VolumeSource: corev1.VolumeSource{
-								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-									ClaimName: pvcName,
-								},
-							},
-						},
 					},
 				},
 			},
@@ -380,24 +337,29 @@ func (j *JobRunner) buildJob(ns, jobName, cmName, pvcName, secretName, module, o
 }
 
 // buildCommand returns the shell command string for the given operation.
+//
+// tofu init receives -backend-config=in_cluster_config=true so the
+// kubernetes backend authenticates via the pod's ServiceAccount token rather
+// than looking for ~/.kube/config (which does not exist inside a container).
+// State is stored in a Kubernetes Secret; no -state= flag is used.
 func (j *JobRunner) buildCommand(module, operation string) string {
-	statePath := "/workspace/state/terraform.tfstate"
 	chdir := "-chdir=/workspace/module"
+	initFlags := `-upgrade -backend-config=in_cluster_config=true`
 	switch operation {
 	case "destroy":
 		return fmt.Sprintf(
-			`tofu %s init -upgrade && tofu %s destroy -auto-approve -state=%s`,
-			chdir, chdir, statePath,
+			`tofu %s init %s && tofu %s destroy -auto-approve`,
+			chdir, initFlags, chdir,
 		)
 	case "output":
 		return fmt.Sprintf(
-			`tofu %s output -json -state=%s`,
-			chdir, statePath,
+			`tofu %s output -json`,
+			chdir,
 		)
 	default: // "apply"
 		return fmt.Sprintf(
-			`tofu %s init -upgrade && tofu %s apply -auto-approve -state=%s`,
-			chdir, chdir, statePath,
+			`tofu %s init %s && tofu %s apply -auto-approve`,
+			chdir, initFlags, chdir,
 		)
 	}
 }

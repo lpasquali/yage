@@ -117,6 +117,10 @@ const (
 	tiProxmoxWorkerCount    // workload worker replica count
 	tiProxmoxMgmtCPCount    // mgmt CP replica count
 	tiProxmoxMgmtWorkerCount // mgmt worker replica count
+	tiProxmoxURL            // Proxmox admin API URL
+	tiProxmoxAdminUsername  // Proxmox admin token ID / username
+	tiProxmoxAdminInsecure  // Proxmox TLS insecure ("true"/"false")
+	tiProxmoxAdminToken     // Proxmox admin token secret (memory-only, never saved)
 	tiArgoURL               // AppOfApps git URL
 	tiArgoPath      // AppOfApps git path
 	tiArgoRef       // AppOfApps git ref
@@ -200,29 +204,33 @@ const (
 	focCacheMem            // 20
 	focBootstrap              // 21
 	focOvercommit             // 22
-	focProxmoxDefaultTmpl    // 23 — Proxmox default VM template ID
-	focProxmoxWLCPTmpl       // 24 — Proxmox workload CP template ID
-	focProxmoxWLCPCores      // 25
-	focProxmoxWLCPMemMiB     // 26
-	focProxmoxWLCPDiskGB     // 27
-	focProxmoxWLWorkerTmpl   // 28 — Proxmox workload worker template ID
-	focProxmoxWLWorkerCores  // 29
-	focProxmoxWLWorkerMemMiB // 30
-	focProxmoxWLWorkerDiskGB // 31
-	focProxmoxMgmtCPTmpl     // 32 — Proxmox mgmt CP template ID
-	focProxmoxMgmtCPCores    // 33
-	focProxmoxMgmtCPMemMiB   // 34
-	focProxmoxMgmtCPDiskGB   // 35
-	focProxmoxMgmtWorkerTmpl    // 36 — Proxmox mgmt worker template ID
-	focProxmoxMgmtWorkerCores   // 37
-	focProxmoxMgmtWorkerMemMiB  // 38
-	focProxmoxMgmtWorkerDiskGB  // 39
-	focProxmoxPool              // 40 — Proxmox workload pool name
-	focProxmoxMgmtPool          // 41 — Proxmox mgmt pool name
-	focProxmoxCPCount           // 42 — workload CP replica count
-	focProxmoxWorkerCount       // 43 — workload worker replica count
-	focProxmoxMgmtCPCount       // 44 — mgmt CP replica count
-	focProxmoxMgmtWorkerCount   // 45 — mgmt worker replica count
+	focProxmoxURL            // 23 — Proxmox admin API URL
+	focProxmoxAdminUsername  // 24 — Proxmox admin token ID / username
+	focProxmoxAdminInsecure  // 25 — Proxmox TLS insecure flag
+	focProxmoxAdminToken     // 26 — Proxmox admin token secret (memory-only)
+	focProxmoxDefaultTmpl    // 27 — Proxmox default VM template ID
+	focProxmoxWLCPTmpl       // 28 — Proxmox workload CP template ID
+	focProxmoxWLCPCores      // 29
+	focProxmoxWLCPMemMiB     // 30
+	focProxmoxWLCPDiskGB     // 31
+	focProxmoxWLWorkerTmpl   // 32 — Proxmox workload worker template ID
+	focProxmoxWLWorkerCores  // 33
+	focProxmoxWLWorkerMemMiB // 34
+	focProxmoxWLWorkerDiskGB // 35
+	focProxmoxMgmtCPTmpl     // 36 — Proxmox mgmt CP template ID
+	focProxmoxMgmtCPCores    // 37
+	focProxmoxMgmtCPMemMiB   // 38
+	focProxmoxMgmtCPDiskGB   // 39
+	focProxmoxMgmtWorkerTmpl    // 40 — Proxmox mgmt worker template ID
+	focProxmoxMgmtWorkerCores   // 41
+	focProxmoxMgmtWorkerMemMiB  // 42
+	focProxmoxMgmtWorkerDiskGB  // 43
+	focProxmoxPool              // 44 — Proxmox workload pool name
+	focProxmoxMgmtPool          // 45 — Proxmox mgmt pool name
+	focProxmoxCPCount           // 46 — workload CP replica count
+	focProxmoxWorkerCount       // 47 — workload worker replica count
+	focProxmoxMgmtCPCount       // 48 — mgmt CP replica count
+	focProxmoxMgmtWorkerCount   // 49 — mgmt worker replica count
 	focCPEndpointIP             // 46
 	focNodeIPRanges             // 41
 	focGateway                  // 42
@@ -315,7 +323,12 @@ var dashFields = []fieldMeta{
 	// ── Bootstrap (on-prem only) ─────────────────────────────────────────── fid 21-22
 	{fkSelect, siBootstrap, "bootstrap mode", "Bootstrap", false},
 	{fkToggle, toiOvercommit, "allow overcommit", "", false},
-	// ── Proxmox Config (proxmox only) ────────────────────────────────────── fid 23-39
+	// ── Proxmox Connection (proxmox only) ───────────────────────────────── fid 23-26
+	{fkText, tiProxmoxURL, "pve url", "Proxmox Connection", false},
+	{fkText, tiProxmoxAdminUsername, "admin username", "", false},
+	{fkText, tiProxmoxAdminInsecure, "tls insecure", "", false},
+	{fkText, tiProxmoxAdminToken, "admin token", "", false},
+	// ── Proxmox Config (proxmox only) ────────────────────────────────────── fid 27-49
 	{fkText, tiProxmoxDefaultTmpl, "default tmpl ID", "Proxmox Config", false},
 	{fkText, tiProxmoxWLCPTmpl, "wl CP tmpl ID", "", false},
 	{fkText, tiProxmoxWLCPCores, "  cores", "", false},
@@ -641,6 +654,10 @@ type dashModel struct {
 	editorErr      string           // last list/save error
 	editorSaving   bool             // save-back in progress
 
+	// token re-prompt overlay (shown after profile load when token is absent)
+	tokenPromptActive bool
+	tokenPromptInput  textinput.Model
+
 	// embedded terminal pane (Ctrl+T)
 	termPTY     *os.File
 	termCmd     *exec.Cmd
@@ -734,6 +751,16 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.textInputs[tiDNSServers].SetValue(cfg.DNSServers)
 	m.textInputs[tiMgmtCPEndpointIP].SetValue(cfg.Mgmt.ControlPlaneEndpointIP)
 	m.textInputs[tiMgmtNodeIPRanges].SetValue(cfg.Mgmt.NodeIPRanges)
+	// Proxmox connection fields.
+	m.textInputs[tiProxmoxURL].SetValue(cfg.Providers.Proxmox.URL)
+	m.textInputs[tiProxmoxAdminUsername].SetValue(cfg.Providers.Proxmox.AdminUsername)
+	m.textInputs[tiProxmoxAdminInsecure].SetValue(cfg.Providers.Proxmox.AdminInsecure)
+	// AdminToken: masked, memory-only — never seeded from kind Secret.
+	m.textInputs[tiProxmoxAdminToken].SetValue(cfg.Providers.Proxmox.AdminToken)
+	m.textInputs[tiProxmoxAdminToken].EchoMode = textinput.EchoPassword
+	m.textInputs[tiProxmoxAdminToken].EchoCharacter = '·'
+	m.textInputs[tiProxmoxAdminToken].Placeholder = "(not saved — enter each session)"
+
 	m.textInputs[tiProxmoxDefaultTmpl].SetValue(cfg.Providers.Proxmox.TemplateID)
 	m.textInputs[tiProxmoxWLCPTmpl].SetValue(cfg.WorkloadControlPlaneTemplateID)
 	m.textInputs[tiProxmoxWLCPCores].SetValue(cfg.Providers.Proxmox.ControlPlaneNumCores)
@@ -1059,7 +1086,8 @@ func (m *dashModel) isHidden(fid int) bool {
 	case focBootstrap, focOvercommit:
 		return isCloud
 	// Proxmox-specific: only when provider=proxmox.
-	case focProxmoxDefaultTmpl,
+	case focProxmoxURL, focProxmoxAdminUsername, focProxmoxAdminInsecure, focProxmoxAdminToken,
+		focProxmoxDefaultTmpl,
 		focProxmoxWLCPTmpl, focProxmoxWLCPCores, focProxmoxWLCPMemMiB, focProxmoxWLCPDiskGB,
 		focProxmoxWLWorkerTmpl, focProxmoxWLWorkerCores, focProxmoxWLWorkerMemMiB, focProxmoxWLWorkerDiskGB,
 		focProxmoxMgmtCPTmpl, focProxmoxMgmtCPCores, focProxmoxMgmtCPMemMiB, focProxmoxMgmtCPDiskGB,
@@ -1467,6 +1495,20 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newM.cfgSelected = true
 		newM.activeTab = tabProvision
 		newM = preserveTransientState(m, newM)
+		// If the non-secret fields are populated but the token is missing,
+		// prompt the user to re-enter it for this session.
+		if m.cfg.Providers.Proxmox.AdminUsername != "" && m.cfg.Providers.Proxmox.AdminToken == "" {
+			ti := textinput.New()
+			ti.Placeholder = "token secret (not saved)"
+			ti.Prompt = "> "
+			ti.Width = 40
+			ti.EchoMode = textinput.EchoPassword
+			ti.EchoCharacter = '·'
+			newM.tokenPromptInput = ti
+			newM.tokenPromptActive = true
+			cmd := newM.tokenPromptInput.Focus()
+			return newM, tea.Batch(textinput.Blink, cmd, newM.kickRefreshCmd(), newM.watchLogsCmd())
+		}
 		return newM, tea.Batch(textinput.Blink, newM.kickRefreshCmd(), newM.watchLogsCmd())
 
 	case saveCostCredsMsg:
@@ -1481,6 +1523,28 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		key := msg.Type
 		keyStr := msg.String()
+
+		// ── Token re-prompt overlay: intercept all keys when active ──
+		if m.tokenPromptActive {
+			switch key {
+			case tea.KeyEnter:
+				// Store the token in memory only; clear the prompt.
+				if v := strings.TrimSpace(m.tokenPromptInput.Value()); v != "" {
+					m.cfg.Providers.Proxmox.AdminToken = v
+					m.textInputs[tiProxmoxAdminToken].SetValue(v)
+				}
+				m.tokenPromptActive = false
+				return m, nil
+			case tea.KeyEsc:
+				// User skipped token entry — leave AdminToken empty.
+				m.tokenPromptActive = false
+				return m, nil
+			default:
+				ti, cmd := m.tokenPromptInput.Update(msg)
+				m.tokenPromptInput = ti
+				return m, cmd
+			}
+		}
 
 		// ── Ctrl+S: save config to kind without quitting ──
 		if key == tea.KeyCtrlS && m.activeTab != tabCosts {
@@ -2737,6 +2801,18 @@ func (m dashModel) buildSnapshotCfg() config.Config {
 	snap.DNSServers = strings.TrimSpace(m.textInputs[tiDNSServers].Value())
 	snap.Mgmt.ControlPlaneEndpointIP = strings.TrimSpace(m.textInputs[tiMgmtCPEndpointIP].Value())
 	snap.Mgmt.NodeIPRanges = strings.TrimSpace(m.textInputs[tiMgmtNodeIPRanges].Value())
+	// Proxmox connection fields (non-secret only; AdminToken handled separately).
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxURL].Value()); v != "" {
+		snap.Providers.Proxmox.URL = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxAdminUsername].Value()); v != "" {
+		snap.Providers.Proxmox.AdminUsername = v
+	}
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxAdminInsecure].Value()); v != "" {
+		snap.Providers.Proxmox.AdminInsecure = v
+	}
+	// AdminToken: memory-only — written directly to m.cfg, not to snap,
+	// so it can never accidentally flow into snapshot serialisation paths.
 	if t := strings.TrimSpace(m.textInputs[tiProxmoxDefaultTmpl].Value()); t != "" {
 		snap.Providers.Proxmox.TemplateID = t
 	}
@@ -2991,6 +3067,15 @@ func (m *dashModel) flushToCfg() {
 	m.cfg.DNSServers = snap.DNSServers
 	m.cfg.Mgmt.ControlPlaneEndpointIP = snap.Mgmt.ControlPlaneEndpointIP
 	m.cfg.Mgmt.NodeIPRanges = snap.Mgmt.NodeIPRanges
+	// Proxmox connection fields.
+	m.cfg.Providers.Proxmox.URL = snap.Providers.Proxmox.URL
+	m.cfg.Providers.Proxmox.AdminUsername = snap.Providers.Proxmox.AdminUsername
+	m.cfg.Providers.Proxmox.AdminInsecure = snap.Providers.Proxmox.AdminInsecure
+	// AdminToken: memory-only — read directly from the textinput, bypassing snap
+	// so the value never appears in SnapshotYAML() or KindSyncFields().
+	if v := strings.TrimSpace(m.textInputs[tiProxmoxAdminToken].Value()); v != "" {
+		m.cfg.Providers.Proxmox.AdminToken = v
+	}
 	m.cfg.Providers.Proxmox.TemplateID = snap.Providers.Proxmox.TemplateID
 	m.cfg.WorkloadControlPlaneTemplateID = snap.WorkloadControlPlaneTemplateID
 	m.cfg.Providers.Proxmox.ControlPlaneNumCores = snap.Providers.Proxmox.ControlPlaneNumCores
@@ -3108,7 +3193,33 @@ func (m dashModel) View() string {
 		content = m.renderAboutTab(m.width, usable)
 	}
 
+	// Token re-prompt overlay: draw on top of the normal content.
+	if m.tokenPromptActive {
+		overlay := m.renderTokenPromptOverlay(m.width)
+		return lipgloss.JoinVertical(lipgloss.Left, tabBar, overlay, termPane, bottomStrip, footer)
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, tabBar, content, termPane, bottomStrip, footer)
+}
+
+// renderTokenPromptOverlay renders a focused single-field prompt asking for
+// the Proxmox admin token. Shown after a profile load when AdminUsername is
+// set but AdminToken is empty (token was intentionally excluded from the kind
+// Secret).
+func (m dashModel) renderTokenPromptOverlay(w int) string {
+	var lines []string
+	lines = append(lines, stHdr.Render(" Proxmox admin token required"))
+	lines = append(lines, stMuted.Render(strings.Repeat("─", w)))
+	lines = append(lines, "")
+	lines = append(lines, fmt.Sprintf("  Profile loaded for admin user: %s", stAccent.Render(m.cfg.Providers.Proxmox.AdminUsername)))
+	lines = append(lines, "")
+	lines = append(lines, stMuted.Render("  The admin token is not saved to the kind Secret (security policy)."))
+	lines = append(lines, stMuted.Render("  Enter it now for this session, or press esc to skip."))
+	lines = append(lines, "")
+	lines = append(lines, "  "+m.tokenPromptInput.View())
+	lines = append(lines, "")
+	lines = append(lines, stMuted.Render("  enter  confirm    esc  skip"))
+	return strings.Join(lines, "\n")
 }
 
 // renderTabBar renders the tab strip at the top with a right-aligned sysinfo widget.

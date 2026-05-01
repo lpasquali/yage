@@ -99,18 +99,18 @@ type AppGroup struct {
 // VM sizing, template IDs, pool, CSI) live in ProxmoxMgmtConfig under
 // cfg.Providers.Proxmox.Mgmt.
 type MgmtConfig struct {
-	ClusterName                string
-	ClusterNameExplicit        bool
-	ClusterNamespace           string
-	ClusterNamespaceExplicit   bool
-	KubernetesVersion          string
-	KubernetesVersionExplicit  bool
-	CiliumClusterID          string
-	ControlPlaneMachineCount string // "1" by default (single-node mgmt)
-	WorkerMachineCount       string // "0" by default (CP-only)
-	ControlPlaneEndpointIP   string // 1 VIP — user-provided
-	ControlPlaneEndpointPort string
-	NodeIPRanges             string // 2-IP range — user-provided
+	ClusterName               string
+	ClusterNameExplicit       bool
+	ClusterNamespace          string
+	ClusterNamespaceExplicit  bool
+	KubernetesVersion         string
+	KubernetesVersionExplicit bool
+	CiliumClusterID           string
+	ControlPlaneMachineCount  string // "1" by default (single-node mgmt)
+	WorkerMachineCount        string // "0" by default (CP-only)
+	ControlPlaneEndpointIP    string // 1 VIP — user-provided
+	ControlPlaneEndpointPort  string
+	NodeIPRanges              string // 2-IP range — user-provided
 	// CiliumHubble / CiliumLBIPAM tune the mgmt-side Cilium
 	// HelmChartProxy. Hubble defaults to true (observability is cheap on
 	// a single-node cluster); LB-IPAM defaults to false (no L2/BGP
@@ -141,7 +141,7 @@ type ProxmoxMgmtConfig struct {
 	WorkerTemplateID             string
 	// Pool is the Proxmox VE pool name the management cluster's VMs are
 	// tagged with. See ProxmoxConfig.Pool for the workload counterpart.
-	Pool       string
+	Pool         string
 	PoolExplicit bool
 	// CSIEnabled — when true, install Proxmox CSI on the management
 	// cluster too. Default false: management is stateless (CAPI
@@ -170,15 +170,15 @@ type Providers struct {
 	// minimal sub-configs covering the bits the cost estimator and CAPI
 	// plumbing read for each provider. See each Config struct's docstring
 	// for the field-by-field rationale.
-	Azure         AzureConfig
-	GCP           GCPConfig
-	Hetzner       HetznerConfig
-	OpenStack     OpenStackConfig
-	Vsphere       VsphereConfig
-	DigitalOcean  DigitalOceanConfig
-	Linode        LinodeConfig
-	OCI           OCIConfig
-	IBMCloud      IBMCloudConfig
+	Azure        AzureConfig
+	GCP          GCPConfig
+	Hetzner      HetznerConfig
+	OpenStack    OpenStackConfig
+	Vsphere      VsphereConfig
+	DigitalOcean DigitalOceanConfig
+	Linode       LinodeConfig
+	OCI          OCIConfig
+	IBMCloud     IBMCloudConfig
 }
 
 // OpenStackConfig is the per-provider OpenStack (CAPO) configuration.
@@ -213,14 +213,14 @@ type OpenStackConfig struct {
 // Sketch from §13's vSphere validation report — these are the
 // fields CAPV's manifest expects.
 type VsphereConfig struct {
-	Server         string // vCenter URL/host
-	Datacenter     string
-	Folder         string // VM folder under the datacenter
-	ResourcePool   string // soft-quota tree
-	Datastore      string
-	Network        string // vSphere network name
-	Template       string // VM template (governor) used for VM clones
-	TLSThumbprint  string // vCenter cert thumbprint when self-signed
+	Server        string // vCenter URL/host
+	Datacenter    string
+	Folder        string // VM folder under the datacenter
+	ResourcePool  string // soft-quota tree
+	Datastore     string
+	Network       string // vSphere network name
+	Template      string // VM template (governor) used for VM clones
+	TLSThumbprint string // vCenter cert thumbprint when self-signed
 	// Username / Password — operator-supplied via env (VSPHERE_USERNAME /
 	// VSPHERE_PASSWORD); kept on cfg so xapiri can prompt and kindsync
 	// can round-trip.
@@ -235,14 +235,14 @@ type VsphereConfig struct {
 	// defaults without editing the manifest by hand.
 	// Env vars follow the VSPHERE_* namespace to stay consistent with the
 	// rest of VsphereConfig.
-	ControlPlaneNumCPUs          string // VSPHERE_CONTROL_PLANE_NUM_CPUS (e.g. "2")
+	ControlPlaneNumCPUs           string // VSPHERE_CONTROL_PLANE_NUM_CPUS (e.g. "2")
 	ControlPlaneNumCoresPerSocket string // VSPHERE_CONTROL_PLANE_NUM_CORES_PER_SOCKET (e.g. "1")
-	ControlPlaneMemoryMiB        string // VSPHERE_CONTROL_PLANE_MEMORY_MIB (e.g. "4096")
-	ControlPlaneDiskGiB          string // VSPHERE_CONTROL_PLANE_DISK_GIB (e.g. "25")
-	WorkerNumCPUs                string // VSPHERE_WORKER_NUM_CPUS (e.g. "2")
-	WorkerNumCoresPerSocket      string // VSPHERE_WORKER_NUM_CORES_PER_SOCKET (e.g. "1")
-	WorkerMemoryMiB              string // VSPHERE_WORKER_MEMORY_MIB (e.g. "4096")
-	WorkerDiskGiB                string // VSPHERE_WORKER_DISK_GIB (e.g. "25")
+	ControlPlaneMemoryMiB         string // VSPHERE_CONTROL_PLANE_MEMORY_MIB (e.g. "4096")
+	ControlPlaneDiskGiB           string // VSPHERE_CONTROL_PLANE_DISK_GIB (e.g. "25")
+	WorkerNumCPUs                 string // VSPHERE_WORKER_NUM_CPUS (e.g. "2")
+	WorkerNumCoresPerSocket       string // VSPHERE_WORKER_NUM_CORES_PER_SOCKET (e.g. "1")
+	WorkerMemoryMiB               string // VSPHERE_WORKER_MEMORY_MIB (e.g. "4096")
+	WorkerDiskGiB                 string // VSPHERE_WORKER_DISK_GIB (e.g. "25")
 }
 
 // AzureConfig is the per-provider Azure (CAPZ) configuration.
@@ -348,7 +348,7 @@ type DigitalOceanConfig struct {
 	NodeSize         string
 	// VPCUUID optionally pins all droplets to a specific VPC. Empty = use
 	// the region default VPC (CAPDO's behaviour when the field is absent).
-	VPCUUID     string
+	VPCUUID      string
 	OverheadTier string // "dev" | "prod" | "enterprise" — mirrors AWS/Azure
 }
 
@@ -370,13 +370,13 @@ type OCIConfig struct {
 	NodeShape         string
 	// Provisioning-time fields — not secrets. OCI private key stays on-disk;
 	// only its path is tracked here (never the key material itself).
-	TenancyOCID      string
-	UserOCID         string
-	Fingerprint      string
-	CompartmentOCID  string
-	ImageID          string
-	PrivateKeyPath   string
-	OverheadTier     string // "dev" | "prod" | "enterprise"
+	TenancyOCID     string
+	UserOCID        string
+	Fingerprint     string
+	CompartmentOCID string
+	ImageID         string
+	PrivateKeyPath  string
+	OverheadTier    string // "dev" | "prod" | "enterprise"
 }
 
 // IBMCloudConfig is the per-provider IBM Cloud (CAPIBM) configuration.
@@ -429,12 +429,12 @@ type AWSConfig struct {
 	//   - "enterprise" — 3 NAT GWs (multi-AZ HA), 2 ALBs, VPC endpoints
 	// Per-component overrides are also available; see NATGatewayCount,
 	// ALBCount, NLBCount, DataTransferGB, CloudWatchLogsGB.
-	OverheadTier      string
-	NATGatewayCount   string // overrides the tier default
-	ALBCount          string
-	NLBCount          string
-	DataTransferGB    string // monthly egress estimate
-	CloudWatchLogsGB  string
+	OverheadTier       string
+	NATGatewayCount    string // overrides the tier default
+	ALBCount           string
+	NLBCount           string
+	DataTransferGB     string // monthly egress estimate
+	CloudWatchLogsGB   string
 	Route53HostedZones string
 }
 
@@ -469,10 +469,10 @@ type ProxmoxConfig struct {
 	RecreateIdentities      bool
 
 	// ---- Core API / target ----
-	URL        string
-	CAPIToken  string
-	CAPISecret string
-	Region     string
+	URL            string
+	CAPIToken      string
+	CAPISecret     string
+	Region         string
 	Node           string
 	SourceNode     string
 	TopologyRegion string
@@ -690,47 +690,47 @@ type Config struct {
 	CiliumGatewayAPIEnabled           string
 
 	// Workload GitOps (non-ArgoCD fields that remain at top-level)
-	WorkloadGitopsMode         string
-	WorkloadRolloutStandalone  bool
-	WorkloadRolloutMode        string
-	WorkloadRolloutNoWait      bool
+	WorkloadGitopsMode        string
+	WorkloadRolloutStandalone bool
+	WorkloadRolloutMode       string
+	WorkloadRolloutNoWait     bool
 
 	// ---- Top-level flags ----
-	Force                       bool
-	NoDeleteKind                bool
+	Force                        bool
+	NoDeleteKind                 bool
 	BootstrapPersistLocalSecrets bool
-	Purge                       bool
-	BuildAll                    bool
+	Purge                        bool
+	BuildAll                     bool
 	// DryRun, when true, makes Run() print a structured plan of what
 	// every phase would do (based on the current cfg) and exit without
 	// executing any phase. Distinct from PivotDryRun (which actually
 	// provisions the mgmt cluster and stops at `clusterctl move`).
-	DryRun                      bool
+	DryRun bool
 	// CostCompare, when true, makes the dry-run plan include a
 	// cross-cloud comparison: same logical cluster shape evaluated
 	// against every registered provider's EstimateMonthlyCostUSD,
 	// with a per-cloud "if you spent this on storage" retention
 	// column. Independent of cfg.InfraProvider — runs all of them.
-	CostCompare                 bool
+	CostCompare bool
 	// BudgetUSDMonth, when > 0, drives a retention calculation:
 	// budget − compute = leftover; leftover ÷ block-storage $/GB-mo
 	// = how much persistent volume capacity remains for
 	// observability / DB buckets after the cluster is paid for.
-	BudgetUSDMonth              float64
+	BudgetUSDMonth float64
 	// PrintPricingSetup, when non-empty, makes the program print
 	// the IAM/token setup snippet for the named vendor (or "all"
 	// for every vendor that needs setup) and exit. Intended for
 	// users who dismissed the first-run hint and want to see it
 	// again. Empty string means "no special action".
-	PrintPricingSetup           string
+	PrintPricingSetup string
 	// Xapiri, when true, launches the interactive configuration TUI
 	// (--xapiri) and exits. Mutually exclusive with the orchestrator
 	// run; setting it short-circuits main() before orchestrator.Run.
-	Xapiri                      bool
+	Xapiri bool
 	// XapiriDeployNow is set by the xapiri walkthrough when the user
 	// answers "deploy now? y" at step 8. main() reads it to decide
 	// whether to fall through to orchestrator.Run after the walkthrough.
-	XapiriDeployNow             bool
+	XapiriDeployNow bool
 	// PrintCommand, when non-empty, makes the program render the
 	// equivalent `yage <flags>` invocation that reproduces the
 	// resolved cfg, then exits. Useful for pipelines (capture the
@@ -739,24 +739,24 @@ type Config struct {
 	//   "env"     — sensitive values emit as $VAR refs (default)
 	//   "raw"     — sensitive values inline (full reproducibility)
 	//   "masked"  — sensitive values emit as ********
-	PrintCommand                string
+	PrintCommand string
 	// ClearKeyring, when true, removes Proxmox credentials from the OS
 	// keychain and exits. Set by the --clear-keyring flag.
-	ClearKeyring                bool
+	ClearKeyring bool
 	// SkipProviders is a comma-separated list of registry names to
 	// drop from the cost-compare table. Useful when the operator
 	// has no interest in some clouds (e.g. SkipProviders="oci,ibmcloud"
 	// hides those rows). The provider can still be picked as the
 	// active --infra-provider; only the comparison view filters them.
 	// Env: YAGE_SKIP_PROVIDERS.
-	SkipProviders               string
+	SkipProviders string
 	// CostCompareEnabled, when true, enables live cost-estimation API
 	// calls in --xapiri and --cost-compare. Set by the presence of the
 	// yage-system/cost-compare-config Secret (loaded at xapiri startup)
 	// or by the --cost-compare-config flag (which also triggers the
 	// credential-setup step). When false, all live pricing calls are
 	// suppressed and the dashboard right panel shows a placeholder.
-	CostCompareEnabled          bool
+	CostCompareEnabled bool
 	// UseManagedPostgres controls whether the cluster relies on the
 	// vendor's SaaS Postgres (RDS / Aurora / Cloud SQL / Azure DB for
 	// PG / DO Managed DB / Linode Managed DB / OCI DB for PG / IBM
@@ -767,7 +767,7 @@ type Config struct {
 	// cnpg helm install and the cost line shows the SaaS price.
 	// --no-managed-postgres opts back into in-cluster cnpg.
 	// Env: YAGE_USE_MANAGED_POSTGRES.
-	UseManagedPostgres          bool
+	UseManagedPostgres bool
 	// In-cluster substitute footprint overrides — one set per
 	// service slot (Postgres / message queue / object storage /
 	// in-memory cache). Empty / 0 means "use the default from
@@ -793,22 +793,22 @@ type Config struct {
 	// path for self-hosted providers (Proxmox, vSphere) — they
 	// otherwise return ErrNotApplicable. Amortized monthly capex
 	// is HardwareCostUSD / (HardwareUsefulLifeYears × 12).
-	HardwareCostUSD             float64
+	HardwareCostUSD float64
 	// HardwareUsefulLifeYears is the depreciation horizon over
 	// which to amortize the capex. Default 5 — the typical server
 	// refresh cadence and the IRS MACRS 5-year property class.
-	HardwareUsefulLifeYears     float64
+	HardwareUsefulLifeYears float64
 	// HardwareWatts is the cluster's continuous draw at typical
 	// load (NOT max nameplate). Used to compute electricity opex.
-	HardwareWatts               float64
+	HardwareWatts float64
 	// HardwareKWHRateUSD is the user's electricity rate in USD per
 	// kWh (delivered, including transmission/taxes — not just
 	// generation). Default 0.15 (rough US average).
-	HardwareKWHRateUSD          float64
+	HardwareKWHRateUSD float64
 	// HardwareSupportUSDMonth is any flat monthly cost the operator
 	// wants to fold into the estimate — vSphere licensing, ESXi
 	// support contract, IPMI subscription, colo/rack rental, etc.
-	HardwareSupportUSDMonth     float64
+	HardwareSupportUSDMonth float64
 	// AWS-only fields live in cfg.Providers.AWS.* (see AWSConfig).
 	// Azure / GCP / Hetzner / DigitalOcean / Linode / OCI / IBMCloud
 	// per-provider fields live under cfg.Providers.<Name>.* — see the
@@ -820,7 +820,7 @@ type Config struct {
 	//   - "k3s": single-binary Kubernetes optimised for low-resource
 	//     environments (Raspberry Pi, edge, dev VMs). Fits in ~1 vCPU
 	//     + 1 GiB. Requires the CAPI K3s providers (KCP-K3s + CABK3s).
-	BootstrapMode               string
+	BootstrapMode string
 
 	// ---- Kind / management cluster ----
 	ClusterID                    string
@@ -831,16 +831,16 @@ type Config struct {
 	BootstrapKindConfigEphemeral bool
 
 	// ---- CAPI manifest (workload) ----
-	CAPIManifest                             string
-	BootstrapCAPIManifestEphemeral           bool
-	BootstrapCAPIManifestUserSet             bool
-	BootstrapCAPIUseSecret                   bool
-	BootstrapRegenerateCAPIManifest          bool
-	BootstrapSkipImmutableManifestWarning    bool
-	BootstrapClusterctlRegeneratedManifest   bool
-	CAPIManifestSecretNamespace              string
-	CAPIManifestSecretName                   string
-	CAPIManifestSecretKey                    string
+	CAPIManifest                           string
+	BootstrapCAPIManifestEphemeral         bool
+	BootstrapCAPIManifestUserSet           bool
+	BootstrapCAPIUseSecret                 bool
+	BootstrapRegenerateCAPIManifest        bool
+	BootstrapSkipImmutableManifestWarning  bool
+	BootstrapClusterctlRegeneratedManifest bool
+	CAPIManifestSecretNamespace            string
+	CAPIManifestSecretName                 string
+	CAPIManifestSecretKey                  string
 
 	// ---- Kind backup/restore ----
 	BootstrapKindBackupNamespaces string
@@ -933,58 +933,58 @@ type Config struct {
 	ConfigFile string
 
 	// ---- CAPI providers ----
-	InfraProvider      string
-	IPAMProvider       string
-	CAPMOXRepo         string
-	CAPMOXImageRepo    string
-	CAPMOXBuildDir     string
-	CAPMOXVersion      string
-	CAPICoreImage      string
-	CAPICoreRepo       string
-	CAPIBootstrapImage string
+	InfraProvider         string
+	IPAMProvider          string
+	CAPMOXRepo            string
+	CAPMOXImageRepo       string
+	CAPMOXBuildDir        string
+	CAPMOXVersion         string
+	CAPICoreImage         string
+	CAPICoreRepo          string
+	CAPIBootstrapImage    string
 	CAPIControlplaneImage string
-	IPAMImage          string
-	IPAMRepo           string
+	IPAMImage             string
+	IPAMRepo              string
 
 	// ---- Clusterctl experimental / topology ----
-	ExpClusterResourceSet           string
-	ClusterTopology                 string
+	ExpClusterResourceSet             string
+	ClusterTopology                   string
 	ExpKubeadmBootstrapFormatIgnition string
 
 	// ---- metrics-server ----
-	EnableMetricsServer               bool
-	EnableWorkloadMetricsServer       bool
-	WorkloadMetricsServerInsecureTLS  string
-	MetricsServerManifestURL          string
-	MetricsServerGitChartTag          string
+	EnableMetricsServer              bool
+	EnableWorkloadMetricsServer      bool
+	WorkloadMetricsServerInsecureTLS string
+	MetricsServerManifestURL         string
+	MetricsServerGitChartTag         string
 
 	WorkloadPostsyncNamespace string
 
 	// ---- Kyverno ----
-	KyvernoEnabled                bool
-	KyvernoChartVersion           string
-	KyvernoChartRepoURL           string
-	KyvernoNamespace              string
-	KyvernoTolerateControlPlane   string
+	KyvernoEnabled              bool
+	KyvernoChartVersion         string
+	KyvernoChartRepoURL         string
+	KyvernoNamespace            string
+	KyvernoTolerateControlPlane string
 
 	// ---- cert-manager ----
-	CertManagerEnabled       bool
-	CertManagerChartVersion  string
-	CertManagerChartRepoURL  string
-	CertManagerNamespace     string
+	CertManagerEnabled      bool
+	CertManagerChartVersion string
+	CertManagerChartRepoURL string
+	CertManagerNamespace    string
 
 	// ---- Crossplane ----
-	CrossplaneEnabled       bool
-	CrossplaneChartVersion  string
-	CrossplaneChartRepoURL  string
-	CrossplaneNamespace     string
+	CrossplaneEnabled      bool
+	CrossplaneChartVersion string
+	CrossplaneChartRepoURL string
+	CrossplaneNamespace    string
 
 	// ---- CloudNativePG ----
-	CNPGEnabled       bool
-	CNPGChartVersion  string
-	CNPGChartRepoURL  string
-	CNPGChartName     string
-	CNPGNamespace     string
+	CNPGEnabled      bool
+	CNPGChartVersion string
+	CNPGChartRepoURL string
+	CNPGChartName    string
+	CNPGNamespace    string
 
 	// ---- External-Secrets ----
 	ExternalSecretsEnabled      bool
@@ -1103,9 +1103,9 @@ type Config struct {
 	WorkloadWorkerTemplateID       string
 
 	// ---- Workload cluster ----
-	WorkloadClusterName             string
-	WorkloadCiliumClusterID         string
-	WorkloadClusterNamespace        string
+	WorkloadClusterName              string
+	WorkloadCiliumClusterID          string
+	WorkloadClusterNamespace         string
 	WorkloadClusterNameExplicit      bool
 	WorkloadClusterNamespaceExplicit bool
 	// ConfigName is the per-config discriminator used to name the
@@ -1113,12 +1113,12 @@ type Config struct {
 	// Defaults to WorkloadClusterName so case-1 (N workload clusters on one
 	// mgmt) needs no extra flag. Set --config-name explicitly to create
 	// named profiles (case 2) or draft scenarios (case 3).
-	ConfigName         string
-	ConfigNameExplicit bool
+	ConfigName                        string
+	ConfigNameExplicit                bool
 	WorkloadKubernetesVersion         string
 	WorkloadKubernetesVersionExplicit bool
 	ControlPlaneMachineCount          string
-	WorkerMachineCount              string
+	WorkerMachineCount                string
 
 	// ---- Observability ----
 	// TraceEndpoint is the gRPC endpoint for OTEL span export (e.g.
@@ -1169,7 +1169,6 @@ type Config struct {
 	// repository that manifests.Fetcher clones/checks-out. Defaults to "v0.1.0"
 	// (ADR 0008 §5). Env: YAGE_MANIFESTS_REF.
 	ManifestsRef string
-
 }
 
 // Load reads environment variables and applies defaults to produce a

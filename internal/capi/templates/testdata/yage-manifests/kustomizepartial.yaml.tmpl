@@ -1,0 +1,6 @@
+# yage-manifests/testdata/kustomizepartial.yaml.tmpl
+cluster: {{ .Cfg.WorkloadClusterName }}
+namespace: {{ .Namespace }}
+jobName: {{ .JobName }}
+kubectlImage: {{ .KubectlImage }}
+extra: {{ index .Extra "TARGET_IMAGE" }}

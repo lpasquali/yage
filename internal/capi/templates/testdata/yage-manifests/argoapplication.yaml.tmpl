@@ -1,0 +1,16 @@
+# yage-manifests/testdata/argoapplication.yaml.tmpl
+cluster: {{ .Cfg.WorkloadClusterName }}
+name: {{ .Name }}
+destNS: {{ .DestNS }}
+repoURL: {{ .RepoURL }}
+chart: {{ .Chart }}
+path: {{ .Path }}
+ref: {{ .Ref }}
+syncWave: {{ .SyncWave }}
+releaseName: {{ .ReleaseName }}
+valuesYAML: {{ .ValuesYAML }}
+annotation: {{ index .Annotations "argocd.argoproj.io/compare-options" }}
+postSyncURL: {{ .PostSync.URL }}
+postSyncPath: {{ .PostSync.Path }}
+postSyncRef: {{ .PostSync.Ref }}
+postSyncPartial: {{ .PostSync.KustomizePartial }}

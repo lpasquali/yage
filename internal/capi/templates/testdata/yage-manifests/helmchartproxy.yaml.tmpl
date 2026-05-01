@@ -1,0 +1,10 @@
+# yage-manifests/testdata/helmchartproxy.yaml.tmpl
+cluster: {{ .Cfg.WorkloadClusterName }}
+name: {{ .Name }}
+namespace: {{ .Namespace }}
+selector: {{ index .ClusterSelector "cluster.x-k8s.io/cluster-name" }}
+chartName: {{ .ChartName }}
+repoURL: {{ .RepoURL }}
+version: {{ .Version }}
+chartNamespace: {{ .ChartNamespace }}
+valuesTemplate: {{ .ValuesTemplate }}

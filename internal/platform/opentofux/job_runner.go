@@ -443,9 +443,11 @@ func (j *JobRunner) buildCommand(module, operation string) string {
 			chdir, initFlags, chdir,
 		)
 	case "output":
+		// Init stdout is suppressed so capturePodLogs receives only the JSON
+		// from `tofu output -json` without progress text mixed in.
 		return fmt.Sprintf(
-			`tofu %s output -json`,
-			chdir,
+			`tofu %s init %s >/dev/null 2>&1 && tofu %s output -json`,
+			chdir, initFlags, chdir,
 		)
 	default: // "apply"
 		return fmt.Sprintf(

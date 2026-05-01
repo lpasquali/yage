@@ -1165,6 +1165,11 @@ type Config struct {
 	// Defaults to main. Env: YAGE_TOFU_REF.
 	TofuRef string
 
+	// ManifestsRef is the git tag or branch of the lpasquali/yage-manifests
+	// repository that manifests.Fetcher clones/checks-out. Defaults to "v0.1.0"
+	// (ADR 0008 §5). Env: YAGE_MANIFESTS_REF.
+	ManifestsRef string
+
 }
 
 // Load reads environment variables and applies defaults to produce a
@@ -1248,6 +1253,7 @@ func Load() *Config {
 	c.NodeImage = strings.TrimSpace(getenv("YAGE_NODE_IMAGE", ""))
 	c.TraceEndpoint = getenv("YAGE_TRACE_ENDPOINT", "")
 	c.TofuRef = getenv("YAGE_TOFU_REF", "main")
+	c.ManifestsRef = getenv("YAGE_MANIFESTS_REF", "v0.1.0")
 
 	// --- On-prem platform services (Phase H, ADR 0009) ---
 	c.RegistryNode = getenv("YAGE_REGISTRY_NODE", "")

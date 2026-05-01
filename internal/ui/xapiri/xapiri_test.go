@@ -175,3 +175,40 @@ func TestGeoNearestRegionID_nearLondon(t *testing.T) {
 		t.Fatalf("azure nearest=%q want uksouth", got)
 	}
 }
+
+// TestRenderField_SecretFieldsNeverLeakValue verifies that secret fields
+// never emit their cleartext value in the unfocused render path. This is a
+// regression guard for ADR 0013 (secret display policy).
+func TestRenderField_SecretFieldsNeverLeakValue(t *testing.T) {
+	const sentinel = "SENTINEL-SECRET-DEADBEEF-12345"
+
+	cfg := &config.Config{}
+	cfg.Providers.Proxmox.AdminToken = sentinel
+	cfg.IssuingCARootCert = sentinel
+	cfg.IssuingCARootKey = sentinel
+
+	s := newState(&bytes.Buffer{}, cfg)
+	m := newDashModel(cfg, s)
+
+	cases := []struct {
+		name string
+		fid  int
+	}{
+		{"tiProxmoxAdminToken", focProxmoxAdminToken},
+		{"tiIssuingCACert", focIssuingCACert},
+		{"tiIssuingCAKey", focIssuingCAKey},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rendered := m.renderField(c.fid, false, 120)
+			if bytes.Contains([]byte(rendered), []byte(sentinel)) {
+				t.Errorf("renderField(%s, focused=false) leaked the secret value in: %q", c.name, rendered)
+			}
+			// Confirm the indicator is present.
+			if !bytes.Contains([]byte(rendered), []byte("set")) {
+				t.Errorf("renderField(%s, focused=false) missing set/not-set indicator in: %q", c.name, rendered)
+			}
+		})
+	}
+}

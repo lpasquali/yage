@@ -290,116 +290,117 @@ type fieldMeta struct {
 	label   string // displayed label (padded to labelW)
 	section string // section header text; "" = same section as previous
 	costKey bool   // triggers a cost-refresh when changed
+	secret  bool   // value is a credential — never rendered in cleartext
 }
 
 var dashFields = []fieldMeta{
 	// ── Mode ─────────────────────────────────────────────────────────────── fid 0
-	{fkSelect, siMode, "mode", "Mode", false},
+	{fkSelect, siMode, "mode", "Mode", false, false},
 	// ── Provider ─────────────────────────────────────────────────────────── fid 1
-	{fkSelect, siProvider, "provider", "Provider", false},
+	{fkSelect, siProvider, "provider", "Provider", false, false},
 	// ── Cluster ──────────────────────────────────────────────────────────── fid 2-4
-	{fkText, tiKindName, "kind name", "Cluster", false},
-	{fkText, tiK8sVer, "k8s version", "", false},
-	{fkText, tiWorkloadName, "workload name", "", false},
+	{fkText, tiKindName, "kind name", "Cluster", false, false},
+	{fkText, tiK8sVer, "k8s version", "", false, false},
+	{fkText, tiWorkloadName, "workload name", "", false, false},
 	// ── Tier ─────────────────────────────────────────────────────────────── fid 5-6
-	{fkSelect, siEnv, "environment", "Tier", true},
-	{fkSelect, siResil, "resilience", "", true},
+	{fkSelect, siEnv, "environment", "Tier", true, false},
+	{fkSelect, siResil, "resilience", "", true, false},
 	// ── Workload ─────────────────────────────────────────────────────────── fid 7-9
-	{fkText, tiApps, "apps", "Workload", true},
-	{fkText, tiDBGB, "db (GB)", "", true},
-	{fkText, tiEgressGB, "egress GB/mo", "", true},
+	{fkText, tiApps, "apps", "Workload", true, false},
+	{fkText, tiDBGB, "db (GB)", "", true, false},
+	{fkText, tiEgressGB, "egress GB/mo", "", true, false},
 	// ── Add-ons (cloud sizing) ───────────────────────────────────────────── fid 10-20
-	{fkToggle, toiQueue, "message queue", "Add-ons", true},
-	{fkText, tiQueueCPU, "  queue CPU (m)", "", true},
-	{fkText, tiQueueMem, "  queue mem (Mi)", "", true},
-	{fkText, tiQueueVol, "  queue vol (GB)", "", true},
-	{fkToggle, toiObjStore, "object storage", "", true},
-	{fkText, tiObjCPU, "  obj CPU (m)", "", true},
-	{fkText, tiObjMem, "  obj mem (Mi)", "", true},
-	{fkText, tiObjVol, "  obj vol (GB)", "", true},
-	{fkToggle, toiCache, "in-mem cache", "", true},
-	{fkText, tiCacheCPU, "  cache CPU (m)", "", true},
-	{fkText, tiCacheMem, "  cache mem (Mi)", "", true},
+	{fkToggle, toiQueue, "message queue", "Add-ons", true, false},
+	{fkText, tiQueueCPU, "  queue CPU (m)", "", true, false},
+	{fkText, tiQueueMem, "  queue mem (Mi)", "", true, false},
+	{fkText, tiQueueVol, "  queue vol (GB)", "", true, false},
+	{fkToggle, toiObjStore, "object storage", "", true, false},
+	{fkText, tiObjCPU, "  obj CPU (m)", "", true, false},
+	{fkText, tiObjMem, "  obj mem (Mi)", "", true, false},
+	{fkText, tiObjVol, "  obj vol (GB)", "", true, false},
+	{fkToggle, toiCache, "in-mem cache", "", true, false},
+	{fkText, tiCacheCPU, "  cache CPU (m)", "", true, false},
+	{fkText, tiCacheMem, "  cache mem (Mi)", "", true, false},
 	// ── Bootstrap (on-prem only) ─────────────────────────────────────────── fid 21-22
-	{fkSelect, siBootstrap, "bootstrap mode", "Bootstrap", false},
-	{fkToggle, toiOvercommit, "allow overcommit", "", false},
+	{fkSelect, siBootstrap, "bootstrap mode", "Bootstrap", false, false},
+	{fkToggle, toiOvercommit, "allow overcommit", "", false, false},
 	// ── Proxmox Connection (proxmox only) ───────────────────────────────── fid 23-26
-	{fkText, tiProxmoxURL, "pve url", "Proxmox Connection", false},
-	{fkText, tiProxmoxAdminUsername, "admin username", "", false},
-	{fkText, tiProxmoxAdminInsecure, "tls insecure", "", false},
-	{fkText, tiProxmoxAdminToken, "admin token", "", false},
+	{fkText, tiProxmoxURL, "pve url", "Proxmox Connection", false, false},
+	{fkText, tiProxmoxAdminUsername, "admin username", "", false, false},
+	{fkText, tiProxmoxAdminInsecure, "tls insecure", "", false, false},
+	{kind: fkText, subIdx: tiProxmoxAdminToken, label: "admin token", secret: true},
 	// ── Proxmox Config (proxmox only) ────────────────────────────────────── fid 27-49
-	{fkText, tiProxmoxDefaultTmpl, "default tmpl ID", "Proxmox Config", false},
-	{fkText, tiProxmoxWLCPTmpl, "wl CP tmpl ID", "", false},
-	{fkText, tiProxmoxWLCPCores, "  cores", "", false},
-	{fkText, tiProxmoxWLCPMemMiB, "  mem MiB", "", false},
-	{fkText, tiProxmoxWLCPDiskGB, "  disk GB", "", false},
-	{fkText, tiProxmoxWLWorkerTmpl, "wl worker tmpl ID", "", false},
-	{fkText, tiProxmoxWLWorkerCores, "  cores", "", false},
-	{fkText, tiProxmoxWLWorkerMemMiB, "  mem MiB", "", false},
-	{fkText, tiProxmoxWLWorkerDiskGB, "  disk GB", "", false},
-	{fkText, tiProxmoxMgmtCPTmpl, "mgmt CP tmpl ID", "", false},
-	{fkText, tiProxmoxMgmtCPCores, "  cores", "", false},
-	{fkText, tiProxmoxMgmtCPMemMiB, "  mem MiB", "", false},
-	{fkText, tiProxmoxMgmtCPDiskGB, "  disk GB", "", false},
-	{fkText, tiProxmoxMgmtWorkerTmpl, "mgmt worker tmpl ID", "", false},
-	{fkText, tiProxmoxMgmtWorkerCores, "  cores", "", false},
-	{fkText, tiProxmoxMgmtWorkerMemMiB, "  mem MiB", "", false},
-	{fkText, tiProxmoxMgmtWorkerDiskGB, "  disk GB", "", false},
-	{fkText, tiProxmoxPool, "wl pool name", "", false},
-	{fkText, tiProxmoxMgmtPool, "mgmt pool name", "", false},
-	{fkText, tiProxmoxCPCount, "wl CP replicas", "", false},
-	{fkText, tiProxmoxWorkerCount, "wl worker replicas", "", false},
-	{fkText, tiProxmoxMgmtCPCount, "mgmt CP replicas", "", false},
-	{fkText, tiProxmoxMgmtWorkerCount, "mgmt worker replicas", "", false},
+	{fkText, tiProxmoxDefaultTmpl, "default tmpl ID", "Proxmox Config", false, false},
+	{fkText, tiProxmoxWLCPTmpl, "wl CP tmpl ID", "", false, false},
+	{fkText, tiProxmoxWLCPCores, "  cores", "", false, false},
+	{fkText, tiProxmoxWLCPMemMiB, "  mem MiB", "", false, false},
+	{fkText, tiProxmoxWLCPDiskGB, "  disk GB", "", false, false},
+	{fkText, tiProxmoxWLWorkerTmpl, "wl worker tmpl ID", "", false, false},
+	{fkText, tiProxmoxWLWorkerCores, "  cores", "", false, false},
+	{fkText, tiProxmoxWLWorkerMemMiB, "  mem MiB", "", false, false},
+	{fkText, tiProxmoxWLWorkerDiskGB, "  disk GB", "", false, false},
+	{fkText, tiProxmoxMgmtCPTmpl, "mgmt CP tmpl ID", "", false, false},
+	{fkText, tiProxmoxMgmtCPCores, "  cores", "", false, false},
+	{fkText, tiProxmoxMgmtCPMemMiB, "  mem MiB", "", false, false},
+	{fkText, tiProxmoxMgmtCPDiskGB, "  disk GB", "", false, false},
+	{fkText, tiProxmoxMgmtWorkerTmpl, "mgmt worker tmpl ID", "", false, false},
+	{fkText, tiProxmoxMgmtWorkerCores, "  cores", "", false, false},
+	{fkText, tiProxmoxMgmtWorkerMemMiB, "  mem MiB", "", false, false},
+	{fkText, tiProxmoxMgmtWorkerDiskGB, "  disk GB", "", false, false},
+	{fkText, tiProxmoxPool, "wl pool name", "", false, false},
+	{fkText, tiProxmoxMgmtPool, "mgmt pool name", "", false, false},
+	{fkText, tiProxmoxCPCount, "wl CP replicas", "", false, false},
+	{fkText, tiProxmoxWorkerCount, "wl worker replicas", "", false, false},
+	{fkText, tiProxmoxMgmtCPCount, "mgmt CP replicas", "", false, false},
+	{fkText, tiProxmoxMgmtWorkerCount, "mgmt worker replicas", "", false, false},
 	// ── Workload Network (on-prem only) ──────────────────────────────────── fid 40-44
-	{fkText, tiCPEndpointIP, "CP endpoint IP", "Workload Network", false},
-	{fkText, tiNodeIPRanges, "node IP ranges", "", false},
-	{fkText, tiGateway, "gateway", "", false},
-	{fkText, tiIPPrefix, "IP prefix", "", false},
-	{fkText, tiDNSServers, "DNS servers", "", false},
+	{fkText, tiCPEndpointIP, "CP endpoint IP", "Workload Network", false, false},
+	{fkText, tiNodeIPRanges, "node IP ranges", "", false, false},
+	{fkText, tiGateway, "gateway", "", false, false},
+	{fkText, tiIPPrefix, "IP prefix", "", false, false},
+	{fkText, tiDNSServers, "DNS servers", "", false, false},
 	// ── Mgmt Network (on-prem only) ───────────────────────────────────────── fid 28-29
-	{fkText, tiMgmtCPEndpointIP, "CP endpoint IP", "Mgmt Network", false},
-	{fkText, tiMgmtNodeIPRanges, "node IP ranges", "", false},
+	{fkText, tiMgmtCPEndpointIP, "CP endpoint IP", "Mgmt Network", false, false},
+	{fkText, tiMgmtNodeIPRanges, "node IP ranges", "", false, false},
 	// ── ArgoCD ───────────────────────────────────────────────────────────── fid 30-32
-	{fkText, tiArgoURL, "app-of-apps URL", "ArgoCD", false},
-	{fkText, tiArgoPath, "app-of-apps path", "", false},
-	{fkText, tiArgoRef, "app-of-apps ref", "", false},
+	{fkText, tiArgoURL, "app-of-apps URL", "ArgoCD", false, false},
+	{fkText, tiArgoPath, "app-of-apps path", "", false, false},
+	{fkText, tiArgoRef, "app-of-apps ref", "", false, false},
 	// ── Airgap ───────────────────────────────────────────────────────────── fid 31-34
-	{fkToggle, toiAirgapped, "airgapped", "Airgap", false},
-	{fkText, tiImgMirror, "image mirror", "", false},
-	{fkText, tiCABundle, "CA bundle path", "", false},
-	{fkText, tiHelmMirror, "helm mirror", "", false},
+	{fkToggle, toiAirgapped, "airgapped", "Airgap", false, false},
+	{fkText, tiImgMirror, "image mirror", "", false, false},
+	{fkText, tiCABundle, "CA bundle path", "", false, false},
+	{fkText, tiHelmMirror, "helm mirror", "", false, false},
 	// ── Add-ons installed ────────────────────────────────────────────────── fid 35-44
-	{fkToggle, toiKyverno, "kyverno", "Add-ons installed", false},
-	{fkToggle, toiCertMgr, "cert-manager", "", false},
-	{fkToggle, toiCNPG, "CNPG", "", false},
-	{fkToggle, toiCrossplane, "crossplane", "", false},
-	{fkToggle, toiExtSecrets, "ext-secrets", "", false},
-	{fkToggle, toiOTEL, "otel", "", false},
-	{fkToggle, toiGrafana, "grafana", "", false},
-	{fkToggle, toiVictoria, "victoriametrics", "", false},
-	{fkToggle, toiMetrics, "metrics-server", "", false},
-	{fkToggle, toiSPIRE, "spire", "", false},
+	{fkToggle, toiKyverno, "kyverno", "Add-ons installed", false, false},
+	{fkToggle, toiCertMgr, "cert-manager", "", false, false},
+	{fkToggle, toiCNPG, "CNPG", "", false, false},
+	{fkToggle, toiCrossplane, "crossplane", "", false, false},
+	{fkToggle, toiExtSecrets, "ext-secrets", "", false, false},
+	{fkToggle, toiOTEL, "otel", "", false, false},
+	{fkToggle, toiGrafana, "grafana", "", false, false},
+	{fkToggle, toiVictoria, "victoriametrics", "", false, false},
+	{fkToggle, toiMetrics, "metrics-server", "", false, false},
+	{fkToggle, toiSPIRE, "spire", "", false, false},
 	// ── Geo + Budget (cloud only) ────────────────────────────────────────── fid 45-47
-	{fkText, tiDCLoc, "data-center loc", "Geo", false},
-	{fkText, tiBudget, "budget USD/mo", "Budget", false},
-	{fkText, tiHeadroom, "headroom %", "", false},
+	{fkText, tiDCLoc, "data-center loc", "Geo", false, false},
+	{fkText, tiBudget, "budget USD/mo", "Budget", false, false},
+	{fkText, tiHeadroom, "headroom %", "", false, false},
 	// ── TCO (on-prem only) ───────────────────────────────────────────────── fid 50-54
-	{fkToggle, toiTCO, "TCO enabled", "TCO", false},
-	{fkText, tiHWCost, "  HW cost USD", "", false},
-	{fkText, tiHWWatts, "  HW watts", "", false},
-	{fkText, tiHWKWH, "  kWh rate USD", "", false},
-	{fkText, tiHWSupport, "  support USD/mo", "", false},
+	{fkToggle, toiTCO, "TCO enabled", "TCO", false, false},
+	{fkText, tiHWCost, "  HW cost USD", "", false, false},
+	{fkText, tiHWWatts, "  HW watts", "", false, false},
+	{fkText, tiHWKWH, "  kWh rate USD", "", false, false},
+	{fkText, tiHWSupport, "  support USD/mo", "", false, false},
 	// ── Registry (proxmox only) ───────────────────────────────────────────
-	{fkText, tiRegistryNode, "registry node", "Registry", false},
-	{fkText, tiRegistryVMFlav, "  VM flavor", "", false},
-	{fkText, tiRegistryNetwork, "  network", "", false},
-	{fkText, tiRegistryStorage, "  storage", "", false},
-	{fkSelect, siRegistryFlav, "  flavor", "", false},
+	{fkText, tiRegistryNode, "registry node", "Registry", false, false},
+	{fkText, tiRegistryVMFlav, "  VM flavor", "", false, false},
+	{fkText, tiRegistryNetwork, "  network", "", false, false},
+	{fkText, tiRegistryStorage, "  storage", "", false, false},
+	{fkSelect, siRegistryFlav, "  flavor", "", false, false},
 	// ── Issuing CA (on-prem only) ─────────────────────────────────────────
-	{fkText, tiIssuingCACert, "issuing CA cert", "Issuing CA", false},
-	{fkText, tiIssuingCAKey, "issuing CA key", "", false},
+	{kind: fkText, subIdx: tiIssuingCACert, label: "issuing CA cert", section: "Issuing CA", secret: true},
+	{kind: fkText, subIdx: tiIssuingCAKey, label: "issuing CA key", secret: true},
 }
 
 // ─── tab IDs ─────────────────────────────────────────────────────────────────
@@ -825,7 +826,11 @@ func newDashModel(cfg *config.Config, s *state) dashModel {
 	m.textInputs[tiRegistryVMFlav].SetValue(cfg.RegistryVMFlavor)
 	m.textInputs[tiRegistryNetwork].SetValue(cfg.RegistryNetwork)
 	m.textInputs[tiRegistryStorage].SetValue(cfg.RegistryStorage)
+	m.textInputs[tiIssuingCACert].EchoMode = textinput.EchoPassword
+	m.textInputs[tiIssuingCACert].EchoCharacter = '·'
 	m.textInputs[tiIssuingCACert].SetValue(cfg.IssuingCARootCert)
+	m.textInputs[tiIssuingCAKey].EchoMode = textinput.EchoPassword
+	m.textInputs[tiIssuingCAKey].EchoCharacter = '·'
 	m.textInputs[tiIssuingCAKey].SetValue(cfg.IssuingCARootKey)
 
 	// Selects.
@@ -3721,6 +3726,12 @@ func (m dashModel) renderField(fid int, focused bool, w int) string {
 		ti := m.textInputs[meta.subIdx]
 		if focused {
 			valStr = "[" + ti.View() + "]"
+		} else if meta.secret {
+			if ti.Value() == "" {
+				valStr = stMuted.Render("[ ] not set")
+			} else {
+				valStr = stOK.Render("[✓] set")
+			}
 		} else {
 			v := ti.Value()
 			if v == "" {

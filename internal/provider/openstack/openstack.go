@@ -54,12 +54,10 @@ type Provider struct{ provider.MinStub }
 func (p *Provider) Name() string              { return "openstack" }
 func (p *Provider) InfraProviderName() string { return "openstack" }
 
-// EnsureIdentity — CAPO consumes a clouds.yaml / OS_* env supplied
-// by the user (typically an application credential). Nothing for
-// yage to mint here.
-func (p *Provider) EnsureIdentity(cfg *config.Config) error {
-	return provider.ErrNotApplicable
-}
+// EnsureIdentity builds and applies the clouds.yaml Secret that CAPO needs
+// before it can provision OpenStack machines. The Secret is named
+// "<WorkloadClusterName>-cloud-config" and lives in WorkloadClusterNamespace
+// on the management (kind) cluster. Implementation is in identity.go.
 
 // Inventory — implemented in inventory.go via gophercloud Nova limits +
 // Cinder quota APIs. See inventory.go for details.

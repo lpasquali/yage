@@ -1511,39 +1511,6 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// ── Ctrl+Alt+1..8: universal tab switching — works even inside text fields ──
-		// Tab 1 (config) is always reachable; others require cfgSelected.
-		switch keyStr {
-		case "ctrl+alt+1":
-			m.activeTab = tabConfig
-			return m, nil
-		}
-		if m.cfgReady() {
-			switch keyStr {
-			case "ctrl+alt+2":
-				m.activeTab = tabProvision
-				return m, nil
-			case "ctrl+alt+3":
-				m.activeTab = tabEditor
-				return m, m.switchToEditorTab()
-			case "ctrl+alt+4":
-				m.activeTab = tabCosts
-				return m, nil
-			case "ctrl+alt+5":
-				m.activeTab = tabLogs
-				return m, nil
-			case "ctrl+alt+6":
-				m.activeTab = tabDeploy
-				return m, nil
-			case "ctrl+alt+7":
-				m.activeTab = tabDeps
-				return m, nil
-			case "ctrl+alt+8":
-				m.activeTab = tabHelp
-				return m, nil
-			}
-		}
-
 		// ── Ctrl+Left/Right: universal tab cycling — works even inside text fields ──
 		// tabConfig is always reachable; other tabs require cfgReady.
 		if key == tea.KeyCtrlLeft || key == tea.KeyCtrlRight {
@@ -1979,6 +1946,22 @@ func (m dashModel) updateDeployTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m dashModel) updateCostsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.Type
 	keyStr := msg.String()
+
+	// Intercept [ / ] before any inner form so they always navigate the
+	// timeframe window — even when the credential form is active (#154).
+	switch keyStr {
+	case "[":
+		if m.costPeriodIdx > 0 {
+			m.costPeriodIdx--
+		}
+		return m, nil
+	case "]":
+		if m.costPeriodIdx < len(costWindows)-1 {
+			m.costPeriodIdx++
+		}
+		return m, nil
+	}
+
 	if m.costCredsMode {
 		return m.updateCostsCredsForm(msg)
 	}
@@ -1994,14 +1977,6 @@ func (m dashModel) updateCostsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key == tea.KeyDown:
 		if len(m.costRows) > 0 {
 			m.costVendor = (m.costVendor + 1) % len(m.costRows)
-		}
-	case keyStr == "[":
-		if m.costPeriodIdx > 0 {
-			m.costPeriodIdx--
-		}
-	case keyStr == "]":
-		if m.costPeriodIdx < len(costWindows)-1 {
-			m.costPeriodIdx++
 		}
 	}
 	return m, nil
@@ -3255,7 +3230,7 @@ func tabAtX(x int) (dashTab, bool) {
 func (m dashModel) renderBottomStrip() string {
 	line := stMuted.Render(strings.Repeat("─", m.width)) + "\n"
 	if !m.cfg.CostCompareEnabled {
-		return line + stMuted.Render("  cost estimation: go to [costs] tab (4 / ctrl+alt+4) to enter API credentials")
+		return line + stMuted.Render("  cost estimation: go to [costs] tab (4) to enter API credentials")
 	}
 	if len(m.costRows) == 0 {
 		var suffix string
@@ -3372,7 +3347,7 @@ func (m dashModel) renderBottomStrip() string {
 
 func (m dashModel) renderFooter() string {
 	shellHint := stMuted.Render("ctrl+t") + " terminal  "
-	tabHint := stMuted.Render("1-8/ctrl+alt+1-8/ctrl+◄►") + " tabs  "
+	tabHint := stMuted.Render("1-8/ctrl+◄►") + " tabs  "
 	var keys string
 	switch m.activeTab {
 	case tabConfig:
@@ -4046,7 +4021,6 @@ func (m dashModel) renderHelpTab(w, h int) string {
 		"",
 		stBold.Render("  Tab switching"),
 		"  " + stAccent.Render("1") + "                config (always)  " + stAccent.Render("2-8") + " other tabs (after config selected)",
-		"  " + stAccent.Render("ctrl+alt+1") + "         config  " + stAccent.Render("ctrl+alt+2-8") + " other tabs",
 		"  " + stAccent.Render("ctrl+← →") + "          cycle tabs (works from any context)",
 		"  " + stAccent.Render("← →") + "               cycle tabs (when not in text field)",
 		"",

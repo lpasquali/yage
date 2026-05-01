@@ -322,6 +322,15 @@ func (c *Config) Snapshot() []SnapshotField {
 		bp("XAPIRI_WORKLOAD_HAS_QUEUE", &c.Workload.HasQueue),
 		bp("XAPIRI_WORKLOAD_HAS_OBJ_STORE", &c.Workload.HasObjStore),
 		bp("XAPIRI_WORKLOAD_HAS_CACHE", &c.Workload.HasCache),
+		// --- On-prem platform services (Phase H, ADR 0009) ---
+		// IssuingCARootCert and IssuingCARootKey are intentionally omitted:
+		// root CA material must never appear in kind Secrets.
+		sp("YAGE_REGISTRY_NODE", &c.RegistryNode),
+		sp("YAGE_REGISTRY_VM_FLAVOR", &c.RegistryVMFlavor),
+		sp("YAGE_REGISTRY_NETWORK", &c.RegistryNetwork),
+		sp("YAGE_REGISTRY_STORAGE", &c.RegistryStorage),
+		sp("YAGE_REGISTRY_FLAVOR", &c.RegistryFlavor),
+		sp("YAGE_TOFU_REF", &c.TofuRef),
 	}
 }
 

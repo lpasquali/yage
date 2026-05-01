@@ -48,7 +48,8 @@ func (p *Provider) KindSyncFields(cfg *config.Config) map[string]string {
 	add("pool", cfg.Providers.Proxmox.Pool)
 	add("identity_suffix", cfg.Providers.Proxmox.IdentitySuffix)
 	add("admin_username", cfg.Providers.Proxmox.AdminUsername)
-	add("admin_token", cfg.Providers.Proxmox.AdminToken)
+	// admin_token is intentionally excluded — it is a sensitive credential that
+	// should not be persisted to the orchestrator-state Secret (see issue #152/#153).
 	if cfg.Providers.Proxmox.AdminInsecure != "" {
 		add("admin_insecure", cfg.Providers.Proxmox.AdminInsecure)
 	}

@@ -1784,6 +1784,11 @@ func (m dashModel) updateCfgNewNameScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // updateCfgEditScreen handles key events in the full config edit form.
 func (m dashModel) updateCfgEditScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Discard keystrokes while a config entry is loading to prevent input
+	// from being silently lost when cfgEntryLoadMsg rebuilds all inputs.
+	if m.cfgLoading {
+		return m, nil
+	}
 	key := msg.Type
 	keyStr := msg.String()
 
@@ -2074,7 +2079,11 @@ func (m dashModel) cfgReady() bool { return m.cfgSelected }
 func (m dashModel) loadCfgListCmd() tea.Cmd {
 	kindName := m.cfg.KindClusterName
 	return func() tea.Msg {
-		return cfgListMsg{candidates: kindsync.ListBootstrapCandidates(kindName)}
+		candidates, err := kindsync.ListBootstrapCandidates(kindName)
+		if err != nil {
+			return cfgListMsg{err: fmt.Errorf("⚠ Could not reach kind cluster: %w", err)}
+		}
+		return cfgListMsg{candidates: candidates}
 	}
 }
 

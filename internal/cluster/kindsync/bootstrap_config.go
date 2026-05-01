@@ -69,6 +69,7 @@ const YageSystemNamespace = "yage-system"
 // separately via an error return).
 func BootstrapConfigNamespace(cfg *config.Config) string {
 	if cfg == nil || cfg.ConfigName == "" {
+		logx.Warn("kindsync: BootstrapConfigNamespace called with empty ConfigName; falling back to yage-default")
 		return "yage-default"
 	}
 	return "yage-" + sanitizeLabelValue(cfg.ConfigName)
@@ -251,13 +252,13 @@ func WriteBootstrapConfigSecret(cfg *config.Config) error {
 //   - universal keys (cluster_name, cluster_id, kubernetes_version)
 //     are filled when empty.
 func MergeBootstrapConfigFromKind(cfg *config.Config) error {
+	if cfg.ConfigName == "" {
+		return fmt.Errorf("kindsync: MergeBootstrapConfigFromKind: ConfigName is required; set --config-name or YAGE_CONFIG_NAME")
+	}
 	kctx := "kind-" + cfg.KindClusterName
 	cli, err := k8sclient.ForContext(kctx)
 	if err != nil {
 		return nil // best-effort; caller continues
-	}
-	if cfg.ConfigName == "" {
-		return nil // no discriminator; caller must populate ConfigName first
 	}
 	bg := context.Background()
 	sec, err := cli.Typed.CoreV1().Secrets(BootstrapConfigNamespace(cfg)).Get(bg, BootstrapConfigSecretName(cfg), metav1.GetOptions{})
@@ -334,6 +335,7 @@ func MergeBootstrapConfigFromKind(cfg *config.Config) error {
 // is verified.
 func PromoteBootstrapConfigToRealized(cfg *config.Config) {
 	if cfg == nil || cfg.KindClusterName == "" || cfg.ConfigName == "" {
+		logx.Warn("kindsync: PromoteBootstrapConfigToRealized: skipped — KindClusterName or ConfigName is empty")
 		return
 	}
 	kctx := "kind-" + cfg.KindClusterName
@@ -376,18 +378,20 @@ func (c BootstrapCandidate) Label() string {
 // kind cluster by looking for namespaces labeled
 // infra.yage-deployment.bucaniere.us=true, then fetches the
 // "bootstrap-config" Secret from each to read the rich label metadata.
-func ListBootstrapCandidates(kindClusterName string) []BootstrapCandidate {
+// Returns an error when the kind cluster is not reachable or the namespace
+// list fails, so callers can surface a user-visible message.
+func ListBootstrapCandidates(kindClusterName string) ([]BootstrapCandidate, error) {
 	kctx := "kind-" + kindClusterName
 	cli, err := k8sclient.ForContext(kctx)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("connect to kind cluster %q: %w", kindClusterName, err)
 	}
 	bg := context.Background()
 	nsList, err := cli.Typed.CoreV1().Namespaces().List(bg, metav1.ListOptions{
 		LabelSelector: "infra.yage-deployment.bucaniere.us=true",
 	})
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("list namespaces on kind cluster %q: %w", kindClusterName, err)
 	}
 	out := make([]BootstrapCandidate, 0, len(nsList.Items))
 	for _, ns := range nsList.Items {
@@ -396,7 +400,12 @@ func ListBootstrapCandidates(kindClusterName string) []BootstrapCandidate {
 			// Namespace exists but secret not yet written — skip.
 			continue
 		}
+		// Validate that this Secret is managed by yage and is a bootstrap-config
+		// Secret; skip non-yage Secrets that happen to share the name.
 		lbl := sec.Labels
+		if lbl["app.kubernetes.io/managed-by"] != "yage" || lbl["app.kubernetes.io/component"] != "bootstrap-config" {
+			continue
+		}
 		out = append(out, BootstrapCandidate{
 			KindCluster: kindClusterName,
 			ConfigName:  lbl["yage.io/config-name"],
@@ -406,7 +415,7 @@ func ListBootstrapCandidates(kindClusterName string) []BootstrapCandidate {
 			Region:      lbl["yage.io/region"],
 		})
 	}
-	return out
+	return out, nil
 }
 
 // pickBootstrapConfig presents a huh.Select form to pick one candidate.
@@ -473,7 +482,12 @@ func MergeBootstrapConfigFromFirstKindCluster(cfg *config.Config) {
 		if name == "" {
 			continue
 		}
-		candidates = append(candidates, ListBootstrapCandidates(name)...)
+		found, err := ListBootstrapCandidates(name)
+		if err != nil {
+			logx.Warn("kindsync: MergeBootstrapConfigFromFirstKindCluster: skipping cluster %q: %v", name, err)
+			continue
+		}
+		candidates = append(candidates, found...)
 	}
 	switch len(candidates) {
 	case 0:
@@ -493,7 +507,11 @@ func MergeBootstrapConfigFromFirstKindCluster(cfg *config.Config) {
 // It lists all bootstrap-config Secrets on that kind cluster and applies
 // the same 0/1/N huh-picker logic as MergeBootstrapConfigFromFirstKindCluster.
 func MergeBootstrapConfigFromKindCluster(cfg *config.Config) {
-	candidates := ListBootstrapCandidates(cfg.KindClusterName)
+	candidates, err := ListBootstrapCandidates(cfg.KindClusterName)
+	if err != nil {
+		logx.Warn("kindsync: MergeBootstrapConfigFromKindCluster: %v", err)
+		return
+	}
 	switch len(candidates) {
 	case 0:
 		// No configs on this cluster yet — leave ConfigName at its default.

@@ -5,6 +5,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"github.com/lpasquali/yage/internal/capi/manifest"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
+	"github.com/lpasquali/yage/internal/platform/opentofux"
 	"github.com/lpasquali/yage/internal/platform/shell"
 	"github.com/lpasquali/yage/internal/provider"
 	"github.com/lpasquali/yage/internal/ui/logx"
@@ -294,6 +296,20 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 			logx.Warn("Management kind cluster '%s' not present; skipping workload cluster deletion before Terraform destroy (any leftover Proxmox VMs must be cleaned up manually).",
 				cfg.KindClusterName)
 		}
+	}
+
+	// Registry tofu destroy — must run before kind teardown because the
+	// registry module's tofu state lives in a Kubernetes Secret in yage-system
+	// on the kind management cluster. Silently skipped when cfg.RegistryNode
+	// is empty (no registry was provisioned).
+	kindCtx := "kind-" + cfg.KindClusterName
+	if registryCli, err := k8sclient.ForContext(kindCtx); err == nil {
+		purgeCtx := context.Background()
+		if err := opentofux.DestroyRegistry(purgeCtx, registryCli, cfg); err != nil && !errors.Is(err, opentofux.ErrNotApplicable) {
+			logx.Warn("DestroyRegistry: %v (continuing — operator may need to run tofu destroy manually)", err)
+		}
+	} else if cfg.RegistryNode != "" {
+		logx.Warn("DestroyRegistry: cannot connect to %s: %v (registry tofu state may be orphaned)", kindCtx, err)
 	}
 
 	// Provider-specific cleanup (§11). For Proxmox this runs

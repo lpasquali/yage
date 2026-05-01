@@ -23,6 +23,7 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
+	"github.com/lpasquali/yage/internal/platform/shell"
 	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/ui/plan"
 )
@@ -105,6 +106,112 @@ func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 		cfg.Providers.Proxmox.CSINamespace)
 	w.Bullet("default StorageClass: %s",
 		cfg.Providers.Proxmox.CSIStorageClassName)
+}
+
+// EnsureManagementInstall installs the Proxmox CSI driver on the
+// management cluster identified by mgmtKubeconfig. It applies the
+// credential Secret and then runs a direct Helm install (not via
+// CAAPH/HelmChartProxy — ArgoCD is not running on the management
+// cluster at this stage, per ADR 0011 §4).
+//
+// mgmtKubeconfig is a file path owned by the caller; this method
+// does NOT delete it (unlike applyConfigSecretToWorkload which uses
+// defer os.Remove on a temp copy it writes itself).
+//
+// Returns csi.ErrNotApplicable when PROXMOX_CSI_ENABLED is false or
+// required credentials (URL / token ID / token secret / region) are
+// not populated.
+func (driver) EnsureManagementInstall(cfg *config.Config, mgmtKubeconfig string) error {
+	if !cfg.Providers.Proxmox.CSIEnabled {
+		return csi.ErrNotApplicable
+	}
+	if cfg.Providers.Proxmox.CSIURL == "" ||
+		cfg.Providers.Proxmox.CSITokenID == "" ||
+		cfg.Providers.Proxmox.CSITokenSecret == "" ||
+		cfg.Providers.Proxmox.Region == "" {
+		logx.Warn("proxmox-csi: skipping EnsureManagementInstall — one or more required fields (CSIURL, CSITokenID, CSITokenSecret, Region) are empty.")
+		return csi.ErrNotApplicable
+	}
+
+	// 1. Build a k8s client from the caller-owned kubeconfig path and
+	//    apply the credential Secret directly — do not use the closure
+	//    variant (applyConfigSecretToWorkload) because that defer-removes
+	//    the file path we still need for the helm call below.
+	cli, err := k8sclient.ForKubeconfigFile(mgmtKubeconfig)
+	if err != nil {
+		return fmt.Errorf("EnsureManagementInstall: connect to management cluster: %w", err)
+	}
+	bg := context.Background()
+	if err := cli.EnsureNamespace(bg, cfg.Providers.Proxmox.CSINamespace); err != nil {
+		return fmt.Errorf("EnsureManagementInstall: ensure namespace %s: %w",
+			cfg.Providers.Proxmox.CSINamespace, err)
+	}
+	if err := applyConfigSecretToClient(bg, cli, cfg); err != nil {
+		return fmt.Errorf("EnsureManagementInstall: secret: %w", err)
+	}
+
+	// 2. Helm install. The repo URL may be OCI (oci://ghcr.io/…) or an
+	//    HTTPS indexed repo. Helm handles these differently:
+	//    • HTTPS: helm upgrade --install <rel> <chart> --repo <repo> …
+	//    • OCI:   helm upgrade --install <rel> <repo>/<chart> …
+	scName := cfg.Providers.Proxmox.CSIMgmtStorageClassName
+	if scName == "" {
+		scName = cfg.Providers.Proxmox.CSIStorageClassName
+	}
+	repo := cfg.Providers.Proxmox.CSIChartRepoURL
+	chart := cfg.Providers.Proxmox.CSIChartName
+	args := []string{
+		"helm", "upgrade", "--install", "proxmox-csi-plugin",
+	}
+	if strings.HasPrefix(repo, "oci://") {
+		args = append(args, repo+"/"+chart)
+	} else {
+		args = append(args, chart, "--repo", repo)
+	}
+	args = append(args,
+		"--version", cfg.Providers.Proxmox.CSIChartVersion,
+		"--namespace", cfg.Providers.Proxmox.CSINamespace,
+		"--create-namespace",
+		"--set", "storageClass[0].name="+scName,
+		"--kubeconfig", mgmtKubeconfig,
+		"--wait",
+	)
+	return shell.Run(args...)
+}
+
+// applyConfigSecretToClient pushes the Proxmox CSI config Secret to
+// a cluster via an already-constructed k8sclient.Client. It does not
+// own the kubeconfig file; callers that need file-lifecycle management
+// use applyConfigSecretToWorkload instead.
+func applyConfigSecretToClient(ctx context.Context, cli *k8sclient.Client, cfg *config.Config) error {
+	cfgYAML := fmt.Sprintf(`features:
+  provider: %s
+clusters:
+  - url: "%s"
+    insecure: %s
+    token_id: "%s"
+    token_secret: "%s"
+    region: "%s"
+`,
+		cfg.Providers.Proxmox.CSIConfigProvider,
+		cfg.Providers.Proxmox.CSIURL,
+		cfg.Providers.Proxmox.CSIInsecure,
+		cfg.Providers.Proxmox.CSITokenID,
+		cfg.Providers.Proxmox.CSITokenSecret,
+		cfg.Providers.Proxmox.Region,
+	)
+	secretName := cfg.WorkloadClusterName + "-proxmox-csi-config"
+	if err := applySecret(ctx, cli, cfg.Providers.Proxmox.CSINamespace, secretName, cfgYAML); err != nil {
+		return fmt.Errorf("apply secret %s: %w", secretName, err)
+	}
+	if secretName != "proxmox-csi-config" {
+		if err := applySecret(ctx, cli, cfg.Providers.Proxmox.CSINamespace, "proxmox-csi-config", cfgYAML); err != nil {
+			return fmt.Errorf("apply alias secret: %w", err)
+		}
+	}
+	logx.Log("Applied %s (and proxmox-csi-config when names differ) — Proxmox API credentials in %s.",
+		secretName, cfg.Providers.Proxmox.CSINamespace)
+	return nil
 }
 
 // LoadVarsFromConfig fills empty cfg.Providers.Proxmox.{CSIURL,CSITokenID,

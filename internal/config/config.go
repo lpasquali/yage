@@ -505,11 +505,12 @@ type ProxmoxConfig struct {
 	CSIUserID           string
 	CSITokenPrefix      string
 	CSIInsecure         string
-	CSIStorageClassName string
-	CSIStorage          string
-	CSIReclaimPolicy    string
-	CSIFsType           string
-	CSIDefaultClass     string
+	CSIStorageClassName     string
+	CSIMgmtStorageClassName string // PROXMOX_CSI_MGMT_STORAGE_CLASS, default ""
+	CSIStorage              string
+	CSIReclaimPolicy        string
+	CSIFsType               string
+	CSIDefaultClass         string
 
 	// ---- CAPMOX identity / cloud-init / memory ----
 	CAPIUserID                 string
@@ -1691,6 +1692,7 @@ func Load() *Config {
 	c.Providers.Proxmox.CSITokenPrefix = getenv("PROXMOX_CSI_TOKEN_PREFIX", "csi")
 	c.Providers.Proxmox.CSIInsecure = getenv("PROXMOX_CSI_INSECURE", c.Providers.Proxmox.AdminInsecure)
 	c.Providers.Proxmox.CSIStorageClassName = getenv("PROXMOX_CSI_STORAGE_CLASS_NAME", "proxmox-data-xfs")
+	c.Providers.Proxmox.CSIMgmtStorageClassName = getenv("PROXMOX_CSI_MGMT_STORAGE_CLASS", "")
 	c.Providers.Proxmox.CSIStorage = getenv("PROXMOX_CSI_STORAGE", "local-lvm")
 	c.Providers.Proxmox.CloudinitStorage = getenv("PROXMOX_CLOUDINIT_STORAGE", "local")
 	c.Providers.Proxmox.MemoryAdjustment = getenv("PROXMOX_MEMORY_ADJUSTMENT", "0")

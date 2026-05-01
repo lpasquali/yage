@@ -43,6 +43,13 @@ func (driver) Defaults() []string { return []string{} }
 
 func (driver) DefaultStorageClass() string { return "longhorn" }
 
+// EnsureManagementInstall returns ErrNotApplicable: Longhorn is a
+// cross-provider opt-in driver and does not have a management-cluster
+// install path via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 // HelmChart pins to v1.7.2 of the Longhorn chart from the official
 // Longhorn Helm repository.
 func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err error) {

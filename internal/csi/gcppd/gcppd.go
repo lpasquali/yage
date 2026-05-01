@@ -161,6 +161,12 @@ func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) er
 
 func (driver) DefaultStorageClass() string { return "pd-balanced" }
 
+// EnsureManagementInstall returns ErrNotApplicable: GCP does not
+// pivot to a CAPI management cluster via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 	w.Section("GCP PD CSI")
 	w.Bullet("driver: %s (chart gcp-compute-persistent-disk-csi-driver pinned v1.13.0)", "pd.csi.storage.gke.io")

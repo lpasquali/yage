@@ -128,6 +128,12 @@ func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) er
 
 func (driver) DefaultStorageClass() string { return "ibmc-vpc-block-10iops-tier" }
 
+// EnsureManagementInstall returns ErrNotApplicable: IBM Cloud does
+// not pivot to a CAPI management cluster via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 	w.Section("IBM VPC Block CSI")
 	w.Bullet("driver: %s (chart ibm-vpc-block-csi-driver pinned 5.2.0)", "vpc.block.csi.ibm.io")

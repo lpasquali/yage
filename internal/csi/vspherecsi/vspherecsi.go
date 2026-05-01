@@ -148,6 +148,12 @@ func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) er
 
 func (driver) DefaultStorageClass() string { return "vsphere-sc" }
 
+// EnsureManagementInstall returns ErrNotApplicable: vSphere does not
+// pivot to a CAPI management cluster via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 	vs := cfg.Providers.Vsphere
 	w.Section("vSphere CSI")

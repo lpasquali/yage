@@ -30,9 +30,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/lpasquali/yage/internal/capi/cilium"
+	"github.com/lpasquali/yage/internal/capi/templates"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/airgap"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/provider/proxmox/api"
 	"github.com/lpasquali/yage/internal/platform/shell"
@@ -204,22 +206,14 @@ func PatchClusterCAAPHHelmLabels(cfg *config.Config, manifestPath string) error 
 	return nil
 }
 
-// CiliumHelmChartProxyYAML returns the full HelmChartProxy YAML
-// document the caller will `kubectl apply -f -` against the management
-// cluster.
-func CiliumHelmChartProxyYAML(cfg *config.Config, kprOn bool) string {
-	ver := strings.TrimPrefix(cfg.CiliumVersion, "v")
-	if ver == "" {
-		ver = "1.19.3"
-	}
-	ns := cfg.WorkloadClusterNamespace
-	if ns == "" {
-		ns = "default"
-	}
-	name := cfg.WorkloadClusterName
-	if name == "" {
-		name = "cluster"
-	}
+// buildCiliumValuesTemplate returns the pre-indented (4-space) valuesTemplate
+// body for the Cilium HelmChartProxy. Each line is already prefixed with four
+// spaces so the caller can emit it directly under `valuesTemplate: |`.
+//
+// The body contains CAAPH-side {{ }} expressions (the inner delimiters CAAPH
+// evaluates at apply time) that are passed through as literal text — they are
+// never interpreted by Go text/template.
+func buildCiliumValuesTemplate(cfg *config.Config, kprOn bool) string {
 	var vt strings.Builder
 	g := func(s string) string { return "{{ " + s + " }}" }
 	vt.WriteString("cluster:\n")
@@ -254,38 +248,47 @@ func CiliumHelmChartProxyYAML(cfg *config.Config, kprOn bool) string {
 		vt.WriteString("gatewayAPI:\n  enabled: true\n")
 	}
 
-	var sb strings.Builder
-	fmt.Fprintln(&sb, "apiVersion: addons.cluster.x-k8s.io/v1alpha1")
-	fmt.Fprintln(&sb, "kind: HelmChartProxy")
-	fmt.Fprintln(&sb, "metadata:")
-	fmt.Fprintf(&sb, "  name: %s-caaph-cilium\n", name)
-	fmt.Fprintf(&sb, "  namespace: %s\n", ns)
-	fmt.Fprintln(&sb, "spec:")
-	fmt.Fprintln(&sb, "  clusterSelector:")
-	fmt.Fprintln(&sb, "    matchLabels:")
-	fmt.Fprintln(&sb, "      caaph: enabled")
-	fmt.Fprintln(&sb, "  chartName: cilium")
-	fmt.Fprintf(&sb, "  repoURL: %s\n", airgap.RewriteHelmRepo("https://helm.cilium.io/"))
-	fmt.Fprintf(&sb, "  version: %q\n", ver)
-	fmt.Fprintln(&sb, "  namespace: kube-system")
-	fmt.Fprintln(&sb, "  options:")
-	fmt.Fprintln(&sb, "    wait: true")
-	fmt.Fprintln(&sb, "    waitForJobs: true")
-	fmt.Fprintln(&sb, "    timeout: 15m0s")
-	fmt.Fprintln(&sb, "    install:")
-	fmt.Fprintln(&sb, "      createNamespace: true")
-	fmt.Fprintln(&sb, "  valuesTemplate: |")
+	// Indent each line by four spaces for embedding under `valuesTemplate: |`.
+	var out strings.Builder
 	for _, ln := range strings.Split(strings.TrimRight(vt.String(), "\n"), "\n") {
-		fmt.Fprintln(&sb, "    "+ln)
+		fmt.Fprintln(&out, "    "+ln)
 	}
-	return sb.String()
+	return out.String()
 }
 
-// ApplyWorkloadCiliumHelmChartProxy ports
-// apply_workload_cilium_helmchartproxy. Validates the kube-proxy /
-// Hubble config, renders the HCP, and SSAs it through the in-process
-// dynamic client against the kind management cluster.
-func ApplyWorkloadCiliumHelmChartProxy(cfg *config.Config) {
+// CiliumHelmChartProxyYAML returns the full HelmChartProxy YAML document
+// rendered from the yage-manifests template.
+func CiliumHelmChartProxyYAML(cfg *config.Config, kprOn bool, f *manifests.Fetcher) (string, error) {
+	ver := strings.TrimPrefix(cfg.CiliumVersion, "v")
+	if ver == "" {
+		ver = "1.19.3"
+	}
+	ns := cfg.WorkloadClusterNamespace
+	if ns == "" {
+		ns = "default"
+	}
+	name := cfg.WorkloadClusterName
+	if name == "" {
+		name = "cluster"
+	}
+	data := templates.HelmChartProxyData{
+		Cfg:            cfg,
+		Name:           name + "-caaph-cilium",
+		Namespace:      ns,
+		ClusterSelector: map[string]string{"caaph": "enabled"},
+		ChartName:      "cilium",
+		RepoURL:        airgap.RewriteHelmRepo("https://helm.cilium.io/"),
+		Version:        ver,
+		ChartNamespace: "kube-system",
+		ValuesTemplate: buildCiliumValuesTemplate(cfg, kprOn),
+	}
+	return f.Render("addons/cilium/helmchartproxy.yaml.tmpl", data)
+}
+
+// ApplyWorkloadCiliumHelmChartProxy validates the kube-proxy / Hubble config,
+// renders the Cilium HelmChartProxy via yage-manifests, and SSAs it through
+// the in-process dynamic client against the kind management cluster.
+func ApplyWorkloadCiliumHelmChartProxy(cfg *config.Config, f *manifests.Fetcher) {
 	mctx := "kind-" + cfg.KindClusterName
 	logx.Log("Cilium: installing via Cluster API add-on provider Helm (HelmChartProxy → workload cluster) per https://cluster-api.sigs.k8s.io/tasks/workload-bootstrap-gitops …")
 	kpr := cilium.NeedsKubeProxyReplacement(cfg)
@@ -297,7 +300,10 @@ func ApplyWorkloadCiliumHelmChartProxy(cfg *config.Config) {
 	if sysinfo.IsTrue(cfg.CiliumHubbleUI) && !sysinfo.IsTrue(cfg.CiliumHubble) {
 		logx.Die("CILIUM_HUBBLE_UI requires CILIUM_HUBBLE=true")
 	}
-	doc := CiliumHelmChartProxyYAML(cfg, kpr)
+	doc, err := CiliumHelmChartProxyYAML(cfg, kpr, f)
+	if err != nil {
+		logx.Die("Failed to render Cilium HelmChartProxy template: %v", err)
+	}
 	cli, err := k8sclient.ForContext(mctx)
 	if err != nil {
 		logx.Die("Failed to load management context %s: %v", mctx, err)
@@ -373,7 +379,7 @@ func ApplyWorkloadCiliumLBBToWorkload(cfg *config.Config, writeWorkloadKubeconfi
 // kustomize-from-Git is intentionally retained as a shell-out (see
 // package doc). Everything else (waits, env-patch, ArgoCD CR apply) goes
 // through the in-process k8sclient.
-func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfig func() (string, error)) {
+func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, f *manifests.Fetcher, writeWorkloadKubeconfig func() (string, error)) {
 	wk, err := writeWorkloadKubeconfig()
 	if err != nil || wk == "" {
 		logx.Die("Cannot read workload kubeconfig (%s-kubeconfig) — install the Argo CD Operator only after the workload API is ready.",
@@ -425,17 +431,15 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfi
 		logx.Die("Failed to ensure namespace %s on the workload cluster: %v", ns, err)
 	}
 
-	promEnabled := sysinfo.IsTrue(cfg.ArgoCD.PrometheusEnabled)
-	monEnabled := sysinfo.IsTrue(cfg.ArgoCD.MonitoringEnabled)
-	disableIngress := sysinfo.IsTrue(cfg.ArgoCD.DisableOperatorManagedIngress)
-	serverInsecure := sysinfo.IsTrue(cfg.ArgoCD.ServerInsecure)
-
-	cr := buildArgoCDCR(cfg.ArgoCD.Version, ns, promEnabled, monEnabled, disableIngress, serverInsecure)
+	cr, err := buildArgoCDCR(cfg, f)
+	if err != nil {
+		logx.Die("Failed to render ArgoCD CR template: %v", err)
+	}
 	logx.Log("Creating ArgoCD custom resource (argocd/%s)…", ns)
 	if err := cli.ApplyYAML(ctx, []byte(cr)); err != nil {
 		logx.Die("Failed to apply ArgoCD custom resource on the workload cluster: %v", err)
 	}
-	if disableIngress {
+	if sysinfo.IsTrue(cfg.ArgoCD.DisableOperatorManagedIngress) {
 		logx.Log("ArgoCD CR: operator-managed server/gRPC Ingress disabled — expose Argo with Gateway API (e.g. workload-app-of-apps examples/gateway-api) or port-forward.")
 	}
 	// Restart argocd-server if it already exists (so the new CR settings
@@ -457,6 +461,21 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, writeWorkloadKubeconfi
 		}
 	}
 	logx.Log("Argo CD Operator will reconcile Argo CD in %s (admin password: secret argocd-cluster, key admin.password, when ready).", ns)
+}
+
+// buildArgoCDCR renders the ArgoCD CR YAML from the yage-manifests template.
+// If WorkloadNamespace is empty, the caller (ApplyWorkloadArgoCDOperatorAndCR)
+// has already normalized it before calling; this function does not mutate cfg.
+func buildArgoCDCR(cfg *config.Config, f *manifests.Fetcher) (string, error) {
+	return f.Render("addons/argocd/argocd-cr.yaml.tmpl", templates.HelmValuesData{
+		Cfg: cfg,
+		Bools: map[string]bool{
+			"promEnabled":    sysinfo.IsTrue(cfg.ArgoCD.PrometheusEnabled),
+			"monEnabled":     sysinfo.IsTrue(cfg.ArgoCD.MonitoringEnabled),
+			"disableIngress": sysinfo.IsTrue(cfg.ArgoCD.DisableOperatorManagedIngress),
+			"serverInsecure": sysinfo.IsTrue(cfg.ArgoCD.ServerInsecure),
+		},
+	})
 }
 
 // waitDeploymentAvailable polls until the named Deployment has at least
@@ -525,53 +544,6 @@ func patchOperatorEnv(ctx context.Context, cli *k8sclient.Client, ns, name, envK
 			FieldManager: k8sclient.FieldManager,
 		})
 	return err
-}
-
-// buildArgoCDCR emits the ArgoCD CR YAML.
-func buildArgoCDCR(version, ns string, prom, mon, disableIngress, serverInsecure bool) string {
-	if version == "" {
-		version = "v3.3.8"
-	}
-	var sb strings.Builder
-	fmt.Fprintln(&sb, "apiVersion: argoproj.io/v1beta1")
-	fmt.Fprintln(&sb, "kind: ArgoCD")
-	fmt.Fprintln(&sb, "metadata:")
-	fmt.Fprintln(&sb, "  name: argocd")
-	fmt.Fprintf(&sb, "  namespace: %s\n", ns)
-	fmt.Fprintln(&sb, "spec:")
-	fmt.Fprintf(&sb, "  version: %s\n", version)
-	fmt.Fprintln(&sb, "  prometheus:")
-	fmt.Fprintf(&sb, "    enabled: %t\n", prom)
-	fmt.Fprintln(&sb, "  monitoring:")
-	fmt.Fprintf(&sb, "    enabled: %t\n", mon)
-	fmt.Fprintln(&sb, "  notifications:")
-	fmt.Fprintln(&sb, "    enabled: true")
-	fmt.Fprintln(&sb, "  server:")
-	switch {
-	case disableIngress && serverInsecure:
-		fmt.Fprintln(&sb, "    insecure: true")
-		fmt.Fprintln(&sb, "    ingress:")
-		fmt.Fprintln(&sb, "      enabled: false")
-		fmt.Fprintln(&sb, "    grpc:")
-		fmt.Fprintln(&sb, "      ingress:")
-		fmt.Fprintln(&sb, "        enabled: false")
-	case disableIngress:
-		fmt.Fprintln(&sb, "    ingress:")
-		fmt.Fprintln(&sb, "      enabled: false")
-		fmt.Fprintln(&sb, "    grpc:")
-		fmt.Fprintln(&sb, "      ingress:")
-		fmt.Fprintln(&sb, "        enabled: false")
-	case serverInsecure:
-		fmt.Fprintln(&sb, "    insecure: true")
-		fmt.Fprintln(&sb, "    grpc:")
-		fmt.Fprintln(&sb, "      ingress:")
-		fmt.Fprintln(&sb, "        enabled: true")
-	default:
-		fmt.Fprintln(&sb, "    grpc:")
-		fmt.Fprintln(&sb, "      ingress:")
-		fmt.Fprintln(&sb, "        enabled: true")
-	}
-	return sb.String()
 }
 
 // --- helpers ---

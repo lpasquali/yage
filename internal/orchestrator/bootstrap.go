@@ -31,6 +31,7 @@ import (
 	"github.com/lpasquali/yage/internal/cluster/kind"
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/platform/kubectl"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/obs"
 	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/platform/opentofux"
@@ -1008,7 +1009,8 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		obs.Str("cluster", cfg.WorkloadClusterName),
 	)
 	opentofux.RecreateIdentitiesWorkloadCSISecrets(cfg)
-	caaph.ApplyWorkloadCiliumHelmChartProxy(cfg)
+	mf := &manifests.Fetcher{}
+	caaph.ApplyWorkloadCiliumHelmChartProxy(cfg, mf)
 	WaitForWorkloadClusterReady(cfg)
 	caaph.ApplyWorkloadCiliumLBBToWorkload(cfg, func() (string, error) {
 		return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
@@ -1069,8 +1071,8 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	if cfg.ArgoCD.Enabled {
 		logx.Log("Argo CD on the workload: Argo CD Operator + ArgoCD CR, then CAAPH argocd-apps (root Application name %s; see --workload-app-of-apps-git-*).", cfg.WorkloadClusterName)
 		if cfg.ArgoCD.WorkloadEnabled {
-			caaph.ApplyWorkloadArgoHelmProxies(cfg, func() {
-				caaph.ApplyWorkloadArgoCDOperatorAndCR(cfg, func() (string, error) {
+			caaph.ApplyWorkloadArgoHelmProxies(cfg, mf, func() {
+				caaph.ApplyWorkloadArgoCDOperatorAndCR(cfg, mf, func() (string, error) {
 					return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
 				})
 			})

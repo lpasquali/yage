@@ -15,38 +15,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"github.com/lpasquali/yage/internal/capi/templates"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/airgap"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
-// ApplyWorkloadArgoHelmProxies installs Argo CD Operator + ArgoCD
-// CR via CAAPH by applying a HelmChartProxy for the argoproj
-// argocd-apps chart; the root Application name equals
-// cfg.WorkloadClusterName.
-//
-// The Argo CD Operator install itself is delegated to the caller
-// via `installOperator` so the caller stays in control of the
-// kubeconfig plumbing.
-func ApplyWorkloadArgoHelmProxies(cfg *config.Config, installOperator func()) {
-	if !cfg.IsWorkloadGitopsCaaphMode() {
-		return
-	}
-	if !cfg.ArgoCD.WorkloadEnabled {
-		return
-	}
-	mctx := "kind-" + cfg.KindClusterName
-	if cfg.ArgoCD.AppOfAppsGitURL == "" {
-		logx.Die("WORKLOAD_APP_OF_APPS_GIT_URL is required in caaph mode (validated at start).")
-	}
-	logx.Log("Argo CD on the workload: Argo CD Operator + ArgoCD CR (in-bootstrap), then CAAPH argocd-apps (root Application name %s).",
-		cfg.WorkloadClusterName)
-
-	if installOperator != nil {
-		installOperator()
-	}
-
+// buildArgoCDAppsValuesTemplate returns the pre-indented (4-space) valuesTemplate
+// body for the argocd-apps HelmChartProxy. Each line is already prefixed with
+// four spaces so the caller can emit it directly under `valuesTemplate: |`.
+func buildArgoCDAppsValuesTemplate(cfg *config.Config) string {
 	u := strings.ReplaceAll(cfg.ArgoCD.AppOfAppsGitURL, `'`, `'"'"'`)
 	p := strings.ReplaceAll(cfg.ArgoCD.AppOfAppsGitPath, `'`, `'"'"'`)
 	r := strings.ReplaceAll(cfg.ArgoCD.AppOfAppsGitRef, `'`, `'"'"'`)
@@ -54,31 +34,8 @@ func ApplyWorkloadArgoHelmProxies(cfg *config.Config, installOperator func()) {
 	if argoNS == "" {
 		argoNS = "argocd"
 	}
-	wlNS := cfg.WorkloadClusterNamespace
-	if wlNS == "" {
-		wlNS = "default"
-	}
 
 	var sb strings.Builder
-	fmt.Fprintln(&sb, "apiVersion: addons.cluster.x-k8s.io/v1alpha1")
-	fmt.Fprintln(&sb, "kind: HelmChartProxy")
-	fmt.Fprintln(&sb, "metadata:")
-	fmt.Fprintf(&sb, "  name: %s-caaph-argocd-apps\n", cfg.WorkloadClusterName)
-	fmt.Fprintf(&sb, "  namespace: %s\n", wlNS)
-	fmt.Fprintln(&sb, "spec:")
-	fmt.Fprintln(&sb, "  clusterSelector:")
-	fmt.Fprintln(&sb, "    matchLabels:")
-	fmt.Fprintln(&sb, "      caaph: enabled")
-	fmt.Fprintln(&sb, "  chartName: argocd-apps")
-	fmt.Fprintf(&sb, "  repoURL: %s\n", airgap.RewriteHelmRepo("https://argoproj.github.io/argo-helm"))
-	fmt.Fprintf(&sb, "  namespace: %s\n", argoNS)
-	fmt.Fprintln(&sb, "  options:")
-	fmt.Fprintln(&sb, "    wait: true")
-	fmt.Fprintln(&sb, "    waitForJobs: true")
-	fmt.Fprintln(&sb, "    timeout: 20m0s")
-	fmt.Fprintln(&sb, "    install:")
-	fmt.Fprintln(&sb, "      createNamespace: true")
-	fmt.Fprintln(&sb, "  valuesTemplate: |")
 	fmt.Fprintln(&sb, "    applications:")
 	fmt.Fprintf(&sb, "      %q:\n", cfg.WorkloadClusterName)
 	fmt.Fprintf(&sb, "        namespace: %s\n", argoNS)
@@ -98,12 +55,69 @@ func ApplyWorkloadArgoHelmProxies(cfg *config.Config, installOperator func()) {
 	fmt.Fprintln(&sb, "            selfHeal: true")
 	fmt.Fprintln(&sb, "          syncOptions:")
 	fmt.Fprintln(&sb, "            - CreateNamespace=true")
+	return sb.String()
+}
+
+// ArgoCDAppsHelmChartProxyYAML returns the full HelmChartProxy YAML document
+// for the argocd-apps chart rendered from the yage-manifests template.
+func ArgoCDAppsHelmChartProxyYAML(cfg *config.Config, f *manifests.Fetcher) (string, error) {
+	wlNS := cfg.WorkloadClusterNamespace
+	if wlNS == "" {
+		wlNS = "default"
+	}
+	argoNS := cfg.ArgoCD.WorkloadNamespace
+	if argoNS == "" {
+		argoNS = "argocd"
+	}
+	data := templates.HelmChartProxyData{
+		Cfg:            cfg,
+		Name:           cfg.WorkloadClusterName + "-caaph-argocd-apps",
+		Namespace:      wlNS,
+		ClusterSelector: map[string]string{"caaph": "enabled"},
+		ChartName:      "argocd-apps",
+		RepoURL:        airgap.RewriteHelmRepo("https://argoproj.github.io/argo-helm"),
+		ChartNamespace: argoNS,
+		ValuesTemplate: buildArgoCDAppsValuesTemplate(cfg),
+	}
+	return f.Render("addons/argocd-apps/helmchartproxy.yaml.tmpl", data)
+}
+
+// ApplyWorkloadArgoHelmProxies installs Argo CD Operator + ArgoCD
+// CR via CAAPH by applying a HelmChartProxy for the argoproj
+// argocd-apps chart; the root Application name equals
+// cfg.WorkloadClusterName.
+//
+// The Argo CD Operator install itself is delegated to the caller
+// via `installOperator` so the caller stays in control of the
+// kubeconfig plumbing.
+func ApplyWorkloadArgoHelmProxies(cfg *config.Config, f *manifests.Fetcher, installOperator func()) {
+	if !cfg.IsWorkloadGitopsCaaphMode() {
+		return
+	}
+	if !cfg.ArgoCD.WorkloadEnabled {
+		return
+	}
+	mctx := "kind-" + cfg.KindClusterName
+	if cfg.ArgoCD.AppOfAppsGitURL == "" {
+		logx.Die("WORKLOAD_APP_OF_APPS_GIT_URL is required in caaph mode (validated at start).")
+	}
+	logx.Log("Argo CD on the workload: Argo CD Operator + ArgoCD CR (in-bootstrap), then CAAPH argocd-apps (root Application name %s).",
+		cfg.WorkloadClusterName)
+
+	if installOperator != nil {
+		installOperator()
+	}
+
+	doc, err := ArgoCDAppsHelmChartProxyYAML(cfg, f)
+	if err != nil {
+		logx.Die("Failed to render argocd-apps HelmChartProxy template: %v", err)
+	}
 
 	cli, err := k8sclient.ForContext(mctx)
 	if err != nil {
 		logx.Die("Failed to load management context %s: %v", mctx, err)
 	}
-	if err := cli.ApplyYAML(context.Background(), []byte(sb.String())); err != nil {
+	if err := cli.ApplyYAML(context.Background(), []byte(doc)); err != nil {
 		logx.Die("Failed to apply HelmChartProxy (argocd-apps / app-of-apps): %v", err)
 	}
 	logx.Log("Applied HelmChartProxy %s-caaph-argocd-apps (root app-of-apps Application name: %s; repo %s).",

@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/feasibility"
 )
@@ -173,6 +174,72 @@ func TestGeoNearestRegionID_nearLondon(t *testing.T) {
 	}
 	if got := geoNearestRegionID("azure", 51.5, -0.12); got != "uksouth" {
 		t.Fatalf("azure nearest=%q want uksouth", got)
+	}
+}
+
+// TestArrowNav_ProvisionTabAdvancesFocus verifies that KeyDown on the
+// provision tab advances the focus index and KeyUp retreats it.
+// Regression guard: the token-overlay default branch must not swallow
+// arrow keys before they reach updateCfgEditScreen.
+func TestArrowNav_ProvisionTabAdvancesFocus(t *testing.T) {
+	cfg := &config.Config{}
+	s := newState(&bytes.Buffer{}, cfg)
+	m := newDashModel(cfg, s)
+	m.cfgSelected = true
+	m.cfgLoading = false // simulate post-load state; cfgLoading=true guards editScreen
+	m.activeTab = tabProvision
+	initialFocus := m.focus
+
+	// Send KeyDown — focus should advance.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m1, ok := next.(dashModel)
+	if !ok {
+		t.Fatalf("Update returned %T, want dashModel", next)
+	}
+	if m1.focus == initialFocus {
+		t.Errorf("KeyDown did not advance focus: before=%d after=%d", initialFocus, m1.focus)
+	}
+
+	// Send KeyUp — focus should retreat back.
+	prev, _ := m1.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m2, ok := prev.(dashModel)
+	if !ok {
+		t.Fatalf("Update returned %T, want dashModel", prev)
+	}
+	if m2.focus != initialFocus {
+		t.Errorf("KeyUp did not retreat focus: want=%d got=%d", initialFocus, m2.focus)
+	}
+}
+
+// TestArrowNav_TokenOverlayDoesNotSwallowArrows verifies that while the
+// token re-prompt overlay is active, KeyUp/KeyDown are explicitly discarded
+// rather than silently passed to the single-line token input (which ignores
+// them anyway). This guards against the regression where the default branch
+// consumed arrows without effect.
+func TestArrowNav_TokenOverlayDoesNotSwallowArrows(t *testing.T) {
+	cfg := &config.Config{}
+	s := newState(&bytes.Buffer{}, cfg)
+	m := newDashModel(cfg, s)
+	m.cfgSelected = true
+	m.cfgLoading = false
+	m.activeTab = tabProvision
+	m.tokenPromptActive = true
+	before := m.focus
+
+	for _, kt := range []tea.KeyType{tea.KeyDown, tea.KeyUp} {
+		next, _ := m.Update(tea.KeyMsg{Type: kt})
+		m2, ok := next.(dashModel)
+		if !ok {
+			t.Fatalf("Update returned %T, want dashModel", next)
+		}
+		// Overlay must still be active (arrow keys must not dismiss it).
+		if !m2.tokenPromptActive {
+			t.Errorf("key %v dismissed token overlay unexpectedly", kt)
+		}
+		// Focus must not change while the overlay is up.
+		if m2.focus != before {
+			t.Errorf("key %v changed focus from %d to %d while overlay active", kt, before, m2.focus)
+		}
 	}
 }
 

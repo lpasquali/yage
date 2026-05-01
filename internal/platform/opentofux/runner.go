@@ -12,8 +12,9 @@ import "context"
 // Two implementations are provided:
 //   - LocalRunner: runs `tofu` as a local subprocess (dev/test; used before
 //     a management cluster exists).
-//   - JobRunner: creates Kubernetes resources (ConfigMap, PVC, Secret, Job)
-//     on the management cluster and streams pod logs.
+//   - JobRunner: creates Kubernetes resources (ConfigMap, Secret, Job)
+//     on the management cluster and streams pod logs. State is stored in
+//     Kubernetes Secrets via the OpenTofu kubernetes backend (no PVCs).
 type Runner interface {
 	// Apply runs `tofu init && tofu apply -auto-approve` with the given
 	// variable map, creating or updating resources.

@@ -101,29 +101,6 @@ func TestJobRunnerTofuImageRef(t *testing.T) {
 	}
 }
 
-func TestJobRunnerStorageClassName(t *testing.T) {
-	tests := []struct {
-		name            string
-		csiDefaultClass string
-		proxmoxClass    string
-		want            string
-	}{
-		{"all-empty", "", "", "standard"},
-		{"proxmox-only", "", "proxmox-csi", "proxmox-csi"},
-		{"csi-default-wins", "fast-ssd", "proxmox-csi", "fast-ssd"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := config.Load()
-			cfg.CSI.DefaultClass = tt.csiDefaultClass
-			cfg.Providers.Proxmox.CSIStorageClassName = tt.proxmoxClass
-			j := &JobRunner{cfg: cfg, client: fakeClient()}
-			if got := j.storageClassName(); got != tt.want {
-				t.Errorf("storageClassName: got %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
 
 func TestJobRunnerBuildCommand(t *testing.T) {
 	j := &JobRunner{cfg: config.Load(), client: fakeClient()}
@@ -143,48 +120,27 @@ func TestJobRunnerBuildCommand(t *testing.T) {
 	}
 }
 
-func TestJobRunnerBuildCommandStateFlag(t *testing.T) {
+func TestJobRunnerBuildCommandNoStateFlag(t *testing.T) {
 	j := &JobRunner{cfg: config.Load(), client: fakeClient()}
-	cmd := j.buildCommand("proxmox", "apply")
-	if !containsStr(cmd, "-state=/workspace/state/terraform.tfstate") {
-		t.Errorf("buildCommand did not include -state flag: %q", cmd)
+	for _, op := range []string{"apply", "destroy", "output"} {
+		cmd := j.buildCommand("proxmox", op)
+		if containsStr(cmd, "-state=") {
+			t.Errorf("buildCommand(%q): unexpected -state= flag in %q (state is kept in kubernetes backend)", op, cmd)
+		}
 	}
 }
 
-func TestEnsureStatePVCCreatesWhenAbsent(t *testing.T) {
-	cfg := config.Load()
-	cfg.CSI.DefaultClass = "test-class"
-	cl := fakeClient()
-	j := &JobRunner{cfg: cfg, client: cl}
-	ctx := context.Background()
-
-	if err := j.ensureStatePVC(ctx, "yage-system", "tofu-state-mymodule"); err != nil {
-		t.Fatalf("ensureStatePVC: %v", err)
-	}
-	pvc, err := cl.Typed.CoreV1().PersistentVolumeClaims("yage-system").Get(ctx, "tofu-state-mymodule", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("get pvc: %v", err)
-	}
-	if pvc.Spec.StorageClassName == nil || *pvc.Spec.StorageClassName != "test-class" {
-		t.Errorf("storageClassName: got %v, want test-class", pvc.Spec.StorageClassName)
+func TestJobRunnerBuildCommandInClusterBackend(t *testing.T) {
+	j := &JobRunner{cfg: config.Load(), client: fakeClient()}
+	// apply and destroy must pass in_cluster_config to tofu init.
+	for _, op := range []string{"apply", "destroy"} {
+		cmd := j.buildCommand("proxmox", op)
+		if !containsStr(cmd, "in_cluster_config=true") {
+			t.Errorf("buildCommand(%q): -backend-config=in_cluster_config=true not found in %q", op, cmd)
+		}
 	}
 }
 
-func TestEnsureStatePVCIdempotent(t *testing.T) {
-	cfg := config.Load()
-	cl := fakeClient()
-	j := &JobRunner{cfg: cfg, client: cl}
-	ctx := context.Background()
-
-	// Create once.
-	if err := j.ensureStatePVC(ctx, "yage-system", "tofu-state-idempotent"); err != nil {
-		t.Fatalf("first ensureStatePVC: %v", err)
-	}
-	// Call again — must not error.
-	if err := j.ensureStatePVC(ctx, "yage-system", "tofu-state-idempotent"); err != nil {
-		t.Fatalf("second ensureStatePVC: %v", err)
-	}
-}
 
 func TestEnsureCredsSecretEncodesTFVars(t *testing.T) {
 	cfg := config.Load()
@@ -294,7 +250,7 @@ func TestBuildJobSpec(t *testing.T) {
 	cfg.ImageRegistryMirror = ""
 	j := &JobRunner{cfg: cfg, client: fakeClient()}
 
-	job := j.buildJob("yage-system", "tofu-proxmox-apply", "tofu-module-proxmox", "tofu-state-proxmox", "tofu-creds-proxmox", "proxmox", "apply")
+	job := j.buildJob("yage-system", "tofu-proxmox-apply", "tofu-module-proxmox", "tofu-creds-proxmox", "proxmox", "apply")
 
 	if job.Name != "tofu-proxmox-apply" {
 		t.Errorf("job name: %q", job.Name)
@@ -302,7 +258,12 @@ func TestBuildJobSpec(t *testing.T) {
 	if job.Namespace != "yage-system" {
 		t.Errorf("job namespace: %q", job.Namespace)
 	}
-	containers := job.Spec.Template.Spec.Containers
+	podSpec := job.Spec.Template.Spec
+	// ServiceAccountName must be yage-job-runner for kubernetes backend RBAC.
+	if podSpec.ServiceAccountName != "yage-job-runner" {
+		t.Errorf("ServiceAccountName: got %q, want %q", podSpec.ServiceAccountName, "yage-job-runner")
+	}
+	containers := podSpec.Containers
 	if len(containers) != 1 {
 		t.Fatalf("expected 1 container, got %d", len(containers))
 	}
@@ -313,9 +274,32 @@ func TestBuildJobSpec(t *testing.T) {
 	if len(containers[0].EnvFrom) != 1 || containers[0].EnvFrom[0].SecretRef.Name != "tofu-creds-proxmox" {
 		t.Errorf("envFrom: %+v", containers[0].EnvFrom)
 	}
+	// KUBE_NAMESPACE must be set so the kubernetes backend targets yage-system.
+	// TF_DATA_DIR must redirect tofu's plugin cache off the read-only ConfigMap mount.
+	wantEnvs := map[string]string{
+		"KUBE_NAMESPACE": "yage-system",
+		"TF_DATA_DIR":    "/tmp/.terraform",
+	}
+	for _, e := range containers[0].Env {
+		delete(wantEnvs, e.Name)
+	}
+	if len(wantEnvs) > 0 {
+		t.Errorf("container missing required env vars: %v; got: %+v", wantEnvs, containers[0].Env)
+	}
+	// No state volume — state lives in a Kubernetes Secret via the backend.
+	for _, vol := range podSpec.Volumes {
+		if vol.Name == "state" {
+			t.Errorf("unexpected 'state' volume in pod spec (state is in kubernetes backend Secret)")
+		}
+	}
+	for _, mount := range containers[0].VolumeMounts {
+		if mount.Name == "state" {
+			t.Errorf("unexpected 'state' volume mount in container")
+		}
+	}
 }
 
-func TestJobRunnerEnsureNamespaceBeforeJob(t *testing.T) {
+func TestJobRunnerEnsureCredsSecretWithNamespace(t *testing.T) {
 	cfg := config.Load()
 
 	// Pre-create the namespace so EnsureNamespace won't fail with the fake client.
@@ -324,10 +308,10 @@ func TestJobRunnerEnsureNamespaceBeforeJob(t *testing.T) {
 	})
 	j := &JobRunner{cfg: cfg, client: cl}
 
-	// ensureStatePVC requires the namespace; using it as a lightweight integration.
+	// Verify that ensureCredsSecret works when the namespace already exists.
 	ctx := context.Background()
-	if err := j.ensureStatePVC(ctx, "yage-system", "tofu-state-nstest"); err != nil {
-		t.Fatalf("ensureStatePVC with existing namespace: %v", err)
+	if err := j.ensureCredsSecret(ctx, "yage-system", "tofu-creds-nstest", map[string]string{"key": "val"}); err != nil {
+		t.Fatalf("ensureCredsSecret with existing namespace: %v", err)
 	}
 }
 

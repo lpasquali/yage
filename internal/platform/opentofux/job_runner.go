@@ -5,7 +5,9 @@ package opentofux
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -107,19 +109,100 @@ func (j *JobRunner) Destroy(ctx context.Context, module string) error {
 	return j.runJob(ctx, module, "destroy", nil)
 }
 
-// Output implements Runner.
+// Output implements Runner. It creates a short-lived Job that runs
+// `tofu output -json` against the module's persisted kubernetes-backend state
+// Secret, captures the terminated container's stdout log, and decodes the JSON
+// map. The Job is deleted after a successful read; on error the Job is left for
+// operator inspection.
 //
-// NOTE: JobRunner.Output is not yet implemented. Returning a structured JSON
-// map from a completed pod requires reading terminated container logs into a
-// buffer, which is not yet wired. Callers that need structured output should
-// use LocalRunner.Output (available when the state directory is on the local
-// filesystem, i.e. before pivot). Returning an error rather than an empty map
-// so that gaps are discoverable.
-//
-// TODO(#125): implement JobRunner.Output once the pre-kind ordering issue is
-// resolved and the JobRunner is the primary code path for post-pivot modules.
-func (j *JobRunner) Output(_ context.Context, _ string) (map[string]any, error) {
-	return nil, fmt.Errorf("JobRunner.Output not yet implemented; use LocalRunner.Output for structured tofu output")
+// The pod must complete within 5 minutes. Sensitive values are returned as-is
+// (the caller is responsible for not logging them). The map keys and value types
+// follow encoding/json.Unmarshal conventions (string, float64, bool, map, slice).
+func (j *JobRunner) Output(ctx context.Context, module string) (map[string]any, error) {
+	ns := yageNamespace
+	if err := j.client.EnsureNamespace(ctx, ns); err != nil {
+		return nil, fmt.Errorf("job runner output: ensure namespace: %w", err)
+	}
+
+	// The output job needs the module HCL so tofu can initialise the backend
+	// and discover the output definitions. Re-use the existing ConfigMap if
+	// present (Apply must have run first); if not, build it now.
+	cmName := "tofu-module-" + module
+	if err := j.ensureModuleConfigMap(ctx, ns, cmName, module); err != nil {
+		return nil, fmt.Errorf("job runner output: module configmap (%s): %w", module, err)
+	}
+
+	// Output reads from state only — no vars needed. Empty secret is fine;
+	// the kubernetes backend authenticates via the pod ServiceAccount.
+	secretName := "tofu-creds-" + module + "-output"
+	if err := j.ensureCredsSecret(ctx, ns, secretName, map[string]string{}); err != nil {
+		return nil, fmt.Errorf("job runner output: creds secret (%s): %w", module, err)
+	}
+
+	jobName := "tofu-" + module + "-output"
+	background := metav1.DeletePropagationBackground
+	_ = j.client.Typed.BatchV1().Jobs(ns).Delete(ctx, jobName, metav1.DeleteOptions{
+		PropagationPolicy: &background,
+	})
+
+	job := j.buildJob(ns, jobName, cmName, secretName, module, "output")
+	if _, err := j.client.Typed.BatchV1().Jobs(ns).Create(ctx, job, metav1.CreateOptions{}); err != nil {
+		return nil, fmt.Errorf("job runner output: create job: %w", err)
+	}
+	logx.Log("JobRunner: output job %s/%s created; waiting for pod ...", ns, jobName)
+
+	podName, err := j.waitForPod(ctx, ns, jobName)
+	if err != nil {
+		return nil, fmt.Errorf("job runner output: wait for pod: %w", err)
+	}
+
+	raw, err := j.capturePodLogs(ctx, ns, podName)
+	if err != nil {
+		return nil, fmt.Errorf("job runner output: capture pod logs: %w", err)
+	}
+
+	if err := j.waitForJob(ctx, ns, jobName); err != nil {
+		return nil, fmt.Errorf("job runner output: job %s failed: %w", jobName, err)
+	}
+
+	// Clean up the output job after successful capture.
+	_ = j.client.Typed.BatchV1().Jobs(ns).Delete(ctx, jobName, metav1.DeleteOptions{
+		PropagationPolicy: &background,
+	})
+
+	raw = bytes.TrimSpace(raw)
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("job runner output: parse tofu output json (%s): %w (raw: %s)", module, err, truncate(string(raw), 200))
+	}
+	return result, nil
+}
+
+// capturePodLogs reads the complete stdout of a terminated (or running) pod
+// into a buffer and returns it. Unlike streamLogs, this does not print to
+// logx — it is used to capture machine-readable output (e.g. `tofu output -json`).
+func (j *JobRunner) capturePodLogs(ctx context.Context, ns, podName string) ([]byte, error) {
+	req := j.client.Typed.CoreV1().Pods(ns).GetLogs(podName, &corev1.PodLogOptions{
+		Follow: true,
+	})
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("open log stream for pod %s: %w", podName, err)
+	}
+	defer stream.Close()
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, stream); err != nil && err != io.EOF {
+		return nil, fmt.Errorf("read logs for pod %s: %w", podName, err)
+	}
+	return buf.Bytes(), nil
+}
+
+// truncate returns the first n bytes of s, appending "..." when the string is longer.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // runJob is the shared implementation for Apply/Destroy/Output.
@@ -360,9 +443,11 @@ func (j *JobRunner) buildCommand(module, operation string) string {
 			chdir, initFlags, chdir,
 		)
 	case "output":
+		// Init stdout is suppressed so capturePodLogs receives only the JSON
+		// from `tofu output -json` without progress text mixed in.
 		return fmt.Sprintf(
-			`tofu %s output -json`,
-			chdir,
+			`tofu %s init %s >/dev/null 2>&1 && tofu %s output -json`,
+			chdir, initFlags, chdir,
 		)
 	default: // "apply"
 		return fmt.Sprintf(

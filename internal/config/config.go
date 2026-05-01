@@ -1151,6 +1151,35 @@ type Config struct {
 	// Defaults to "harbor". Env: YAGE_REGISTRY_FLAVOR.
 	RegistryFlavor string
 
+	// RegistryTemplateID is the Proxmox VM template ID to clone for the registry VM
+	// (cloud-init enabled Ubuntu/Debian). Required when RegistryNode is set.
+	// Env: YAGE_REGISTRY_TEMPLATE_ID.
+	RegistryTemplateID string
+
+	// RegistryHostname is the DNS hostname for the registry VM, used as the
+	// cloud-init hostname and TLS SAN. Required when RegistryNode is set.
+	// Env: YAGE_REGISTRY_HOSTNAME.
+	RegistryHostname string
+
+	// RegistryTLSCertPEM is the PEM-encoded TLS certificate (leaf + chain)
+	// served by the registry. Empty is valid for dev mode.
+	// Env: YAGE_REGISTRY_TLS_CERT_PEM.
+	RegistryTLSCertPEM string
+
+	// RegistryTLSKeyPEM is the PEM-encoded TLS private key for RegistryTLSCertPEM.
+	// Not persisted to kind Secrets. Env: YAGE_REGISTRY_TLS_KEY_PEM.
+	RegistryTLSKeyPEM string
+
+	// RegistryCABundlePEM is the PEM-encoded CA bundle the registry trusts
+	// for issuing-ca / mTLS verification.
+	// Env: YAGE_REGISTRY_CA_BUNDLE_PEM.
+	RegistryCABundlePEM string
+
+	// RegistryAdminPassword is the initial admin password seeded into the
+	// registry (Harbor) on first boot. Not persisted to kind Secrets.
+	// Env: YAGE_REGISTRY_ADMIN_PASSWORD.
+	RegistryAdminPassword string
+
 	// IssuingCARootCert is the PEM-encoded root CA certificate for signing
 	// the intermediate issuing CA. Not persisted to kind Secrets. Empty
 	// means issuing CA provisioning is skipped.
@@ -1277,6 +1306,12 @@ func Load() *Config {
 	c.RegistryNetwork = getenv("YAGE_REGISTRY_NETWORK", "")
 	c.RegistryStorage = getenv("YAGE_REGISTRY_STORAGE", "")
 	c.RegistryFlavor = getenv("YAGE_REGISTRY_FLAVOR", "harbor")
+	c.RegistryTemplateID = getenv("YAGE_REGISTRY_TEMPLATE_ID", "")
+	c.RegistryHostname = getenv("YAGE_REGISTRY_HOSTNAME", "")
+	c.RegistryTLSCertPEM = getenv("YAGE_REGISTRY_TLS_CERT_PEM", "")
+	c.RegistryTLSKeyPEM = getenv("YAGE_REGISTRY_TLS_KEY_PEM", "")
+	c.RegistryCABundlePEM = getenv("YAGE_REGISTRY_CA_BUNDLE_PEM", "")
+	c.RegistryAdminPassword = getenv("YAGE_REGISTRY_ADMIN_PASSWORD", "")
 	// Root CA material is read from env but never persisted to kind Secrets
 	// (omitted from Snapshot). See IssuingCARootCert / IssuingCARootKey docs.
 	c.IssuingCARootCert = getenv("YAGE_ISSUING_CA_ROOT_CERT", "")

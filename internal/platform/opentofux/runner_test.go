@@ -132,8 +132,10 @@ func TestJobRunnerBuildCommandNoStateFlag(t *testing.T) {
 
 func TestJobRunnerBuildCommandInClusterBackend(t *testing.T) {
 	j := &JobRunner{cfg: config.Load(), client: fakeClient()}
-	// apply and destroy must pass in_cluster_config to tofu init.
-	for _, op := range []string{"apply", "destroy"} {
+	// apply, destroy, and output must all pass in_cluster_config to tofu init.
+	// The output operation spawns a fresh ephemeral pod with no .terraform/ directory,
+	// so it must run tofu init (with in_cluster_config=true) before tofu output -json.
+	for _, op := range []string{"apply", "destroy", "output"} {
 		cmd := j.buildCommand("proxmox", op)
 		if !containsStr(cmd, "in_cluster_config=true") {
 			t.Errorf("buildCommand(%q): -backend-config=in_cluster_config=true not found in %q", op, cmd)

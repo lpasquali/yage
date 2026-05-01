@@ -61,6 +61,7 @@ func PrintPlanTo(w io.Writer, cfg *config.Config) {
 	planPrePhase(w, cfg)
 	planPhase1(w, cfg)
 	describeIdentity(pw, cfg, prov, perr)
+	planPlatformServices(w, cfg)
 	planPhase2Clusterctl(w, cfg)
 	planPhase2Kind(w, cfg)
 	planPhase2CAPI(pw, w, cfg, prov, perr)
@@ -162,6 +163,37 @@ func describeIdentity(pw plan.Writer, cfg *config.Config, prov provider.Provider
 		return
 	}
 	prov.DescribeIdentity(pw, cfg)
+}
+
+// planPlatformServices prints Phase H — bootstrap registry and issuing CA.
+// If neither group is configured, prints a single skip line.
+func planPlatformServices(w io.Writer, cfg *config.Config) {
+	section(w, "Phase H — Platform Services")
+	hasRegistry := cfg.RegistryNode != ""
+	hasCA := cfg.IssuingCARootCert != ""
+	if !hasRegistry && !hasCA {
+		skip(w, "no YAGE_REGISTRY_NODE or YAGE_ISSUING_CA_ROOT_CERT set")
+		return
+	}
+	if hasRegistry {
+		bullet(w, "Registry node: %s", cfg.RegistryNode)
+		if cfg.RegistryVMFlavor != "" {
+			bullet(w, "  VM flavor: %s", cfg.RegistryVMFlavor)
+		}
+		if cfg.RegistryNetwork != "" {
+			bullet(w, "  network: %s", cfg.RegistryNetwork)
+		}
+		if cfg.RegistryStorage != "" {
+			bullet(w, "  storage: %s", cfg.RegistryStorage)
+		}
+		bullet(w, "  registry flavor: %s", firstNonEmptyStr(cfg.RegistryFlavor, "harbor"))
+	}
+	if hasCA {
+		bullet(w, "Issuing CA cert: (set via YAGE_ISSUING_CA_ROOT_CERT)")
+		if cfg.IssuingCARootKey != "" {
+			bullet(w, "Issuing CA key: (set via YAGE_ISSUING_CA_ROOT_KEY)")
+		}
+	}
 }
 
 func planPhase2Clusterctl(w io.Writer, cfg *config.Config) {

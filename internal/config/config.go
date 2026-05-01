@@ -1126,6 +1126,52 @@ type Config struct {
 	// NoopTracer. Set via --trace-endpoint or YAGE_TRACE_ENDPOINT.
 	TraceEndpoint string
 
+	// TofuRef is the git ref (branch, tag, or SHA) of the lpasquali/yage-tofu
+	// repository that Fetcher clones/updates. Defaults to "main".
+	// Env: YAGE_TOFU_REF.
+	// NOTE: issue #124 adds this field to config.go on a parallel branch.
+	// When that PR merges before this one, rebase and remove this addition.
+	TofuRef string
+
+	// --- On-prem platform services (Phase H, ADR 0009) ---
+
+	// RegistryNode is the Proxmox node on which to provision the bootstrap
+	// registry VM. Empty means registry provisioning is skipped.
+	// Env: YAGE_REGISTRY_NODE.
+	RegistryNode string
+
+	// RegistryVMFlavor is the Proxmox VM flavor (template) to use for the
+	// registry VM. Empty means use the provider default.
+	// Env: YAGE_REGISTRY_VM_FLAVOR.
+	RegistryVMFlavor string
+
+	// RegistryNetwork is the Proxmox network bridge for the registry VM.
+	// Env: YAGE_REGISTRY_NETWORK.
+	RegistryNetwork string
+
+	// RegistryStorage is the Proxmox storage pool for the registry VM's
+	// volumes. Env: YAGE_REGISTRY_STORAGE.
+	RegistryStorage string
+
+	// RegistryFlavor is the registry software to deploy (e.g. "harbor").
+	// Defaults to "harbor". Env: YAGE_REGISTRY_FLAVOR.
+	RegistryFlavor string
+
+	// IssuingCARootCert is the PEM-encoded root CA certificate for signing
+	// the intermediate issuing CA. Not persisted to kind Secrets. Empty
+	// means issuing CA provisioning is skipped.
+	// Env: YAGE_ISSUING_CA_ROOT_CERT.
+	IssuingCARootCert string
+
+	// IssuingCARootKey is the PEM-encoded root CA private key. Not persisted
+	// to kind Secrets.
+	// Env: YAGE_ISSUING_CA_ROOT_KEY.
+	IssuingCARootKey string
+
+	// TofuRef is the Git ref of the lpasquali/yage-tofu repo to use.
+	// Defaults to main. Env: YAGE_TOFU_REF.
+	TofuRef string
+
 }
 
 // Load reads environment variables and applies defaults to produce a
@@ -1208,6 +1254,19 @@ func Load() *Config {
 	c.HelmRepoMirror = strings.TrimRight(strings.TrimSpace(getenv("YAGE_HELM_REPO_MIRROR", "")), "/")
 	c.NodeImage = strings.TrimSpace(getenv("YAGE_NODE_IMAGE", ""))
 	c.TraceEndpoint = getenv("YAGE_TRACE_ENDPOINT", "")
+	c.TofuRef = getenv("YAGE_TOFU_REF", "main")
+
+	// --- On-prem platform services (Phase H, ADR 0009) ---
+	c.RegistryNode = getenv("YAGE_REGISTRY_NODE", "")
+	c.RegistryVMFlavor = getenv("YAGE_REGISTRY_VM_FLAVOR", "")
+	c.RegistryNetwork = getenv("YAGE_REGISTRY_NETWORK", "")
+	c.RegistryStorage = getenv("YAGE_REGISTRY_STORAGE", "")
+	c.RegistryFlavor = getenv("YAGE_REGISTRY_FLAVOR", "harbor")
+	// Root CA material is read from env but never persisted to kind Secrets
+	// (omitted from Snapshot). See IssuingCARootCert / IssuingCARootKey docs.
+	c.IssuingCARootCert = getenv("YAGE_ISSUING_CA_ROOT_CERT", "")
+	c.IssuingCARootKey = getenv("YAGE_ISSUING_CA_ROOT_KEY", "")
+	c.TofuRef = getenv("YAGE_TOFU_REF", "main")
 
 	// CSI add-on selection (§20 / Phase F). YAGE_CSI_DRIVERS is a
 	// comma-separated list of driver names — empty values get

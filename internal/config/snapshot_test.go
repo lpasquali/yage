@@ -97,3 +97,26 @@ func TestEmptyValueSkipped(t *testing.T) {
 		t.Errorf("empty value should be ignored: got %q", c.KindVersion)
 	}
 }
+
+// TestSnapshotExcludesRootCAFields asserts that root CA material never
+// appears in the snapshot emitted to kind Secrets. It also verifies that
+// the registry fields *are* included so the test cannot pass vacuously.
+func TestSnapshotExcludesRootCAFields(t *testing.T) {
+	c := Load()
+	c.IssuingCARootCert = "-----BEGIN CERTIFICATE-----\nMIIBtest\n-----END CERTIFICATE-----"
+	c.IssuingCARootKey = "-----BEGIN RSA PRIVATE KEY-----\nMIIBtest\n-----END RSA PRIVATE KEY-----"
+	// Set a registry field so we can confirm the snapshot isn't empty.
+	c.RegistryNode = "pve-node-1"
+
+	yaml := c.SnapshotYAML()
+
+	if strings.Contains(yaml, "YAGE_ISSUING_CA_ROOT_CERT") {
+		t.Error("YAGE_ISSUING_CA_ROOT_CERT must not appear in SnapshotYAML output")
+	}
+	if strings.Contains(yaml, "YAGE_ISSUING_CA_ROOT_KEY") {
+		t.Error("YAGE_ISSUING_CA_ROOT_KEY must not appear in SnapshotYAML output")
+	}
+	if !strings.Contains(yaml, `YAGE_REGISTRY_NODE: "pve-node-1"`) {
+		t.Errorf("YAGE_REGISTRY_NODE should appear in SnapshotYAML output; got:\n%s", yaml)
+	}
+}

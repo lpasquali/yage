@@ -1126,13 +1126,6 @@ type Config struct {
 	// NoopTracer. Set via --trace-endpoint or YAGE_TRACE_ENDPOINT.
 	TraceEndpoint string
 
-	// TofuRef is the git ref (branch, tag, or SHA) of the lpasquali/yage-tofu
-	// repository that Fetcher clones/updates. Defaults to "main".
-	// Env: YAGE_TOFU_REF.
-	// NOTE: issue #124 adds this field to config.go on a parallel branch.
-	// When that PR merges before this one, rebase and remove this addition.
-	TofuRef string
-
 	// --- On-prem platform services (Phase H, ADR 0009) ---
 
 	// RegistryNode is the Proxmox node on which to provision the bootstrap
@@ -1266,7 +1259,6 @@ func Load() *Config {
 	// (omitted from Snapshot). See IssuingCARootCert / IssuingCARootKey docs.
 	c.IssuingCARootCert = getenv("YAGE_ISSUING_CA_ROOT_CERT", "")
 	c.IssuingCARootKey = getenv("YAGE_ISSUING_CA_ROOT_KEY", "")
-	c.TofuRef = getenv("YAGE_TOFU_REF", "main")
 
 	// CSI add-on selection (§20 / Phase F). YAGE_CSI_DRIVERS is a
 	// comma-separated list of driver names — empty values get

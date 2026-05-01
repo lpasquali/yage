@@ -803,6 +803,19 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	}
 	phGroup.End()
 
+	// --- Bootstrap yage-system RBAC + repo sync on kind ---
+	// EnsureYageSystemOnCluster creates the yage-job-runner ServiceAccount,
+	// Role, and RoleBinding in yage-system so that subsequent Job pods can
+	// run. EnsureRepoSync then clones yage-tofu and yage-manifests into the
+	// yage-repos PVC so OpenTofu Job runners can find their HCL modules.
+	// Both run against the kind cluster (mgmtCli points to kind at this stage).
+	if err := kindsync.EnsureYageSystemOnCluster(ctx, mgmtCli); err != nil {
+		logx.Die("EnsureYageSystemOnCluster: %v", err)
+	}
+	if err := opentofux.EnsureRepoSync(ctx, mgmtCli, cfg); err != nil {
+		logx.Die("EnsureRepoSync: %v", err)
+	}
+
 	// --- Pivot ---
 	// CAPI bootstrap-and-pivot pattern. With PivotEnabled (the
 	// default): kind provisions a single-node management cluster on
@@ -875,6 +888,18 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		}
 		if err := pivot.VerifyParity(cfg, mgmtKubeconfig); err != nil {
 			logx.Die("pivot: VerifyParity: %v", err)
+		}
+		// Ensure yage-system RBAC and repo sync on the real management cluster
+		// (mirrors the kind-cluster step above, but targeting mgmt after pivot).
+		pivotMgmtCli, pivotCliErr := k8sclient.ForKubeconfigFile(mgmtKubeconfig)
+		if pivotCliErr != nil {
+			logx.Die("pivot: kube client for mgmt cluster: %v", pivotCliErr)
+		}
+		if err := kindsync.EnsureYageSystemOnCluster(ctx, pivotMgmtCli); err != nil {
+			logx.Die("pivot: EnsureYageSystemOnCluster on management cluster: %v", err)
+		}
+		if err := opentofux.EnsureRepoSync(ctx, pivotMgmtCli, cfg); err != nil {
+			logx.Die("pivot: EnsureRepoSync on management cluster: %v", err)
 		}
 		if err := rebindKindContextToMgmt(cfg, mgmtKubeconfig); err != nil {
 			logx.Die("pivot: rebind kind-%s context to mgmt kubeconfig: %v", cfg.KindClusterName, err)

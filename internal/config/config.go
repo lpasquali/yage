@@ -1162,14 +1162,27 @@ type Config struct {
 	// Env: YAGE_ISSUING_CA_ROOT_KEY.
 	IssuingCARootKey string
 
+	// TofuRepo is the Git URL of the yage-tofu repository.
+	// Defaults to "https://github.com/lpasquali/yage-tofu". Env: YAGE_TOFU_REPO.
+	TofuRepo string
+
 	// TofuRef is the Git ref of the lpasquali/yage-tofu repo to use.
 	// Defaults to main. Env: YAGE_TOFU_REF.
 	TofuRef string
+
+	// ManifestsRepo is the Git URL of the yage-manifests repository.
+	// Defaults to "https://github.com/lpasquali/yage-manifests". Env: YAGE_MANIFESTS_REPO.
+	ManifestsRepo string
 
 	// ManifestsRef is the git tag or branch of the lpasquali/yage-manifests
 	// repository that manifests.Fetcher clones/checks-out. Defaults to "v0.1.0"
 	// (ADR 0008 §5). Env: YAGE_MANIFESTS_REF.
 	ManifestsRef string
+
+	// ReposPVCSize is the size of the yage-repos PersistentVolumeClaim used
+	// by the yage-repo-sync Job to store cloned repositories. Defaults to "500Mi".
+	// Env: YAGE_REPOS_PVC_SIZE.
+	ReposPVCSize string
 }
 
 // Load reads environment variables and applies defaults to produce a
@@ -1252,8 +1265,11 @@ func Load() *Config {
 	c.HelmRepoMirror = strings.TrimRight(strings.TrimSpace(getenv("YAGE_HELM_REPO_MIRROR", "")), "/")
 	c.NodeImage = strings.TrimSpace(getenv("YAGE_NODE_IMAGE", ""))
 	c.TraceEndpoint = getenv("YAGE_TRACE_ENDPOINT", "")
+	c.TofuRepo = getenv("YAGE_TOFU_REPO", "https://github.com/lpasquali/yage-tofu")
 	c.TofuRef = getenv("YAGE_TOFU_REF", "main")
+	c.ManifestsRepo = getenv("YAGE_MANIFESTS_REPO", "https://github.com/lpasquali/yage-manifests")
 	c.ManifestsRef = getenv("YAGE_MANIFESTS_REF", "v0.1.0")
+	c.ReposPVCSize = getenv("YAGE_REPOS_PVC_SIZE", "500Mi")
 
 	// --- On-prem platform services (Phase H, ADR 0009) ---
 	c.RegistryNode = getenv("YAGE_REGISTRY_NODE", "")

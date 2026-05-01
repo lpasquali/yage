@@ -90,6 +90,13 @@ func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) er
 
 func (driver) DefaultStorageClass() string { return "openebs-hostpath" }
 
+// EnsureManagementInstall returns ErrNotApplicable: OpenEBS is a
+// cross-provider opt-in driver and does not have a management-cluster
+// install path via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 	w.Section("OpenEBS CSI")
 	w.Bullet("driver: %s (chart openebs pinned 4.1.1)", "openebs.io/local")

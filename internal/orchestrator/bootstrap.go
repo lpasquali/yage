@@ -859,6 +859,20 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		} else {
 			logx.Log("pivot: handoff complete (%d Secrets copied to mgmt cluster).", copied)
 		}
+		// Install CSI driver on management cluster (needed for
+		// yage-repos PVC). Load file-based credentials first so
+		// operators that supply PROXMOX_CSI_CONFIG see them here, then
+		// fall back to the Proxmox API URL. Direct Helm install per
+		// ADR 0011 §4 — ArgoCD is not running on mgmt at this stage.
+		proxmoxcsi.LoadVarsFromConfig(cfg)
+		if cfg.Providers.Proxmox.CSIURL == "" {
+			cfg.Providers.Proxmox.CSIURL = api.APIJSONURL(cfg)
+		}
+		for _, d := range csi.Selector(cfg) {
+			if merr := d.EnsureManagementInstall(cfg, mgmtKubeconfig); merr != nil && !errors.Is(merr, csi.ErrNotApplicable) {
+				logx.Die("pivot: EnsureManagementInstall (%s): %v", d.Name(), merr)
+			}
+		}
 		if err := pivot.VerifyParity(cfg, mgmtKubeconfig); err != nil {
 			logx.Die("pivot: VerifyParity: %v", err)
 		}

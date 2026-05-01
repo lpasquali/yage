@@ -153,6 +153,12 @@ func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) er
 
 func (driver) DefaultStorageClass() string { return "csi-cinder-sc-delete" }
 
+// EnsureManagementInstall returns ErrNotApplicable: OpenStack does
+// not pivot to a CAPI management cluster via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 	w.Section("OpenStack Cinder CSI")
 	w.Bullet("driver: %s (chart openstack-cinder-csi pinned 2.31.2)", "cinder.csi.openstack.org")

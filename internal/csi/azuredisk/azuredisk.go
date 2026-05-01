@@ -176,6 +176,12 @@ func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) er
 
 func (driver) DefaultStorageClass() string { return "azuredisk-standard-ssd" }
 
+// EnsureManagementInstall returns ErrNotApplicable: Azure does not
+// pivot to a CAPI management cluster via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 	w.Section("Azure Disk CSI")
 	w.Bullet("driver: %s (chart azuredisk-csi-driver pinned v1.31.0)", "disk.csi.azure.com")

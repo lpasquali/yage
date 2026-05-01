@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Luca Pasquali
 
-// Package opentofux drives the OpenTofu-backed Proxmox identity
-// bootstrap flow.
-//
-// State format: the on-disk state file is named terraform.tfstate
-// (the OpenTofu default) and is read/written by either binary.
 package opentofux
 
 import (

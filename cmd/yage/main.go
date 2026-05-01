@@ -111,6 +111,11 @@ func main() {
 	// Three branches correspond to the three supported modes:
 	//   • KindClusterName set + ConfigNameExplicit (--config-name passed)
 	//     → deterministic get: exactly one Secret targeted.
+	//   • --xapiri: skip the interactive picker here; the dashboard's
+	//     cfgListScreen is the canonical profile selection UI and runs
+	//     inside the TUI. Running a huh picker here would show the prompt
+	//     twice (#151). Case 1 above still applies when --config-name is
+	//     explicit (dashboard skips cfgListScreen in that case too).
 	//   • KindClusterName set, ConfigName defaulted from WorkloadClusterName
 	//     → huh picker across all Secrets on that kind cluster so the user
 	//       can choose among profiles / drafts for the same workload.
@@ -119,6 +124,8 @@ func main() {
 	switch {
 	case cfg.KindClusterName != "" && cfg.ConfigNameExplicit:
 		_ = kindsync.MergeBootstrapConfigFromKind(cfg)
+	case cfg.Xapiri:
+		// Dashboard cfgListScreen handles candidate discovery and selection.
 	case cfg.KindClusterName != "":
 		kindsync.MergeBootstrapConfigFromKindCluster(cfg)
 	default:

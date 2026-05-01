@@ -131,6 +131,12 @@ func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) er
 
 func (driver) DefaultStorageClass() string { return "oci-bv" }
 
+// EnsureManagementInstall returns ErrNotApplicable: OCI does not
+// pivot to a CAPI management cluster via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 	w.Section("OCI Block Volume CSI")
 	w.Bullet("driver: %s (chart oci-csi-node pinned 1.28.0)", "blockvolume.csi.oraclecloud.com")

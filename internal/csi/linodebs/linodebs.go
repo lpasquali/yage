@@ -133,6 +133,12 @@ func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) er
 
 func (driver) DefaultStorageClass() string { return "linode-block-storage" }
 
+// EnsureManagementInstall returns ErrNotApplicable: Linode does not
+// pivot to a CAPI management cluster via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 	w.Section("Linode Block Storage CSI")
 	w.Bullet("driver: %s (chart linode-blockstorage-csi-driver pinned v1.1.2)", "linodebs.csi.linode.com")

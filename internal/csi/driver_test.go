@@ -23,9 +23,10 @@ func (f *fakeDriver) HelmChart(*config.Config) (string, string, string, error) {
 	return "https://example.invalid", f.name, "v0.0.0", nil
 }
 func (f *fakeDriver) RenderValues(*config.Config) (string, error) { return "", nil }
-func (f *fakeDriver) EnsureSecret(*config.Config, string) error   { return nil }
-func (f *fakeDriver) DefaultStorageClass() string                  { return "" }
-func (f *fakeDriver) DescribeInstall(plan.Writer, *config.Config)  {}
+func (f *fakeDriver) EnsureSecret(*config.Config, string) error           { return nil }
+func (f *fakeDriver) DefaultStorageClass() string                          { return "" }
+func (f *fakeDriver) DescribeInstall(plan.Writer, *config.Config)          {}
+func (f *fakeDriver) EnsureManagementInstall(*config.Config, string) error { return ErrNotApplicable }
 
 func TestRegisterIdempotent(t *testing.T) {
 	d := &fakeDriver{name: "registry-idempotent-test"}

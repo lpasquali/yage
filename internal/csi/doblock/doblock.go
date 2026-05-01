@@ -126,6 +126,12 @@ func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) er
 
 func (driver) DefaultStorageClass() string { return "do-block-storage" }
 
+// EnsureManagementInstall returns ErrNotApplicable: DigitalOcean does
+// not pivot to a CAPI management cluster via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 	w.Section("DigitalOcean Block Storage CSI")
 	w.Bullet("driver: %s (chart do-csi-driver pinned v4.14.0)", "dobs.csi.digitalocean.com")

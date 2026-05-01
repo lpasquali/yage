@@ -86,6 +86,13 @@ func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) er
 
 func (driver) DefaultStorageClass() string { return "rook-ceph-block" }
 
+// EnsureManagementInstall returns ErrNotApplicable: Rook-Ceph is a
+// cross-provider opt-in driver and does not have a management-cluster
+// install path via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 	w.Section("Rook-Ceph CSI")
 	w.Bullet("driver: %s (chart rook-ceph pinned v1.15.5)", "rook-ceph.csi.ceph.com")

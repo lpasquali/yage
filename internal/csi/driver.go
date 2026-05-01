@@ -103,6 +103,14 @@ type Driver interface {
 	// provider.PlanDescriber but at the CSI-add-on level — the
 	// orchestrator interleaves these into the workload section.
 	DescribeInstall(w plan.Writer, cfg *config.Config)
+
+	// EnsureManagementInstall installs this CSI driver on the management
+	// cluster identified by mgmtKubeconfig, creating a working
+	// StorageClass before EnsureRepoSync runs. Called during pivot,
+	// after InstallCAPIOnManagement. Idempotent. Returns
+	// ErrNotApplicable when this driver has no management-cluster
+	// install path (e.g., provider does not pivot).
+	EnsureManagementInstall(cfg *config.Config, mgmtKubeconfig string) error
 }
 
 // --- registry ---

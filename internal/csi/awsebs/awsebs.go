@@ -86,6 +86,12 @@ func (driver) EnsureSecret(cfg *config.Config, workloadKubeconfigPath string) er
 
 func (driver) DefaultStorageClass() string { return "ebs-gp3" }
 
+// EnsureManagementInstall returns ErrNotApplicable: AWS does not
+// pivot to a CAPI management cluster via yage's pivot path.
+func (driver) EnsureManagementInstall(_ *config.Config, _ string) error {
+	return csi.ErrNotApplicable
+}
+
 func (driver) DescribeInstall(w plan.Writer, cfg *config.Config) {
 	w.Section("AWS EBS CSI")
 	w.Bullet("driver: %s (chart aws-ebs-csi-driver pinned v2.32.0)", "ebs.csi.aws.com")

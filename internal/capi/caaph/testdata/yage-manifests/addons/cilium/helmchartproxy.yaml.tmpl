@@ -1,0 +1,22 @@
+# yage-manifests/addons/cilium/helmchartproxy.yaml.tmpl
+apiVersion: addons.cluster.x-k8s.io/v1alpha1
+kind: HelmChartProxy
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  clusterSelector:
+    matchLabels:
+      caaph: enabled
+  chartName: {{ .ChartName }}
+  repoURL: {{ .RepoURL }}
+  version: {{ printf "%q" .Version }}
+  namespace: {{ .ChartNamespace }}
+  options:
+    wait: true
+    waitForJobs: true
+    timeout: 15m0s
+    install:
+      createNamespace: true
+  valuesTemplate: |
+{{ .ValuesTemplate }}

@@ -1,0 +1,38 @@
+# yage-manifests/addons/argocd/argocd-cr.yaml.tmpl
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: argocd
+  namespace: {{ .Cfg.ArgoCD.WorkloadNamespace }}
+spec:
+  version: {{ .Cfg.ArgoCD.Version }}
+  prometheus:
+    enabled: {{ index .Bools "promEnabled" }}
+  monitoring:
+    enabled: {{ index .Bools "monEnabled" }}
+  notifications:
+    enabled: true
+  server:
+{{- if and (index .Bools "disableIngress") (index .Bools "serverInsecure") }}
+    insecure: true
+    ingress:
+      enabled: false
+    grpc:
+      ingress:
+        enabled: false
+{{- else if index .Bools "disableIngress" }}
+    ingress:
+      enabled: false
+    grpc:
+      ingress:
+        enabled: false
+{{- else if index .Bools "serverInsecure" }}
+    insecure: true
+    grpc:
+      ingress:
+        enabled: true
+{{- else }}
+    grpc:
+      ingress:
+        enabled: true
+{{- end }}

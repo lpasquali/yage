@@ -31,6 +31,7 @@ import (
 	"github.com/lpasquali/yage/internal/cluster/kind"
 	"github.com/lpasquali/yage/internal/cluster/kindsync"
 	"github.com/lpasquali/yage/internal/platform/kubectl"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/obs"
 	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/platform/opentofux"
@@ -816,21 +817,6 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		logx.Die("EnsureRepoSync: %v", err)
 	}
 
-	// --- Registry VM (Phase H gap 1, ADR 0009 §1) ---
-	// EnsureRegistry provisions the bootstrap OCI registry VM via the
-	// yage-tofu/registry/ module. When cfg.RegistryNode is empty the call
-	// returns ErrNotApplicable and is silently skipped.
-	//
-	// Phase placement: after EnsureRepoSync (yage-repos PVC populated, so
-	// JobRunner can find the module HCL) and before the pivot section so
-	// cfg.ImageRegistryMirror is set before any Job pod or workload-cluster
-	// provisioning that needs to pull images. The tofu state Secret carries
-	// app.kubernetes.io/managed-by=yage (via yageLabels) and is copied to the
-	// management cluster by HandOffBootstrapSecretsToManagement on pivot.
-	if err := opentofux.EnsureRegistry(ctx, mgmtCli, cfg); err != nil && !errors.Is(err, opentofux.ErrNotApplicable) {
-		logx.Die("EnsureRegistry: %v", err)
-	}
-
 	// --- Pivot ---
 	// CAPI bootstrap-and-pivot pattern. With PivotEnabled (the
 	// default): kind provisions a single-node management cluster on
@@ -1008,7 +994,8 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		obs.Str("cluster", cfg.WorkloadClusterName),
 	)
 	opentofux.RecreateIdentitiesWorkloadCSISecrets(cfg)
-	caaph.ApplyWorkloadCiliumHelmChartProxy(cfg)
+	mf := &manifests.Fetcher{}
+	caaph.ApplyWorkloadCiliumHelmChartProxy(cfg, mf)
 	WaitForWorkloadClusterReady(cfg)
 	caaph.ApplyWorkloadCiliumLBBToWorkload(cfg, func() (string, error) {
 		return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
@@ -1069,8 +1056,8 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	if cfg.ArgoCD.Enabled {
 		logx.Log("Argo CD on the workload: Argo CD Operator + ArgoCD CR, then CAAPH argocd-apps (root Application name %s; see --workload-app-of-apps-git-*).", cfg.WorkloadClusterName)
 		if cfg.ArgoCD.WorkloadEnabled {
-			caaph.ApplyWorkloadArgoHelmProxies(cfg, func() {
-				caaph.ApplyWorkloadArgoCDOperatorAndCR(cfg, func() (string, error) {
+			caaph.ApplyWorkloadArgoHelmProxies(cfg, mf, func() {
+				caaph.ApplyWorkloadArgoCDOperatorAndCR(cfg, mf, func() (string, error) {
 					return writeWorkloadKubeconfig(cfg, "kind-"+cfg.KindClusterName)
 				})
 			})

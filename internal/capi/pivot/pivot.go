@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/kind/pkg/cluster"
 
 	"github.com/lpasquali/yage/internal/config"
@@ -20,6 +22,16 @@ import (
 	"github.com/lpasquali/yage/internal/platform/kubectl"
 	"github.com/lpasquali/yage/internal/provider"
 	"github.com/lpasquali/yage/internal/ui/logx"
+)
+
+// yageSystemNamespace / yageReposPVCName / yageManagedBySelector mirror
+// the constants used by internal/cluster/kindsync. Inlined (rather than
+// importing kindsync for three string constants) to keep this package's
+// dep graph minimal.
+const (
+	yageSystemNamespace   = "yage-system"
+	yageReposPVCName      = "yage-repos"
+	yageManagedBySelector = "app.kubernetes.io/managed-by=yage"
 )
 
 // EnsureManagementCluster provisions the management cluster on Proxmox
@@ -256,13 +268,88 @@ func VerifyParity(cfg *config.Config, mgmtKubeconfig string) error {
 			}
 		}
 
+		// (d) yage-system namespace present on mgmt (ADR 0011 §6.a).
 		if lastErr == nil {
-			logx.Log("Parity verified: workload Cluster + bootstrap Secrets + CAPI controllers all present on mgmt.")
+			if err := checkYageSystemNamespace(bg, cli.Typed); err != nil {
+				lastErr = err
+			}
+		}
+
+		// (e) Labeled yage-system Secrets present (ADR 0011 §6.b).
+		// Zero is a warning, not fatal — a first-run with no tofu modules
+		// executed yet has no tfstate Secrets to copy.
+		if lastErr == nil {
+			if err := checkLabeledYageSystemSecrets(bg, cli.Typed); err != nil {
+				lastErr = err
+			}
+		}
+
+		// (f) yage-repos PVC Bound (ADR 0011 §6.c).
+		if lastErr == nil {
+			if err := checkYageReposPVCBound(bg, cli.Typed); err != nil {
+				lastErr = err
+			}
+		}
+
+		if lastErr == nil {
+			logx.Log("Parity verified: workload Cluster + bootstrap Secrets + CAPI controllers + yage-system + yage-repos PVC all present on mgmt.")
 			return nil
 		}
 		time.Sleep(5 * time.Second)
 	}
 	return fmt.Errorf("parity not reached within %s: %v", timeout, lastErr)
+}
+
+// checkYageSystemNamespace verifies the yage-system namespace exists on
+// the management cluster (created by HandOff via EnsureNamespace, then
+// re-asserted by EnsureYageSystemOnCluster). Returns a typed error so
+// VerifyParity's poll loop can retry it transparently.
+func checkYageSystemNamespace(ctx context.Context, typed kubernetes.Interface) error {
+	if _, err := typed.CoreV1().Namespaces().Get(ctx, yageSystemNamespace, metav1.GetOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("namespace %s not on mgmt yet", yageSystemNamespace)
+		}
+		return fmt.Errorf("get namespace %s on mgmt: %w", yageSystemNamespace, err)
+	}
+	return nil
+}
+
+// checkLabeledYageSystemSecrets lists Secrets in yage-system carrying
+// app.kubernetes.io/managed-by=yage on the management cluster. Per
+// ADR 0011 §6.b zero matches is a WARNING (handed-off cleanly but no
+// tofu state had been written when pivot ran) and one+ is the steady
+// state. Listing errors are reported so the poll loop can retry.
+func checkLabeledYageSystemSecrets(ctx context.Context, typed kubernetes.Interface) error {
+	list, err := typed.CoreV1().Secrets(yageSystemNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: yageManagedBySelector,
+	})
+	if err != nil {
+		return fmt.Errorf("list labeled %s Secrets on mgmt: %w", yageSystemNamespace, err)
+	}
+	if len(list.Items) == 0 {
+		logx.Warn("VerifyParity: zero Secrets in %s carry %s on mgmt — first-run with no tofu state yet?",
+			yageSystemNamespace, yageManagedBySelector)
+	}
+	return nil
+}
+
+// checkYageReposPVCBound verifies the yage-repos PVC in yage-system on
+// the management cluster is in the Bound phase. A Pending PVC here
+// indicates a StorageClass problem — surface it with a clear diagnostic
+// before the first post-pivot tofu Job runs (ADR 0011 §6.c).
+func checkYageReposPVCBound(ctx context.Context, typed kubernetes.Interface) error {
+	pvc, err := typed.CoreV1().PersistentVolumeClaims(yageSystemNamespace).Get(ctx, yageReposPVCName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("pvc %s/%s not on mgmt yet", yageSystemNamespace, yageReposPVCName)
+		}
+		return fmt.Errorf("get pvc %s/%s on mgmt: %w", yageSystemNamespace, yageReposPVCName, err)
+	}
+	if pvc.Status.Phase != corev1.ClaimBound {
+		return fmt.Errorf("pvc %s/%s phase=%s, want Bound (StorageClass problem on mgmt?)",
+			yageSystemNamespace, yageReposPVCName, pvc.Status.Phase)
+	}
+	return nil
 }
 
 // TeardownKind deletes the kind cluster after a successful pivot. Honors

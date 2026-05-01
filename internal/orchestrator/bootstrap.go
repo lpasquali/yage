@@ -866,12 +866,33 @@ func Run(ctx context.Context, cfg *config.Config) int {
 			phPivot.End()
 			return 0
 		}
-		copied, err := kindsync.HandOffBootstrapSecretsToManagement(cfg, "kind-"+cfg.KindClusterName, mgmtKubeconfig)
+		// Post-pivot sequence per ADR 0011 §7:
+		//   MoveCAPIState (above) → HandOff → EnsureYageSystemOnCluster
+		//     → CSI EnsureManagementInstall → EnsureRepoSync → VerifyParity → rebind
+		// VerifyParity must run last so its yage-system + yage-repos PVC
+		// checks see the state populated by the preceding ensures.
+		hr, err := kindsync.HandOffBootstrapSecretsToManagement(cfg, "kind-"+cfg.KindClusterName, mgmtKubeconfig)
 		if err != nil {
-			logx.Warn("pivot: handoff Secrets returned error after %d copies: %v", copied, err)
+			logx.Warn("pivot: handoff Secrets returned error after %d named + %d labeled copies: %v",
+				hr.NamedCopied, hr.LabelCopied, err)
 		} else {
-			logx.Log("pivot: handoff complete (%d Secrets copied to mgmt cluster).", copied)
+			logx.Log("pivot: handoff complete (%d named + %d labeled Secrets copied to mgmt cluster).",
+				hr.NamedCopied, hr.LabelCopied)
 		}
+
+		// Single mgmt-cluster client reused by every post-handoff step.
+		pivotMgmtCli, pivotCliErr := k8sclient.ForKubeconfigFile(mgmtKubeconfig)
+		if pivotCliErr != nil {
+			logx.Die("pivot: kube client for mgmt cluster: %v", pivotCliErr)
+		}
+
+		// EnsureYageSystemOnCluster re-creates the yage-job-runner SA + RBAC
+		// from spec on the real mgmt cluster (these are not Secrets, so the
+		// handoff did not carry them across).
+		if err := kindsync.EnsureYageSystemOnCluster(ctx, pivotMgmtCli); err != nil {
+			logx.Die("pivot: EnsureYageSystemOnCluster on management cluster: %v", err)
+		}
+
 		// Install CSI driver on management cluster (needed for
 		// yage-repos PVC). Load file-based credentials first so
 		// operators that supply PROXMOX_CSI_CONFIG see them here, then
@@ -886,21 +907,20 @@ func Run(ctx context.Context, cfg *config.Config) int {
 				logx.Die("pivot: EnsureManagementInstall (%s): %v", d.Name(), merr)
 			}
 		}
-		if err := pivot.VerifyParity(cfg, mgmtKubeconfig); err != nil {
-			logx.Die("pivot: VerifyParity: %v", err)
-		}
-		// Ensure yage-system RBAC and repo sync on the real management cluster
-		// (mirrors the kind-cluster step above, but targeting mgmt after pivot).
-		pivotMgmtCli, pivotCliErr := k8sclient.ForKubeconfigFile(mgmtKubeconfig)
-		if pivotCliErr != nil {
-			logx.Die("pivot: kube client for mgmt cluster: %v", pivotCliErr)
-		}
-		if err := kindsync.EnsureYageSystemOnCluster(ctx, pivotMgmtCli); err != nil {
-			logx.Die("pivot: EnsureYageSystemOnCluster on management cluster: %v", err)
-		}
+
+		// EnsureRepoSync creates the yage-repos PVC + repo-sync Job on the
+		// management cluster, using the StorageClass installed above.
 		if err := opentofux.EnsureRepoSync(ctx, pivotMgmtCli, cfg); err != nil {
 			logx.Die("pivot: EnsureRepoSync on management cluster: %v", err)
 		}
+
+		// VerifyParity is last: its ADR 0011 §6 checks (yage-system ns,
+		// labeled Secrets, yage-repos PVC bound) require the preceding
+		// ensures to have run.
+		if err := pivot.VerifyParity(cfg, mgmtKubeconfig); err != nil {
+			logx.Die("pivot: VerifyParity: %v", err)
+		}
+
 		if err := rebindKindContextToMgmt(cfg, mgmtKubeconfig); err != nil {
 			logx.Die("pivot: rebind kind-%s context to mgmt kubeconfig: %v", cfg.KindClusterName, err)
 		}

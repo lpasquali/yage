@@ -44,6 +44,30 @@ const (
 	capmoxLiveSecretName = "capmox-manager-credentials"
 )
 
+// yageManagedBySelector is the label selector used to discover Secrets
+// in yage-system that should be carried across to the management cluster
+// alongside the named-target list (ADR 0011 §2). Matches the label set
+// applied by EnsureYageSystemOnCluster and by the OpenTofu kubernetes
+// backend (ADR 0011 §1).
+const yageManagedBySelector = "app.kubernetes.io/managed-by=yage"
+
+// HandoffResult is the augmented return value of
+// HandOffBootstrapSecretsToManagement. NamedCopied counts Secrets carried
+// across from expectedHandoffTargets and the per-config bootstrap-config
+// pass; LabelCopied counts Secrets discovered in yage-system via the
+// app.kubernetes.io/managed-by=yage label (ADR 0011 §2). FirstErr is the
+// first per-Secret error seen — handoff is best-effort, the caller
+// chains a VerifyParity step after.
+type HandoffResult struct {
+	NamedCopied int
+	LabelCopied int
+	FirstErr    error
+}
+
+// Total returns NamedCopied + LabelCopied so callers that only care about
+// the gross volume can keep their existing log lines.
+func (r HandoffResult) Total() int { return r.NamedCopied + r.LabelCopied }
+
 // handoffTarget describes one Secret to copy from kind → mgmt.
 // Namespace is resolved at call-time so an empty config field
 // (e.g. an unset Providers.Proxmox.BootstrapSecretName) is
@@ -83,24 +107,37 @@ func expectedHandoffTargets(cfg *config.Config) []handoffTarget {
 //   - <Providers.Proxmox.BootstrapSecretName>                (single-Secret form)
 //   - capmox-system/capmox-manager-credentials    (the live capmox copy)
 //
+// After the named-target pass, every Secret in yage-system carrying
+// label app.kubernetes.io/managed-by=yage is discovered and applied to
+// the management cluster (ADR 0011 §2 — label-scoped pass; covers
+// tofu-state Secrets and any future yage-managed Secrets that opt into
+// the label).
+//
 // Both kindCtx and mgmtKubeconfig identify the source / destination. The
-// destination namespace is created when missing. Returns the count of
-// Secrets copied + any error encountered (we keep going on per-Secret
-// failures to maximise data-arrival; the caller chains a VerifyParity
-// step after).
-func HandOffBootstrapSecretsToManagement(cfg *config.Config, kindCtx, mgmtKubeconfig string) (copied int, err error) {
+// destination namespace is created when missing. Returns the per-pass
+// counts plus the first error encountered — handoff is best-effort, the
+// caller chains a VerifyParity step after.
+func HandOffBootstrapSecretsToManagement(cfg *config.Config, kindCtx, mgmtKubeconfig string) (HandoffResult, error) {
 	if cfg == nil {
-		return 0, fmt.Errorf("handoff: nil config")
+		return HandoffResult{}, fmt.Errorf("handoff: nil config")
 	}
 	srcCli, srcErr := k8sclient.ForContext(kindCtx)
 	if srcErr != nil {
-		return 0, fmt.Errorf("handoff: load kind context %q: %w", kindCtx, srcErr)
+		return HandoffResult{}, fmt.Errorf("handoff: load kind context %q: %w", kindCtx, srcErr)
 	}
 	dstCli, dstErr := k8sclient.ForKubeconfigFile(mgmtKubeconfig)
 	if dstErr != nil {
-		return 0, fmt.Errorf("handoff: load management kubeconfig %q: %w", mgmtKubeconfig, dstErr)
+		return HandoffResult{}, fmt.Errorf("handoff: load management kubeconfig %q: %w", mgmtKubeconfig, dstErr)
 	}
 	bg := context.Background()
+	// Tracks (namespace, name) of Secrets already applied via the named
+	// pass so the subsequent label pass cannot double-apply them.
+	copiedKey := func(ns, name string) string { return ns + "/" + name }
+	alreadyCopied := map[string]bool{}
+	var (
+		namedCopied int
+		labelCopied int
+	)
 
 	// Track which destination namespaces we have ensured to avoid duplicate
 	// EnsureNamespace calls (typically only the bootstrap NS + capmox-system).
@@ -196,7 +233,8 @@ func HandOffBootstrapSecretsToManagement(cfg *config.Config, kindCtx, mgmtKubeco
 			continue
 		}
 
-		copied++
+		namedCopied++
+		alreadyCopied[copiedKey(tgt.Namespace, tgt.Name)] = true
 		logx.Log("Hand-off: copied %s/%s (%s) from %s to management cluster.",
 			tgt.Namespace, tgt.Name, tgt.Description, kindCtx)
 	}
@@ -258,13 +296,120 @@ func HandOffBootstrapSecretsToManagement(cfg *config.Config, kindCtx, mgmtKubeco
 				}
 				continue
 			}
-			copied++
+			namedCopied++
+			alreadyCopied[copiedKey(nsName, "bootstrap-config")] = true
 			logx.Log("Hand-off: copied %s/bootstrap-config (config %s) from %s to management cluster.",
 				nsName, src.Labels["yage.io/config-name"], kindCtx)
 		}
 	}
 
-	logx.Log("Hand-off summary: %d Secret(s) copied from kind context %s to management cluster.", copied, kindCtx)
+	// Label-scoped second pass per ADR 0011 §2: every Secret in
+	// yage-system carrying app.kubernetes.io/managed-by=yage that wasn't
+	// already applied above is server-side-applied to the destination.
+	// This is what carries OpenTofu kubernetes-backend state Secrets
+	// (tfstate-default-<module>) and any future yage-managed Secrets that
+	// opt into the label across to mgmt without code changes here.
+	yageNS := YageSystemNamespace
+	if !ensuredNS[yageNS] {
+		if nsErr := dstCli.EnsureNamespace(bg, yageNS); nsErr != nil {
+			logx.Warn("Hand-off: failed to ensure namespace %s on management: %v", yageNS, nsErr)
+			if firstErr == nil {
+				firstErr = nsErr
+			}
+		} else {
+			ensuredNS[yageNS] = true
+		}
+	}
+	if ensuredNS[yageNS] {
+		labelN, labelErr := copyYageSystemSecrets(bg, srcCli, dstCli, yageNS, alreadyCopied, kindCtx)
+		labelCopied = labelN
+		if labelErr != nil && firstErr == nil {
+			firstErr = labelErr
+		}
+	}
+
+	logx.Log("Hand-off summary: %d named + %d labeled = %d Secret(s) copied from kind context %s to management cluster.",
+		namedCopied, labelCopied, namedCopied+labelCopied, kindCtx)
+	return HandoffResult{
+		NamedCopied: namedCopied,
+		LabelCopied: labelCopied,
+		FirstErr:    firstErr,
+	}, firstErr
+}
+
+// copyYageSystemSecrets lists every Secret in namespace ns on srcCli that
+// carries label app.kubernetes.io/managed-by=yage and server-side-applies
+// it to dstCli (Force=true). Secrets whose (namespace, name) appears in
+// skip are not re-applied; the caller passes the keys handled by the
+// named pass to avoid double-counting.
+//
+// Returns the count of Secrets actually applied and the first per-Secret
+// error encountered. Per-Secret failures are warnings — handoff is
+// best-effort, the caller chains a VerifyParity step after.
+func copyYageSystemSecrets(
+	ctx context.Context,
+	srcCli, dstCli *k8sclient.Client,
+	ns string,
+	skip map[string]bool,
+	kindCtx string,
+) (int, error) {
+	list, listErr := srcCli.Typed.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: yageManagedBySelector,
+	})
+	if listErr != nil {
+		logx.Warn("Hand-off: failed to list labeled Secrets in %s on kind: %v", ns, listErr)
+		return 0, listErr
+	}
+
+	var (
+		copied   int
+		firstErr error
+	)
+	for i := range list.Items {
+		src := &list.Items[i]
+		key := ns + "/" + src.Name
+		if skip != nil && skip[key] {
+			continue
+		}
+
+		clean := corev1.Secret{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        src.Name,
+				Namespace:   src.Namespace,
+				Labels:      src.Labels,
+				Annotations: stripServerAnnotations(src.Annotations),
+			},
+			Type:       src.Type,
+			Data:       src.Data,
+			StringData: src.StringData,
+			Immutable:  src.Immutable,
+		}
+		if clean.Type == "" {
+			clean.Type = corev1.SecretTypeOpaque
+		}
+		body, marshalErr := json.Marshal(clean)
+		if marshalErr != nil {
+			logx.Warn("Hand-off: failed to marshal %s/%s: %v", ns, src.Name, marshalErr)
+			if firstErr == nil {
+				firstErr = marshalErr
+			}
+			continue
+		}
+		_, patchErr := dstCli.Typed.CoreV1().Secrets(ns).Patch(
+			ctx, src.Name, types.ApplyPatchType, body,
+			metav1.PatchOptions{FieldManager: k8sclient.FieldManager, Force: boolTrue()},
+		)
+		if patchErr != nil {
+			logx.Warn("Hand-off: failed to apply %s/%s on management: %v", ns, src.Name, patchErr)
+			if firstErr == nil {
+				firstErr = patchErr
+			}
+			continue
+		}
+		copied++
+		logx.Log("Hand-off (label): copied %s/%s from %s to management cluster.", ns, src.Name, kindCtx)
+	}
 	return copied, firstErr
 }
 

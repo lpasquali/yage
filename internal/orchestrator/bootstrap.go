@@ -817,21 +817,6 @@ func Run(ctx context.Context, cfg *config.Config) int {
 		logx.Die("EnsureRepoSync: %v", err)
 	}
 
-	// --- Registry VM (Phase H gap 1, ADR 0009 §1) ---
-	// EnsureRegistry provisions the bootstrap OCI registry VM via the
-	// yage-tofu/registry/ module. When cfg.RegistryNode is empty the call
-	// returns ErrNotApplicable and is silently skipped.
-	//
-	// Phase placement: after EnsureRepoSync (yage-repos PVC populated, so
-	// JobRunner can find the module HCL) and before the pivot section so
-	// cfg.ImageRegistryMirror is set before any Job pod or workload-cluster
-	// provisioning that needs to pull images. The tofu state Secret carries
-	// app.kubernetes.io/managed-by=yage (via yageLabels) and is copied to the
-	// management cluster by HandOffBootstrapSecretsToManagement on pivot.
-	if err := opentofux.EnsureRegistry(ctx, mgmtCli, cfg); err != nil && !errors.Is(err, opentofux.ErrNotApplicable) {
-		logx.Die("EnsureRegistry: %v", err)
-	}
-
 	// --- Pivot ---
 	// CAPI bootstrap-and-pivot pattern. With PivotEnabled (the
 	// default): kind provisions a single-node management cluster on

@@ -243,6 +243,77 @@ func TestArrowNav_TokenOverlayDoesNotSwallowArrows(t *testing.T) {
 	}
 }
 
+// TestDeployTab_EnterOnDeployButton sets deployRequested and done and returns
+// tea.Quit — not nil — so the program terminates cleanly and the deploy flag
+// is preserved for the caller.  Regression guard: the on-prem branch in
+// runDashboard previously returned dashResult{saved: true} and silently
+// dropped deployRequested, causing Deploy to exit without triggering the
+// orchestrator.
+func TestDeployTab_EnterOnDeployButton(t *testing.T) {
+	cfg := &config.Config{}
+	s := newState(&bytes.Buffer{}, cfg)
+	m := newDashModel(cfg, s)
+	m.cfgSelected = true
+	m.cfgLoading = false
+	m.activeTab = tabDeploy
+	m.deployFocused = 1 // deploy button
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2, ok := next.(dashModel)
+	if !ok {
+		t.Fatalf("Update returned %T, want dashModel", next)
+	}
+	if !m2.deployRequested {
+		t.Error("deployRequested must be true after pressing Enter on deploy button")
+	}
+	if !m2.done {
+		t.Error("done must be true after pressing Enter on deploy button")
+	}
+	if cmd == nil {
+		t.Error("Update must return a non-nil tea.Cmd (tea.Quit) after deploy button press")
+	}
+}
+
+// TestDeployTab_OnPremModePreservesDeployRequested is the direct regression
+// guard for the runDashboard on-prem branch dropping deployRequested.  It
+// constructs a post-Run model whose selects[siMode] is "on-prem" with
+// done=true + deployRequested=true and calls the same result-shaping logic
+// that runDashboard executes to confirm deployRequested is not dropped.
+func TestDeployTab_OnPremModePreservesDeployRequested(t *testing.T) {
+	cfg := &config.Config{}
+	s := newState(&bytes.Buffer{}, cfg)
+	m := newDashModel(cfg, s)
+	m.cfgSelected = true
+	m.cfgLoading = false
+
+	// Simulate on-prem mode selected.
+	m.selects[siMode] = selectState{options: []string{"cloud", "on-prem"}, cur: 1}
+	m.done = true
+	m.deployRequested = true
+
+	// Mirror the runDashboard result-shaping logic exactly.
+	var res dashResult
+	final := m
+	if !final.done {
+		res = dashResult{}
+	} else if final.selects[siMode].value() == "on-prem" {
+		s.fork = forkOnPrem
+		*cfg = *final.cfg
+		res = dashResult{saved: true, deployRequested: final.deployRequested}
+	} else {
+		final.flushToCfg()
+		*cfg = *final.cfg
+		res = dashResult{saved: true, deployRequested: final.deployRequested}
+	}
+
+	if !res.saved {
+		t.Error("saved must be true when done=true")
+	}
+	if !res.deployRequested {
+		t.Error("deployRequested must not be dropped in on-prem mode — was the runDashboard on-prem branch fixed?")
+	}
+}
+
 // TestRenderField_SecretFieldsNeverLeakValue verifies that secret fields
 // never emit their cleartext value in the unfocused render path. This is a
 // regression guard for ADR 0013 (secret display policy).

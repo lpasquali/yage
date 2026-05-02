@@ -13,7 +13,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/lpasquali/yage/internal/capi/templates"
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/platform/shell"
 )
 
@@ -132,6 +134,21 @@ func KustomizeBlockForJob(cfg *config.Config, job string) string {
 `, ns, job, img)
 }
 
+// KustomizeBlockForJobTemplate renders the kustomize block for the named
+// Job via the yage-manifests template (ADR 0012 §3, issue #139).
+func KustomizeBlockForJobTemplate(f *manifests.Fetcher, cfg *config.Config, job string) (string, error) {
+	ns := cfg.WorkloadPostsyncNamespace
+	if ns == "" {
+		ns = "workload-smoke"
+	}
+	return f.Render("postsync/_partials/job-image-override.kustomize.tmpl", templates.KustomizePartialData{
+		Cfg:          cfg,
+		Namespace:    ns,
+		JobName:      job,
+		KubectlImage: ResolveKubectlImage(cfg),
+	})
+}
+
 // SmokeK8sVersionForImage returns the Kubernetes version to use for
 // the Proxmox CSI smoke-test image. Scans CAPI_MANIFEST for a
 // Cluster-topology.version, else KubeadmControlPlane.spec.version;
@@ -218,6 +235,20 @@ func SmokeRenderKustomizeBlock(cfg *config.Config) string {
               path: /spec/template/spec/containers/0/env/1/value
               value: "%s"
 `, ns, img, ns, sc)
+}
+
+// SmokeRenderKustomizeBlockTemplate renders the kustomize block for the
+// proxmox-csi-smoke Job via the yage-manifests template (ADR 0012 §3, issue #139).
+func SmokeRenderKustomizeBlockTemplate(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	ns := cfg.Providers.Proxmox.CSINamespace
+	sc := cfg.Providers.Proxmox.CSIStorageClassName
+	return f.Render("postsync/_partials/proxmox-csi-smoke.kustomize.tmpl", templates.KustomizePartialData{
+		Cfg:          cfg,
+		Namespace:    ns,
+		JobName:      "proxmox-csi-smoke",
+		KubectlImage: ResolveKubectlImage(cfg),
+		Extra:        map[string]string{"storageClass": sc},
+	})
 }
 
 // Silence unused-import of exec if we end up not needing it.

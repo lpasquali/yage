@@ -1155,7 +1155,7 @@ func runDashboard(w io.Writer, cfg *config.Config, s *state) dashResult {
 		s.fork = forkOnPrem
 		// Copy loaded cfg back to caller's pointer (handles cfgEntryLoadMsg replacement).
 		*cfg = *final.cfg
-		return dashResult{saved: true}
+		return dashResult{saved: true, deployRequested: final.deployRequested}
 	}
 	final.flushToCfg()
 	// Copy flushed cfg back to caller's pointer.

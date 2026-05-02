@@ -25,7 +25,18 @@ func (m dashModel) renderTokenPromptOverlay(w int) string {
 	lines = append(lines, stMuted.Render("  The admin token is not saved to the kind Secret (security policy)."))
 	lines = append(lines, stMuted.Render("  Enter it now for this session, or press esc to skip."))
 	lines = append(lines, "")
-	lines = append(lines, "  "+m.tokenPromptInput.View())
+	// Unfocused guard (ADR 0013 §2): only call View() when the input is
+	// focused (user is actively typing). Unfocused renders the status indicator
+	// so dot-count cannot leak the token length at rest.
+	var tokenView string
+	if m.tokenPromptInput.Focused() {
+		tokenView = m.tokenPromptInput.View()
+	} else if m.tokenPromptInput.Value() == "" {
+		tokenView = stMuted.Render("[ ] not set")
+	} else {
+		tokenView = stOK.Render("[✓] set")
+	}
+	lines = append(lines, "  "+tokenView)
 	lines = append(lines, "")
 	lines = append(lines, stMuted.Render("  enter  confirm    esc  skip"))
 	return strings.Join(lines, "\n")

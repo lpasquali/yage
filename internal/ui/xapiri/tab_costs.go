@@ -291,9 +291,26 @@ func (m dashModel) renderCostsCredsForm() []string {
 	lines = append(lines, "")
 	for i := 0; i < ccCount; i++ {
 		lbl := fmt.Sprintf("  %-22s", ccLabels[i])
-		input := m.costCredsInputs[i].View()
+		isSecret := i != ccAWSKeyID
+		focused := i == m.costCredsFocus
+		var input string
+		switch {
+		case focused:
+			// User is actively typing — EchoPassword masking is acceptable
+			// per ADR 0013 §3 (length-leak is ephemeral and user is the secret-knower).
+			input = m.costCredsInputs[i].View()
+		case isSecret:
+			// Unfocused secret: emit status indicator only (ADR 0013 §2).
+			if m.costCredsInputs[i].Value() == "" {
+				input = stMuted.Render("[ ] not set")
+			} else {
+				input = stOK.Render("[✓] set")
+			}
+		default:
+			input = m.costCredsInputs[i].View()
+		}
 		cursor := " "
-		if i == m.costCredsFocus {
+		if focused {
 			cursor = stAccent.Render("▌")
 		}
 		lines = append(lines, cursor+lbl+" "+input)

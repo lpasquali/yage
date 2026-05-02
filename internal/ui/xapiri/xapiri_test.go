@@ -6,6 +6,7 @@ package xapiri
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -311,6 +312,65 @@ func TestDeployTab_OnPremModePreservesDeployRequested(t *testing.T) {
 	}
 	if !res.deployRequested {
 		t.Error("deployRequested must not be dropped in on-prem mode — was the runDashboard on-prem branch fixed?")
+	}
+}
+
+// TestRenderCostsCredsForm_SecretFieldsNeverLeakValue verifies that unfocused
+// secret inputs in the cost-tab credential form emit the status indicator
+// rather than raw value or dot-count. Regression guard for ADR 0013 §2.
+func TestRenderCostsCredsForm_SecretFieldsNeverLeakValue(t *testing.T) {
+	const sentinel = "SENTINEL-SECRET-DEADBEEF-12345"
+
+	cfg := &config.Config{}
+	cfg.Cost.Credentials.AWSSecretAccessKey = sentinel
+	cfg.Cost.Credentials.GCPAPIKey = sentinel
+	cfg.Cost.Credentials.HetznerToken = sentinel
+	cfg.Cost.Credentials.DigitalOceanToken = sentinel
+	cfg.Cost.Credentials.IBMCloudAPIKey = sentinel
+
+	s := newState(&bytes.Buffer{}, cfg)
+	m := newDashModel(cfg, s)
+	// Force credential form open; focus on AWS Key ID (index 0, non-secret).
+	m.costCredsMode = true
+	m.costCredsFocus = ccAWSKeyID
+
+	lines := m.renderCostsCredsForm()
+	rendered := strings.Join(lines, "\n")
+
+	if bytes.Contains([]byte(rendered), []byte(sentinel)) {
+		t.Errorf("renderCostsCredsForm leaked the secret value in unfocused rows: %q", rendered)
+	}
+	if !bytes.Contains([]byte(rendered), []byte("set")) {
+		t.Errorf("renderCostsCredsForm missing set/not-set indicator for secret fields: %q", rendered)
+	}
+}
+
+// TestRenderTokenPromptOverlay_NeverLeaksWhenUnfocused verifies that the
+// token re-prompt overlay shows the status indicator (not dot-count or
+// cleartext) when the input is not focused. Regression guard for ADR 0013 §2.
+func TestRenderTokenPromptOverlay_NeverLeaksWhenUnfocused(t *testing.T) {
+	const sentinel = "SENTINEL-SECRET-DEADBEEF-12345"
+
+	cfg := &config.Config{}
+	cfg.Providers.Proxmox.AdminUsername = "root@pam"
+
+	s := newState(&bytes.Buffer{}, cfg)
+	m := newDashModel(cfg, s)
+	m.tokenPromptActive = true
+	// tokenPromptInput starts unfocused; set a value to simulate a token
+	// that was typed earlier and would leak length via EchoPassword dots.
+	m.tokenPromptInput.SetValue(sentinel)
+	if m.tokenPromptInput.Focused() {
+		t.Skip("tokenPromptInput is focused; unfocused path cannot be tested here")
+	}
+
+	rendered := m.renderTokenPromptOverlay(80)
+
+	if bytes.Contains([]byte(rendered), []byte(sentinel)) {
+		t.Errorf("renderTokenPromptOverlay leaked the token value when unfocused: %q", rendered)
+	}
+	if !bytes.Contains([]byte(rendered), []byte("set")) {
+		t.Errorf("renderTokenPromptOverlay missing set/not-set indicator when unfocused: %q", rendered)
 	}
 }
 

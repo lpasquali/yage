@@ -42,7 +42,7 @@ jobs:
         if: github.event_name == 'push' && github.event.before == '0000000000000000000000000000000000000000'
         run: gitleaks git --exit-code 1
 
-  # ─── Go quality (build + vet) ────────────────────────────────────────────────
+  # ─── Go quality (build + vet + test) ───────────────────────────────────────
   go-quality:
     name: RuneGate/Quality/Go
     runs-on: ubuntu-latest
@@ -56,6 +56,10 @@ jobs:
         run: go build ./...
       - name: go vet
         run: go vet ./...
+      - name: go test
+        # -short skips tests that rely on external services or long-running I/O.
+        # -race is enabled; the Go module cache is warm from the build+vet steps above.
+        run: go test -race -short ./...
 
   # ─── Merge Gate ─────────────────────────────────────────────────────────────
   merge-gate:

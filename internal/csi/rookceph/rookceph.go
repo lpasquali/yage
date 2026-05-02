@@ -23,9 +23,10 @@
 package rookceph
 
 import (
-	"strings"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/ui/plan"
 )
@@ -53,28 +54,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a minimal Helm values document for the Rook
-// operator. The chart deploys the operator and registers the CSI
-// plug-in; a CephCluster CR must be applied separately to bring up
-// the actual storage cluster.
-//
-// csi.cephBlockPools.replicaCount is set to 3 — the recommended
-// minimum for production Ceph (one replica per failure domain). Lower
-// this to 1 or 2 for single-node / dev clusters by overriding the
-// value out-of-band.
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/rookceph.\n")
-	b.WriteString("# This chart installs the Rook operator only.\n")
-	b.WriteString("# Post-install: apply a CephCluster CR to create the storage cluster.\n")
-	b.WriteString("# See: https://rook.io/docs/rook/latest/CRDs/Cluster/ceph-cluster-crd/\n")
-	b.WriteString("csi:\n")
-	b.WriteString("  cephBlockPools:\n")
-	b.WriteString("    replicaCount: 3\n")
-	b.WriteString("# operator.logLevel: INFO by default; set to DEBUG for troubleshooting.\n")
-	b.WriteString("operator:\n")
-	b.WriteString("  logLevel: INFO\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/rook-ceph/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret returns ErrNotApplicable: Rook-Ceph uses in-cluster

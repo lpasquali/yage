@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/ui/plan"
 )
 
@@ -22,7 +23,7 @@ func (f *fakeDriver) Defaults() []string       { return nil }
 func (f *fakeDriver) HelmChart(*config.Config) (string, string, string, error) {
 	return "https://example.invalid", f.name, "v0.0.0", nil
 }
-func (f *fakeDriver) RenderValues(*config.Config) (string, error) { return "", nil }
+func (f *fakeDriver) Render(*manifests.Fetcher, *config.Config) (string, error) { return "", nil }
 func (f *fakeDriver) EnsureSecret(*config.Config, string) error           { return nil }
 func (f *fakeDriver) DefaultStorageClass() string                          { return "" }
 func (f *fakeDriver) DescribeInstall(plan.Writer, *config.Config)          {}

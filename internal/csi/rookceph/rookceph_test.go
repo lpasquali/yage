@@ -8,8 +8,15 @@ import (
 	"testing"
 
 	"github.com/lpasquali/yage/internal/csi"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 )
 
+
+// fetcher returns a Fetcher pointed at the in-package testdata fixture.
+func fetcher(t *testing.T) *manifests.Fetcher {
+	t.Helper()
+	return &manifests.Fetcher{MountRoot: "testdata"}
+}
 func TestDriverConstants(t *testing.T) {
 	tests := []struct {
 		name string
@@ -52,20 +59,15 @@ func TestHelmChart(t *testing.T) {
 	}
 }
 
-func TestRenderValues(t *testing.T) {
-	out, err := driver{}.RenderValues(nil)
+func TestRender(t *testing.T) {
+	out, err := driver{}.Render(fetcher(t), nil)
 	if err != nil {
-		t.Fatalf("RenderValues() unexpected err: %v", err)
+		t.Fatalf("Render() unexpected err: %v", err)
 	}
-	checks := []string{
-		"csi:",
-		"cephBlockPools:",
-		"replicaCount: 3",
-		"operator:",
-	}
-	for _, needle := range checks {
+	wants := []string{"csi:", "cephBlockPools:", "replicaCount: 3", "operator:"}
+	for _, needle := range wants {
 		if !strings.Contains(out, needle) {
-			t.Errorf("RenderValues() missing %q in output:\n%s", needle, out)
+			t.Errorf("Render() missing %q in output:\n%s", needle, out)
 		}
 	}
 }

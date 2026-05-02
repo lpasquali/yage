@@ -1,0 +1,10 @@
+# Rendered by yage-manifests csi/rook-ceph/values.yaml.tmpl.
+# This chart installs the Rook operator only.
+# Post-install: apply a CephCluster CR to create the storage cluster.
+# See: https://rook.io/docs/rook/latest/CRDs/Cluster/ceph-cluster-crd/
+csi:
+  cephBlockPools:
+    replicaCount: 3
+# operator.logLevel: INFO by default; set to DEBUG for troubleshooting.
+operator:
+  logLevel: INFO

@@ -8,9 +8,16 @@ import (
 	"testing"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 )
 
+
+// fetcher returns a Fetcher pointed at the in-package testdata fixture.
+func fetcher(t *testing.T) *manifests.Fetcher {
+	t.Helper()
+	return &manifests.Fetcher{MountRoot: "testdata"}
+}
 func TestDriverConstants(t *testing.T) {
 	d := driver{}
 	if got, want := d.Name(), "openstack-cinder"; got != want {
@@ -48,24 +55,24 @@ func TestHelmChart(t *testing.T) {
 	}
 }
 
-func TestRenderValues(t *testing.T) {
+func TestRender(t *testing.T) {
 	d := driver{}
 	cfg := &config.Config{}
-	out, err := d.RenderValues(cfg)
+	out, err := d.Render(fetcher(t), cfg)
 	if err != nil {
-		t.Fatalf("RenderValues err: %v", err)
+		t.Fatalf("Render err: %v", err)
 	}
 	if !strings.Contains(out, secretName) {
-		t.Errorf("RenderValues output missing secret name %q: %s", secretName, out)
+		t.Errorf("Render output missing secret name %q: %s", secretName, out)
 	}
 	if !strings.Contains(out, "secret:") {
-		t.Errorf("RenderValues output missing secret: key: %s", out)
+		t.Errorf("Render output missing secret: key: %s", out)
 	}
 	if !strings.Contains(out, "storageClass:") {
-		t.Errorf("RenderValues output missing storageClass key: %s", out)
+		t.Errorf("Render output missing storageClass key: %s", out)
 	}
 	if !strings.Contains(out, "hostMount: false") {
-		t.Errorf("RenderValues should disable hostMount: %s", out)
+		t.Errorf("Render should disable hostMount: %s", out)
 	}
 }
 

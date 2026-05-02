@@ -8,8 +8,15 @@ import (
 	"testing"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 )
 
+
+// fetcher returns a Fetcher pointed at the in-package testdata fixture.
+func fetcher(t *testing.T) *manifests.Fetcher {
+	t.Helper()
+	return &manifests.Fetcher{MountRoot: "testdata"}
+}
 func TestDriverConstants(t *testing.T) {
 	d := driver{}
 	if got, want := d.Name(), "gcp-pd"; got != want {
@@ -27,35 +34,40 @@ func TestDriverConstants(t *testing.T) {
 	}
 }
 
-func TestRenderValuesProjectInjection(t *testing.T) {
+func TestRender(t *testing.T) {
 	d := driver{}
-	cfg := &config.Config{}
-	cfg.Providers.GCP.Project = "my-test-project"
-	out, err := d.RenderValues(cfg)
-	if err != nil {
-		t.Fatalf("RenderValues err: %v", err)
-	}
-	if !strings.Contains(out, "project: my-test-project") {
-		t.Errorf("missing project line: %s", out)
-	}
-	if !strings.Contains(out, "pd-balanced") {
-		t.Errorf("missing pd-balanced storage class: %s", out)
-	}
+	t.Run("project", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Providers.GCP.Project = "my-gcp-project"
+		out, err := d.Render(fetcher(t), cfg)
+		if err != nil {
+			t.Fatalf("Render err: %v", err)
+		}
+		if !strings.Contains(out, "my-gcp-project") {
+			t.Errorf("Render missing project: %s", out)
+		}
+		if !strings.Contains(out, "gce-conf") {
+			t.Errorf("Render SA mode should reference gce-conf Secret: %s", out)
+		}
+	})
+	t.Run("workload-identity", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Providers.GCP.IdentityModel = "workload-identity"
+		cfg.Providers.GCP.Project = "my-gcp-project"
+		out, err := d.Render(fetcher(t), cfg)
+		if err != nil {
+			t.Fatalf("Render WI err: %v", err)
+		}
+		if !strings.Contains(out, "iam.gke.io/gcp-service-account") {
+			t.Errorf("Render WI missing SA annotation: %s", out)
+		}
+		if !strings.Contains(out, "my-gcp-project") {
+			t.Errorf("Render WI missing project: %s", out)
+		}
+	})
 }
 
-func TestRenderValuesWorkloadIdentity(t *testing.T) {
-	d := driver{}
-	cfg := &config.Config{}
-	cfg.Providers.GCP.Project = "p"
-	cfg.Providers.GCP.IdentityModel = "workload-identity"
-	out, err := d.RenderValues(cfg)
-	if err != nil {
-		t.Fatalf("RenderValues err: %v", err)
-	}
-	if !strings.Contains(out, "iam.gke.io/gcp-service-account") {
-		t.Errorf("WI path missing iam.gke.io/gcp-service-account: %s", out)
-	}
-}
+
 
 func TestEnsureSecretWorkloadIdentityNoOp(t *testing.T) {
 	d := driver{}

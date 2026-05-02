@@ -1,0 +1,17 @@
+# Rendered by yage-manifests csi/aws-ebs/values.yaml.tmpl.
+# IRSA: operator pre-creates the IAM role and sets
+# controller.serviceAccount.annotations[eks.amazonaws.com/role-arn]
+# either via Helm CLI override or out-of-band kubectl annotate.
+controller:
+  serviceAccount:
+    create: true
+    annotations:
+      eks.amazonaws.com/role-arn: ""
+storageClasses:
+  - name: ebs-gp3
+    annotations:
+      storageclass.kubernetes.io/is-default-class: "true"
+    parameters:
+      type: gp3
+    volumeBindingMode: WaitForFirstConsumer
+    reclaimPolicy: Delete

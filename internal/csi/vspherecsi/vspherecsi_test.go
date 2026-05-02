@@ -8,8 +8,15 @@ import (
 	"testing"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 )
 
+
+// fetcher returns a Fetcher pointed at the in-package testdata fixture.
+func fetcher(t *testing.T) *manifests.Fetcher {
+	t.Helper()
+	return &manifests.Fetcher{MountRoot: "testdata"}
+}
 func TestDriverConstants(t *testing.T) {
 	d := driver{}
 	tests := []struct {
@@ -51,22 +58,18 @@ func TestHelmChart(t *testing.T) {
 	}
 }
 
-func TestRenderValues(t *testing.T) {
+func TestRender(t *testing.T) {
 	d := driver{}
 	cfg := &config.Config{}
-	out, err := d.RenderValues(cfg)
+	cfg.Providers.Vsphere.Server = "vcenter.example.com"
+	out, err := d.Render(fetcher(t), cfg)
 	if err != nil {
-		t.Fatalf("RenderValues() error: %v", err)
+		t.Fatalf("Render() error: %v", err)
 	}
-	checks := []string{
-		"existingSecretName: " + secretName,
-		"vsphere-sc",
-		"WaitForFirstConsumer",
-		"storageclass.kubernetes.io/is-default-class",
-	}
-	for _, want := range checks {
+	wants := []string{"vsphere-config-secret", "vsphere-sc", "WaitForFirstConsumer", "storageClass:"}
+	for _, want := range wants {
 		if !strings.Contains(out, want) {
-			t.Errorf("RenderValues() missing %q in:\n%s", want, out)
+			t.Errorf("Render() missing %q in:\n%s", want, out)
 		}
 	}
 }

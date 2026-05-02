@@ -32,6 +32,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/plan"
@@ -62,33 +64,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a minimal Helm values document referencing the
-// vsphere-config-secret Secret that EnsureSecret places in kube-system.
-// The chart reads vCenter credentials from the INI file in that Secret
-// via the config.existingSecretName knob.
-//
-// StorageClass:
-//   - name "vsphere-sc" — the yage default for vSphere clusters.
-//   - volumeBindingMode WaitForFirstConsumer — ensures volumes are
-//     provisioned in the same datastore as the scheduled pod's node.
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/vspherecsi.\n")
-	b.WriteString("# Credentials: INI config mounted from kube-system/vsphere-config-secret.\n")
-	b.WriteString("# NOTE: config.existingSecretName is the v3.3.1 chart knob for reusing\n")
-	b.WriteString("# a pre-existing Secret. Verify against the chart's values.yaml if\n")
-	b.WriteString("# upgrading the pinned version.\n")
-	b.WriteString("config:\n")
-	b.WriteString("  existingSecretName: " + secretName + "\n")
-	b.WriteString("  existingSecretNamespace: " + secretNamespace + "\n")
-	b.WriteString("storageClass:\n")
-	b.WriteString("  enabled: true\n")
-	b.WriteString("  name: vsphere-sc\n")
-	b.WriteString("  annotations:\n")
-	b.WriteString("    storageclass.kubernetes.io/is-default-class: \"true\"\n")
-	b.WriteString("  volumeBindingMode: WaitForFirstConsumer\n")
-	b.WriteString("  reclaimPolicy: Delete\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/vsphere-csi/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret writes kube-system/vsphere-config-secret on the workload

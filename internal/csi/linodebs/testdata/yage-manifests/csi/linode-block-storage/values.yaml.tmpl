@@ -1,0 +1,13 @@
+# Rendered by yage-manifests csi/linode-block-storage/values.yaml.tmpl.
+# Requires kube-system/linode Secret with key 'token' (see EnsureSecret).
+secret:
+  name: linode
+  namespace: kube-system
+storageClasses:
+  - name: linode-block-storage
+    annotations:
+      storageclass.kubernetes.io/is-default-class: "true"
+    parameters:
+      type: namedtype
+    volumeBindingMode: WaitForFirstConsumer
+    reclaimPolicy: Delete

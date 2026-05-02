@@ -35,6 +35,7 @@ import (
 	"sync"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/ui/plan"
 )
 
@@ -75,11 +76,13 @@ type Driver interface {
 	// manifest-based install or surface the gap.
 	HelmChart(cfg *config.Config) (repo, chart, version string, err error)
 
-	// RenderValues produces the Helm values YAML for this driver's
-	// chart, taking the active config (region, instance metadata,
-	// secrets, identity model, etc.). Returned string is fed
-	// verbatim to `helm install -f -` (or the CAAPH equivalent).
-	RenderValues(cfg *config.Config) (string, error)
+	// Render produces the Helm values YAML for this driver's chart
+	// by executing csi/<name>/values.yaml.tmpl from the yage-manifests
+	// PVC via f.  cfg carries the active workload configuration
+	// (region, instance metadata, secrets, identity model, etc.).
+	// Returned string is fed verbatim to `helm install -f -` (or the
+	// CAAPH equivalent).
+	Render(f *manifests.Fetcher, cfg *config.Config) (string, error)
 
 	// EnsureSecret pushes any per-driver Secret to the workload
 	// cluster. Drivers that authenticate via cloud-native identity

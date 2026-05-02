@@ -1,0 +1,29 @@
+# Rendered by yage-manifests csi/azure-disk/values.yaml.tmpl.
+controller:
+  replicas: 2
+linux:
+  enabled: true
+storageClasses:
+  - name: azuredisk-standard-ssd
+    annotations:
+      storageclass.kubernetes.io/is-default-class: "true"
+    parameters:
+      skuName: StandardSSD_LRS
+    volumeBindingMode: WaitForFirstConsumer
+    reclaimPolicy: Delete
+{{ if eq .Cfg.Providers.Azure.IdentityModel "workload-identity" -}}
+# Workload Identity: SA annotated for AAD federation.
+serviceAccount:
+  controller:
+    create: true
+    annotations:
+      azure.workload.identity/client-id: {{ printf "%q" .Cfg.Providers.Azure.ClientID }}
+    labels:
+      azure.workload.identity/use: "true"
+{{ else -}}
+# Service-Principal: cloud config Secret in kube-system.
+cloud: AzurePublicCloud
+controller:
+  cloudConfigSecretName: azure-cloud-config
+  cloudConfigSecretNamespace: kube-system
+{{ end -}}

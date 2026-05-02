@@ -1,0 +1,11 @@
+# Rendered by yage-manifests csi/hcloud-csi/values.yaml.tmpl.
+# Auth: Kubernetes Secret applied by EnsureSecret
+# (kube-system/hcloud-csi, key "token").
+secret:
+  name: hcloud-csi
+storageClasses:
+  - name: hcloud-volumes
+    annotations:
+      storageclass.kubernetes.io/is-default-class: "true"
+    reclaimPolicy: Delete
+    volumeBindingMode: WaitForFirstConsumer

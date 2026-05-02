@@ -1,0 +1,15 @@
+# Rendered by yage-manifests csi/vsphere-csi/values.yaml.tmpl.
+# Credentials: INI config mounted from kube-system/vsphere-config-secret.
+# NOTE: config.existingSecretName is the v3.3.1 chart knob for reusing
+# a pre-existing Secret. Verify against the chart's values.yaml if
+# upgrading the pinned version.
+config:
+  existingSecretName: vsphere-config-secret
+  existingSecretNamespace: kube-system
+storageClass:
+  enabled: true
+  name: vsphere-sc
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+  volumeBindingMode: WaitForFirstConsumer
+  reclaimPolicy: Delete

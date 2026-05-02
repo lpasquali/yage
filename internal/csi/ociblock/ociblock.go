@@ -28,6 +28,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/plan"
@@ -58,27 +60,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a minimal Helm values document. The OCI CSI node
-// driver reads cloud credentials from the oci-cloud-controller-manager
-// Secret in kube-system (written by EnsureSecret). The default
-// StorageClass uses the oci-bv provisioner with WaitForFirstConsumer
-// binding so volumes are created in the same AD as the pod's node.
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/ociblock.\n")
-	b.WriteString("# OCI credentials are read from the oci-cloud-controller-manager\n")
-	b.WriteString("# Secret in kube-system (written by EnsureSecret).\n")
-	b.WriteString("cloudConfig:\n")
-	b.WriteString("  secretName: " + secretName + "\n")
-	b.WriteString("  secretNamespace: " + secretNamespace + "\n")
-	b.WriteString("storageClasses:\n")
-	b.WriteString("  - name: oci-bv\n")
-	b.WriteString("    annotations:\n")
-	b.WriteString("      storageclass.kubernetes.io/is-default-class: \"true\"\n")
-	b.WriteString("    provisioner: blockvolume.csi.oraclecloud.com\n")
-	b.WriteString("    volumeBindingMode: WaitForFirstConsumer\n")
-	b.WriteString("    reclaimPolicy: Delete\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/oci-block-storage/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret writes the kube-system/oci-cloud-controller-manager Secret

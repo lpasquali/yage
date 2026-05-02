@@ -45,6 +45,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/plan"
@@ -73,39 +75,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/gcppd.\n")
-	b.WriteString("controller:\n")
-	b.WriteString("  replicas: 2\n")
-	b.WriteString("storageClasses:\n")
-	b.WriteString("  - name: pd-balanced\n")
-	b.WriteString("    annotations:\n")
-	b.WriteString("      storageclass.kubernetes.io/is-default-class: \"true\"\n")
-	b.WriteString("    parameters:\n")
-	b.WriteString("      type: pd-balanced\n")
-	b.WriteString("    volumeBindingMode: WaitForFirstConsumer\n")
-	b.WriteString("    reclaimPolicy: Delete\n")
-
-	if usesWorkloadIdentity(cfg) {
-		b.WriteString("# Workload Identity: SA annotated for GCP IAM federation.\n")
-		b.WriteString("serviceAccount:\n")
-		b.WriteString("  controller:\n")
-		b.WriteString("    create: true\n")
-		b.WriteString("    annotations:\n")
-		b.WriteString(fmt.Sprintf("      iam.gke.io/gcp-service-account: %q\n",
-			gcpSAEmail(cfg)))
-	} else {
-		b.WriteString("# Service-Account: cloud-sa.json mounted from a Secret.\n")
-		b.WriteString("controller:\n")
-		b.WriteString("  cloudSAVolume:\n")
-		b.WriteString("    secret:\n")
-		b.WriteString("      secretName: " + secretName + "\n")
-	}
-	if cfg.Providers.GCP.Project != "" {
-		b.WriteString("project: " + cfg.Providers.GCP.Project + "\n")
-	}
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/gcp-pd/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret writes the kube-system/gce-conf Secret on the

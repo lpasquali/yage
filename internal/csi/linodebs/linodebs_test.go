@@ -8,8 +8,15 @@ import (
 	"testing"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 )
 
+
+// fetcher returns a Fetcher pointed at the in-package testdata fixture.
+func fetcher(t *testing.T) *manifests.Fetcher {
+	t.Helper()
+	return &manifests.Fetcher{MountRoot: "testdata"}
+}
 func TestDriverConstants(t *testing.T) {
 	tests := []struct {
 		name string
@@ -54,21 +61,21 @@ func TestHelmChart(t *testing.T) {
 	}
 }
 
-func TestRenderValues(t *testing.T) {
+func TestRender(t *testing.T) {
 	d := driver{}
 	cfg := &config.Config{}
-	out, err := d.RenderValues(cfg)
+	out, err := d.Render(fetcher(t), cfg)
 	if err != nil {
-		t.Fatalf("RenderValues() unexpected error: %v", err)
+		t.Fatalf("Render() unexpected error: %v", err)
 	}
 	if !strings.Contains(out, "linode") {
-		t.Errorf("RenderValues output does not reference the linode secret: %s", out)
+		t.Errorf("Render output does not reference the linode secret: %s", out)
 	}
 	if !strings.Contains(out, "linode-block-storage") {
-		t.Errorf("RenderValues output missing storage class name: %s", out)
+		t.Errorf("Render output missing storage class name: %s", out)
 	}
 	if !strings.Contains(out, "WaitForFirstConsumer") {
-		t.Errorf("RenderValues output missing volumeBindingMode: %s", out)
+		t.Errorf("Render output missing volumeBindingMode: %s", out)
 	}
 }
 

@@ -20,9 +20,10 @@
 package longhorn
 
 import (
-	"strings"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/ui/plan"
 )
@@ -59,21 +60,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a minimal Helm values document. Longhorn's
-// defaults are production-ready out of the box; no required overrides
-// exist for a standard install. The only tunable emitted here is
-// defaultSettings.defaultReplicaCount — set to 3, which is Longhorn's
-// own default and gives one replica per worker node in a three-node
-// cluster. Operators reduce it to 2 on two-node setups or 1 for
-// single-node dev environments via a Helm CLI override.
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/longhorn.\n")
-	b.WriteString("# Longhorn defaults are production-ready; no required overrides.\n")
-	b.WriteString("# Adjust defaultReplicaCount to match your cluster's worker node count.\n")
-	b.WriteString("defaultSettings:\n")
-	b.WriteString("  defaultReplicaCount: 3\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/longhorn/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret returns ErrNotApplicable: Longhorn uses local node

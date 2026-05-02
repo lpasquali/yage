@@ -1297,7 +1297,7 @@ func Load() *Config {
 	c.TofuRepo = getenv("YAGE_TOFU_REPO", "https://github.com/lpasquali/yage-tofu")
 	c.TofuRef = getenv("YAGE_TOFU_REF", "main")
 	c.ManifestsRepo = getenv("YAGE_MANIFESTS_REPO", "https://github.com/lpasquali/yage-manifests")
-	c.ManifestsRef = getenv("YAGE_MANIFESTS_REF", "v0.1.0")
+	c.ManifestsRef = getenv("YAGE_MANIFESTS_REF", "v0.2.0")
 	c.ReposPVCSize = getenv("YAGE_REPOS_PVC_SIZE", "500Mi")
 
 	// --- On-prem platform services (Phase H, ADR 0009) ---

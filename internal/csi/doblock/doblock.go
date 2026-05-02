@@ -18,7 +18,6 @@ package doblock
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -27,6 +26,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/plan"
@@ -56,28 +57,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a minimal Helm values document. The DO CSI driver
-// reads the access-token from the kube-system/digitalocean Secret, which
-// EnsureSecret creates before Helm install. The chart references the
-// Secret by its conventional name; no additional values configuration is
-// required for the token path.
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/doblock.\n")
-	b.WriteString("# Auth: DigitalOcean access-token read from Secret ")
-	b.WriteString(secretNamespace + "/" + secretName + " key " + tokenKey + ".\n")
-	b.WriteString("# EnsureSecret must run before `helm install` so the Secret is present.\n")
-	b.WriteString("controller:\n")
-	b.WriteString("  replicas: 1\n")
-	b.WriteString("storageClasses:\n")
-	b.WriteString("  - name: do-block-storage\n")
-	b.WriteString("    annotations:\n")
-	b.WriteString("      storageclass.kubernetes.io/is-default-class: \"true\"\n")
-	b.WriteString("    parameters:\n")
-	b.WriteString("      type: pd-ssd\n")
-	b.WriteString("    volumeBindingMode: WaitForFirstConsumer\n")
-	b.WriteString("    reclaimPolicy: Delete\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/do-block-storage/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret writes the kube-system/digitalocean Secret on the workload

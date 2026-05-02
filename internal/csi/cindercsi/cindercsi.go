@@ -32,8 +32,8 @@ package cindercsi
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
+	"os"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -42,6 +42,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/plan"
@@ -75,26 +77,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a minimal Helm values document. The chart defaults
-// to hostMount=true for credentials; we flip to secret-based auth by
-// setting secret.enabled=true, secret.hostMount=false, and pointing
-// secret.name at the Secret EnsureSecret applies. storageClass.delete
-// is set as default to match DefaultStorageClass().
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/cindercsi.\n")
-	b.WriteString("# Credentials: " + secretName + " Secret in " + secretNamespace + "\n")
-	b.WriteString("# (applied by EnsureSecret from OS_* env / cfg.Providers.OpenStack).\n")
-	b.WriteString("secret:\n")
-	b.WriteString("  enabled: true\n")
-	b.WriteString("  hostMount: false\n")
-	b.WriteString("  create: false\n")
-	b.WriteString("  name: " + secretName + "\n")
-	b.WriteString("storageClass:\n")
-	b.WriteString("  enabled: true\n")
-	b.WriteString("  delete:\n")
-	b.WriteString("    isDefault: true\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/openstack-cinder/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret writes the kube-system/cinder-csi-cloud-config Secret on

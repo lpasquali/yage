@@ -15,9 +15,10 @@
 package awsebs
 
 import (
-	"strings"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/ui/plan"
 )
@@ -41,41 +42,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a minimal Helm values document. The IRSA role
-// ARN is left empty — operators set it via the AWS-side IAM role
-// they pre-create (EKS module / OpenTofu / hand-rolled). The
-// orchestrator can later patch the rendered values in-process; for
-// today, an empty annotation is the safest default that still
-// produces a valid YAML document.
-//
-// Storage class:
-//   - name "ebs-gp3" — the gp3 volume type is the modern AWS
-//     default (faster than gp2, identical price, configurable IOPS
-//     up to 16k). yage labels it default so PVCs without an
-//     explicit storageClassName land here.
-//   - volumeBindingMode WaitForFirstConsumer — required for multi-
-//     AZ clusters so the volume is created in the same AZ as the
-//     pod's node, not the controller's AZ.
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/awsebs.\n")
-	b.WriteString("# IRSA: operator pre-creates the IAM role and sets\n")
-	b.WriteString("# controller.serviceAccount.annotations[eks.amazonaws.com/role-arn]\n")
-	b.WriteString("# either via Helm CLI override or out-of-band kubectl annotate.\n")
-	b.WriteString("controller:\n")
-	b.WriteString("  serviceAccount:\n")
-	b.WriteString("    create: true\n")
-	b.WriteString("    annotations:\n")
-	b.WriteString("      eks.amazonaws.com/role-arn: \"\"\n")
-	b.WriteString("storageClasses:\n")
-	b.WriteString("  - name: ebs-gp3\n")
-	b.WriteString("    annotations:\n")
-	b.WriteString("      storageclass.kubernetes.io/is-default-class: \"true\"\n")
-	b.WriteString("    parameters:\n")
-	b.WriteString("      type: gp3\n")
-	b.WriteString("    volumeBindingMode: WaitForFirstConsumer\n")
-	b.WriteString("    reclaimPolicy: Delete\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/aws-ebs/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret returns ErrNotApplicable: AWS EBS CSI uses IRSA, not

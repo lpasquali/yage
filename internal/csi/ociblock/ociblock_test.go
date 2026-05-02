@@ -8,9 +8,16 @@ import (
 	"testing"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 )
 
+
+// fetcher returns a Fetcher pointed at the in-package testdata fixture.
+func fetcher(t *testing.T) *manifests.Fetcher {
+	t.Helper()
+	return &manifests.Fetcher{MountRoot: "testdata"}
+}
 func TestDriverConstants(t *testing.T) {
 	d := driver{}
 	tests := []struct {
@@ -59,21 +66,21 @@ func TestHelmChart(t *testing.T) {
 	}
 }
 
-func TestRenderValuesNonEmpty(t *testing.T) {
+func TestRender(t *testing.T) {
 	d := driver{}
 	cfg := &config.Config{}
-	out, err := d.RenderValues(cfg)
+	out, err := d.Render(fetcher(t), cfg)
 	if err != nil {
-		t.Fatalf("RenderValues() unexpected error: %v", err)
+		t.Fatalf("Render() unexpected error: %v", err)
 	}
 	if out == "" {
-		t.Error("RenderValues() must return non-empty string")
+		t.Error("Render() must return non-empty string")
 	}
 	if !strings.Contains(out, secretName) {
-		t.Errorf("RenderValues() must reference secret name %q, got:\n%s", secretName, out)
+		t.Errorf("Render() must reference secret name %q, got:\n%s", secretName, out)
 	}
 	if !strings.Contains(out, "oci-bv") {
-		t.Errorf("RenderValues() must reference storage class oci-bv, got:\n%s", out)
+		t.Errorf("Render() must reference storage class oci-bv, got:\n%s", out)
 	}
 }
 

@@ -1,0 +1,12 @@
+# Rendered by yage-manifests csi/openstack-cinder/values.yaml.tmpl.
+# Credentials: cinder-csi-cloud-config Secret in kube-system
+# (applied by EnsureSecret from OS_* env / cfg.Providers.OpenStack).
+secret:
+  enabled: true
+  hostMount: false
+  create: false
+  name: cinder-csi-cloud-config
+storageClass:
+  enabled: true
+  delete:
+    isDefault: true

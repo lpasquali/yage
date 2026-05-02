@@ -1,0 +1,28 @@
+# Rendered by yage-manifests csi/gcp-pd/values.yaml.tmpl.
+controller:
+  replicas: 2
+storageClasses:
+  - name: pd-balanced
+    annotations:
+      storageclass.kubernetes.io/is-default-class: "true"
+    parameters:
+      type: pd-balanced
+    volumeBindingMode: WaitForFirstConsumer
+    reclaimPolicy: Delete
+{{ if eq .Cfg.Providers.GCP.IdentityModel "workload-identity" -}}
+# Workload Identity: SA annotated for GCP IAM federation.
+serviceAccount:
+  controller:
+    create: true
+    annotations:
+      iam.gke.io/gcp-service-account: {{ printf "%q" (printf "yage-csi@%s.iam.gserviceaccount.com" .Cfg.Providers.GCP.Project) }}
+{{ else -}}
+# Service-Account: cloud-sa.json mounted from a Secret.
+controller:
+  cloudSAVolume:
+    secret:
+      secretName: gce-conf
+{{ end -}}
+{{ if .Cfg.Providers.GCP.Project -}}
+project: {{ .Cfg.Providers.GCP.Project }}
+{{ end -}}

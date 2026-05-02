@@ -25,7 +25,6 @@ package linodebs
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -34,6 +33,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/plan"
@@ -66,25 +67,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a minimal Helm values document. The chart expects
-// a pre-existing Secret named "linode" in kube-system with a "token"
-// key (ensured by EnsureSecret before Helm install).
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/linodebs.\n")
-	b.WriteString("# Requires kube-system/linode Secret with key 'token' (see EnsureSecret).\n")
-	b.WriteString("secret:\n")
-	b.WriteString("  name: " + secretName + "\n")
-	b.WriteString("  namespace: " + secretNamespace + "\n")
-	b.WriteString("storageClasses:\n")
-	b.WriteString("  - name: linode-block-storage\n")
-	b.WriteString("    annotations:\n")
-	b.WriteString("      storageclass.kubernetes.io/is-default-class: \"true\"\n")
-	b.WriteString("    parameters:\n")
-	b.WriteString("      type: namedtype\n")
-	b.WriteString("    volumeBindingMode: WaitForFirstConsumer\n")
-	b.WriteString("    reclaimPolicy: Delete\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/linode-block-storage/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret applies the kube-system/linode Secret to the workload

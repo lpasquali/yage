@@ -18,7 +18,6 @@ package ibmvpcblock
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -27,6 +26,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/plan"
@@ -57,29 +58,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a minimal Helm values document. The IBM VPC Block
-// CSI driver requires cluster-level configuration (cluster ID, resource
-// group) that operators typically set via the chart's own ConfigMap or
-// via Helm value overrides at install time.
-//
-// Operators must set the following in their Helm values override:
-//   - clusterInfo.clusterID: the IKS/VPC cluster ID
-//   - clusterInfo.resourceGroupID: the IBM Cloud resource group ID
-//   - image.ibmVpcBlockDriver: the driver image if using a private registry
-//
-// The IBM API key is supplied via the Secret created by EnsureSecret,
-// not through Helm values.
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/ibmvpcblock.\n")
-	b.WriteString("# Operator MUST set the following via --csi-values-file or Helm override:\n")
-	b.WriteString("#   clusterInfo.clusterID: <your VPC cluster ID>\n")
-	b.WriteString("#   clusterInfo.resourceGroupID: <your IBM Cloud resource group ID>\n")
-	b.WriteString("# To use a private registry, also set:\n")
-	b.WriteString("#   image.ibmVpcBlockDriver: <registry/ibm-vpc-block-csi-driver:tag>\n")
-	b.WriteString("# The IBM Cloud API key is supplied via the kube-system/")
-	b.WriteString(secretName + " Secret.\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/ibm-vpc-block/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret creates or updates the kube-system/ibm-vpc-block-csi-storageclasses

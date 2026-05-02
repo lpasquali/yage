@@ -40,6 +40,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/plan"
@@ -67,46 +69,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits Helm values that branch on the configured
-// IdentityModel. Workload-identity leans on the annotated SA;
-// service-principal references the kube-system/azure-cloud-config
-// Secret EnsureSecret apply.
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/azuredisk.\n")
-	b.WriteString("controller:\n")
-	b.WriteString("  replicas: 2\n")
-	b.WriteString("linux:\n")
-	b.WriteString("  enabled: true\n")
-	b.WriteString("storageClasses:\n")
-	b.WriteString("  - name: azuredisk-standard-ssd\n")
-	b.WriteString("    annotations:\n")
-	b.WriteString("      storageclass.kubernetes.io/is-default-class: \"true\"\n")
-	b.WriteString("    parameters:\n")
-	b.WriteString("      skuName: StandardSSD_LRS\n")
-	b.WriteString("    volumeBindingMode: WaitForFirstConsumer\n")
-	b.WriteString("    reclaimPolicy: Delete\n")
-
-	if usesWorkloadIdentity(cfg) {
-		b.WriteString("# Workload Identity: SA annotated for AAD federation.\n")
-		b.WriteString("serviceAccount:\n")
-		b.WriteString("  controller:\n")
-		b.WriteString("    create: true\n")
-		b.WriteString("    annotations:\n")
-		b.WriteString(fmt.Sprintf("      azure.workload.identity/client-id: %q\n",
-			cfg.Providers.Azure.ClientID))
-		b.WriteString("    labels:\n")
-		b.WriteString("      azure.workload.identity/use: \"true\"\n")
-	} else {
-		// Service-principal path — chart reads the cloud config
-		// from a kube-system Secret. EnsureSecret() places it.
-		b.WriteString("# Service-Principal: cloud config Secret in kube-system.\n")
-		b.WriteString("cloud: AzurePublicCloud\n")
-		b.WriteString("controller:\n")
-		b.WriteString("  cloudConfigSecretName: " + secretName + "\n")
-		b.WriteString("  cloudConfigSecretNamespace: " + secretNamespace + "\n")
-	}
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/azure-disk/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret writes the kube-system/azure-cloud-config Secret on

@@ -21,6 +21,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/platform/shell"
@@ -49,23 +51,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a thin Helm values document. The bulk of the
-// driver's runtime config (Proxmox URL / token / region / cluster
-// alias) flows in via the Secret applied by EnsureSecret below, not
-// via Helm values — that's how the upstream chart is wired and why
-// yage doesn't need to enumerate fields here.
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/proxmoxcsi.\n")
-	b.WriteString("# Auth: Kubernetes Secret applied by EnsureSecret\n")
-	b.WriteString("storageClass:\n")
-	b.WriteString("  - name: ")
-	b.WriteString(cfg.Providers.Proxmox.CSIStorageClassName)
-	b.WriteString("\n")
-	b.WriteString("    storage: data\n")
-	b.WriteString("    reclaimPolicy: Delete\n")
-	b.WriteString("    fstype: xfs\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/proxmox-csi/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret pushes the Proxmox CSI config Secret to the workload

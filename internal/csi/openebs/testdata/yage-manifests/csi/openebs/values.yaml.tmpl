@@ -1,0 +1,10 @@
+# Rendered by yage-manifests csi/openebs/values.yaml.tmpl.
+# Hostpath engine only. To enable LVM or ZFS engines, override:
+#   engines.local.lvm.enabled: true  (requires LVM kernel module + VGs on nodes)
+#   engines.local.zfs.enabled: true  (requires ZFS kernel module + zpools on nodes)
+engines:
+  local:
+    lvm:
+      enabled: false
+    zfs:
+      enabled: false

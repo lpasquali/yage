@@ -18,7 +18,6 @@ package hcloud
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -27,6 +26,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
 	"github.com/lpasquali/yage/internal/ui/plan"
@@ -57,24 +58,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a minimal Helm values document. The API token is
-// read by the controller from the kube-system/hcloud-csi Secret applied
-// by EnsureSecret — this values block points the chart at that Secret
-// rather than inlining the token value.
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/hcloud.\n")
-	b.WriteString("# Auth: Kubernetes Secret applied by EnsureSecret\n")
-	b.WriteString("# (kube-system/hcloud-csi, key \"token\").\n")
-	b.WriteString("secret:\n")
-	b.WriteString("  name: " + secretName + "\n")
-	b.WriteString("storageClasses:\n")
-	b.WriteString("  - name: hcloud-volumes\n")
-	b.WriteString("    annotations:\n")
-	b.WriteString("      storageclass.kubernetes.io/is-default-class: \"true\"\n")
-	b.WriteString("    reclaimPolicy: Delete\n")
-	b.WriteString("    volumeBindingMode: WaitForFirstConsumer\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/hcloud-csi/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret creates (or updates) the kube-system/hcloud-csi Secret

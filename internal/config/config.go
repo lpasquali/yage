@@ -1402,7 +1402,7 @@ func Load() *Config {
 	c.Providers.Azure.VNetName = getenv("AZURE_VNET_NAME", "")
 	c.Providers.Azure.SubnetName = getenv("AZURE_SUBNET_NAME", "")
 	c.Providers.Azure.ClientID = getenv("AZURE_CLIENT_ID", "")
-	c.Providers.Azure.IdentityModel = getenv("AZURE_IDENTITY_MODEL", "service-principal")
+	c.Providers.Azure.IdentityModel = strings.ToLower(getenv("AZURE_IDENTITY_MODEL", "service-principal"))
 	c.Providers.GCP.ControlPlaneMachineType = getenv("GCP_CONTROL_PLANE_MACHINE_TYPE", "n2-standard-2")
 	c.Providers.GCP.NodeMachineType = getenv("GCP_NODE_MACHINE_TYPE", "n2-standard-2")
 	c.Providers.GCP.Region = getenv("GCP_REGION", "us-central1")
@@ -1415,7 +1415,7 @@ func Load() *Config {
 	// GOOGLE_APPLICATION_CREDENTIALS path).
 	c.Providers.GCP.Network = getenv("GCP_NETWORK_NAME", "")
 	c.Providers.GCP.ImageFamily = getenv("GCP_IMAGE_FAMILY", "")
-	c.Providers.GCP.IdentityModel = getenv("GCP_IDENTITY_MODEL", "service-account")
+	c.Providers.GCP.IdentityModel = strings.ToLower(getenv("GCP_IDENTITY_MODEL", "service-account"))
 	// OpenStack — canonical spelling is OPENSTACK_*. Empty defaults
 	// across the board: the CAPO manifest needs them set explicitly anyway.
 	c.Providers.OpenStack.Cloud = getenv("OPENSTACK_CLOUD", "")

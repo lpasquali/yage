@@ -24,6 +24,7 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/ui/plan"
 )
 
@@ -102,7 +103,9 @@ func (f fakeCSIDriver) Defaults() []string                                     {
 func (f fakeCSIDriver) HelmChart(_ *config.Config) (string, string, string, error) {
 	return "", "", "", csi.ErrNotApplicable
 }
-func (f fakeCSIDriver) RenderValues(_ *config.Config) (string, error)   { return "", nil }
+func (f fakeCSIDriver) Render(_ *manifests.Fetcher, _ *config.Config) (string, error) {
+	return "", nil
+}
 func (f fakeCSIDriver) EnsureSecret(_ *config.Config, _ string) error   { return csi.ErrNotApplicable }
 func (f fakeCSIDriver) DefaultStorageClass() string                     { return "" }
 func (f fakeCSIDriver) DescribeInstall(_ plan.Writer, _ *config.Config) {}

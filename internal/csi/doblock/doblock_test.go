@@ -4,11 +4,19 @@
 package doblock
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 )
 
+
+// fetcher returns a Fetcher pointed at the in-package testdata fixture.
+func fetcher(t *testing.T) *manifests.Fetcher {
+	t.Helper()
+	return &manifests.Fetcher{MountRoot: "testdata"}
+}
 func TestDriverConstants(t *testing.T) {
 	d := driver{}
 	if got, want := d.Name(), "do-block-storage"; got != want {
@@ -43,15 +51,18 @@ func TestHelmChart(t *testing.T) {
 	}
 }
 
-func TestRenderValues(t *testing.T) {
+func TestRender(t *testing.T) {
 	d := driver{}
 	cfg := &config.Config{}
-	out, err := d.RenderValues(cfg)
+	out, err := d.Render(fetcher(t), cfg)
 	if err != nil {
-		t.Fatalf("RenderValues() unexpected err: %v", err)
+		t.Fatalf("Render() unexpected err: %v", err)
 	}
 	if out == "" {
-		t.Error("RenderValues() returned empty string")
+		t.Error("Render() returned empty string")
+	}
+	if !strings.Contains(out, "do-block-storage") {
+		t.Errorf("Render() missing do-block-storage: %s", out)
 	}
 }
 

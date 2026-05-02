@@ -1,0 +1,7 @@
+# Rendered by yage-manifests csi/proxmox-csi/values.yaml.tmpl.
+# Auth: Kubernetes Secret applied by EnsureSecret
+storageClass:
+  - name: {{ .Cfg.Providers.Proxmox.CSIStorageClassName }}
+    storage: data
+    reclaimPolicy: Delete
+    fstype: xfs

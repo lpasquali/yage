@@ -9,8 +9,15 @@ import (
 	"testing"
 
 	"github.com/lpasquali/yage/internal/csi"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 )
 
+
+// fetcher returns a Fetcher pointed at the in-package testdata fixture.
+func fetcher(t *testing.T) *manifests.Fetcher {
+	t.Helper()
+	return &manifests.Fetcher{MountRoot: "testdata"}
+}
 func TestDriverConstants(t *testing.T) {
 	d := driver{}
 	cases := []struct {
@@ -94,50 +101,17 @@ func TestHelmChart(t *testing.T) {
 	}
 }
 
-func TestRenderValues(t *testing.T) {
+func TestRender(t *testing.T) {
 	d := driver{}
-	cases := []struct {
-		name    string
-		checkFn func(out string, err error)
-	}{
-		{
-			name: "no error",
-			checkFn: func(out string, err error) {
-				if err != nil {
-					t.Fatalf("RenderValues() unexpected err: %v", err)
-				}
-			},
-		},
-		{
-			name: "contains defaultReplicaCount 3",
-			checkFn: func(out string, err error) {
-				if !strings.Contains(out, "defaultReplicaCount: 3") {
-					t.Errorf("RenderValues() missing defaultReplicaCount: 3\n%s", out)
-				}
-			},
-		},
-		{
-			name: "contains no required overrides comment",
-			checkFn: func(out string, err error) {
-				if !strings.Contains(out, "no required overrides") {
-					t.Errorf("RenderValues() missing explanatory comment about no required overrides\n%s", out)
-				}
-			},
-		},
-		{
-			name: "non-empty output",
-			checkFn: func(out string, err error) {
-				if out == "" {
-					t.Errorf("RenderValues() returned empty string")
-				}
-			},
-		},
+	out, err := d.Render(fetcher(t), nil)
+	if err != nil {
+		t.Fatalf("Render() unexpected err: %v", err)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			out, err := d.RenderValues(nil)
-			c.checkFn(out, err)
-		})
+	if !strings.Contains(out, "defaultReplicaCount: 3") {
+		t.Errorf("Render() missing defaultReplicaCount: 3\n%s", out)
+	}
+	if !strings.Contains(out, "no required overrides") {
+		t.Errorf("Render() missing comment about no required overrides\n%s", out)
 	}
 }
 

@@ -1,0 +1,13 @@
+# Rendered by yage-manifests csi/do-block-storage/values.yaml.tmpl.
+# Auth: DigitalOcean access-token read from Secret kube-system/digitalocean key access-token.
+# EnsureSecret must run before `helm install` so the Secret is present.
+controller:
+  replicas: 1
+storageClasses:
+  - name: do-block-storage
+    annotations:
+      storageclass.kubernetes.io/is-default-class: "true"
+    parameters:
+      type: pd-ssd
+    volumeBindingMode: WaitForFirstConsumer
+    reclaimPolicy: Delete

@@ -1,0 +1,13 @@
+# Rendered by yage-manifests csi/oci-block-storage/values.yaml.tmpl.
+# OCI credentials are read from the oci-cloud-controller-manager
+# Secret in kube-system (written by EnsureSecret).
+cloudConfig:
+  secretName: oci-cloud-controller-manager
+  secretNamespace: kube-system
+storageClasses:
+  - name: oci-bv
+    annotations:
+      storageclass.kubernetes.io/is-default-class: "true"
+    provisioner: blockvolume.csi.oraclecloud.com
+    volumeBindingMode: WaitForFirstConsumer
+    reclaimPolicy: Delete

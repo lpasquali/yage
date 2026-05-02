@@ -21,9 +21,10 @@
 package openebs
 
 import (
-	"strings"
 
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi"
 	"github.com/lpasquali/yage/internal/ui/plan"
 )
@@ -52,33 +53,8 @@ func (driver) HelmChart(cfg *config.Config) (repo, chart, version string, err er
 		nil
 }
 
-// RenderValues emits a minimal Helm values document that enables only
-// the hostpath local engine. The LVM and ZFS engines are explicitly
-// disabled to avoid requiring kernel modules on cluster nodes.
-//
-// Operators who need LVM or ZFS can override these values by passing
-// additional Helm values:
-//
-//	engines.local.lvm.enabled: true   # requires LVM kernel module + VGs
-//	engines.local.zfs.enabled: true   # requires ZFS kernel module + zpools
-//
-// The default StorageClass "openebs-hostpath" is set as the cluster
-// default class with WaitForFirstConsumer binding mode so PVCs without
-// an explicit storageClassName land on the local node alongside their
-// consumer pod.
-func (driver) RenderValues(cfg *config.Config) (string, error) {
-	var b strings.Builder
-	b.WriteString("# Rendered by yage internal/csi/openebs.\n")
-	b.WriteString("# Hostpath engine only. To enable LVM or ZFS engines, override:\n")
-	b.WriteString("#   engines.local.lvm.enabled: true  (requires LVM kernel module + VGs on nodes)\n")
-	b.WriteString("#   engines.local.zfs.enabled: true  (requires ZFS kernel module + zpools on nodes)\n")
-	b.WriteString("engines:\n")
-	b.WriteString("  local:\n")
-	b.WriteString("    lvm:\n")
-	b.WriteString("      enabled: false\n")
-	b.WriteString("    zfs:\n")
-	b.WriteString("      enabled: false\n")
-	return b.String(), nil
+func (driver) Render(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("csi/openebs/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // EnsureSecret returns ErrNotApplicable: OpenEBS hostpath uses local

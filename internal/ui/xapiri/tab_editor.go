@@ -379,3 +379,41 @@ func (m dashModel) openEditorCmd() tea.Cmd {
 	})
 }
 
+
+// resolveEditor returns the editor binary to use for in-place editing.
+// Priority: $VISUAL → $EDITOR → first hit in editorFallbacks (OS-specific).
+// Env-var values and fallback candidates are probed with exec.LookPath
+// where possible. If none are found, it returns a conventional fallback
+// name for exec to report on, so it never returns an empty string.
+func resolveEditor() string {
+	for _, env := range []string{"VISUAL", "EDITOR"} {
+		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+			if p, err := exec.LookPath(v); err == nil {
+				return p
+			}
+			// Env var set but binary not in PATH — fall through to probe list.
+		}
+	}
+	for _, candidate := range editorFallbacks {
+		if p, err := exec.LookPath(candidate); err == nil {
+			return p
+		}
+	}
+	// Last resort: return the final fallback name even if not found —
+	// exec will produce a clear error message to the user.
+	if len(editorFallbacks) > 0 {
+		return editorFallbacks[len(editorFallbacks)-1]
+	}
+	return "vi"
+}
+
+// renderEditorPlaceholder shows while waiting for the editor to launch.
+func (m dashModel) renderEditorPlaceholder(w, h int) string {
+	editor := resolveEditor()
+	msg := stMuted.Render(fmt.Sprintf("  Opening %s…  (press any key after it exits)", editor))
+	lines := []string{"", msg}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
+}

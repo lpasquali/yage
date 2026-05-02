@@ -8,31 +8,21 @@
 package helmvalues
 
 import (
+	"github.com/lpasquali/yage/internal/capi/templates"
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
+	"github.com/lpasquali/yage/internal/platform/sysinfo"
 )
 
-// MetricsServerValues returns the metrics-server Helm values block.
-// Returns empty string when insecure-TLS is false (the Helm chart
-// keeps its defaults).
-func MetricsServerValues(cfg *config.Config) string {
-	if cfg.WorkloadMetricsServerInsecureTLS == "" ||
-		!isTrue(cfg.WorkloadMetricsServerInsecureTLS) {
-		return ""
-	}
-	return `defaultArgs:
-  - --cert-dir=/tmp
-  - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
-  - --kubelet-use-node-status-port
-  - --metric-resolution=15s
-args:
-  - --kubelet-insecure-tls
-`
+// RegisterIsTrue registers the isTrue template function on f.
+// Must be called before any Render invocation that uses a template
+// with isTrue (ADR 0012 Errata E1).
+func RegisterIsTrue(f *manifests.Fetcher) {
+	f.RegisterFunc("isTrue", sysinfo.IsTrue)
 }
 
-func isTrue(s string) bool {
-	switch s {
-	case "true", "1", "yes", "y", "on", "TRUE", "Yes", "Y", "On":
-		return true
-	}
-	return false
+// MetricsServerValues returns the metrics-server Helm values block
+// rendered from the yage-manifests template.
+func MetricsServerValues(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("addons/metrics-server/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }

@@ -21,6 +21,7 @@ import (
 
 	"github.com/lpasquali/yage/internal/capi/argocd"
 	"github.com/lpasquali/yage/internal/capi/caaph"
+	"github.com/lpasquali/yage/internal/capi/helmvalues"
 	"github.com/lpasquali/yage/internal/cluster/capacity"
 	"github.com/lpasquali/yage/internal/capi/manifest"
 	"github.com/lpasquali/yage/internal/config"
@@ -958,6 +959,7 @@ func Run(ctx context.Context, cfg *config.Config) int {
 	)
 	opentofux.RecreateIdentitiesWorkloadCSISecrets(cfg)
 	mf := &manifests.Fetcher{}
+	helmvalues.RegisterIsTrue(mf)
 	caaph.ApplyWorkloadCiliumHelmChartProxy(cfg, mf)
 	WaitForWorkloadClusterReady(cfg)
 	caaph.ApplyWorkloadCiliumLBBToWorkload(cfg, func() (string, error) {

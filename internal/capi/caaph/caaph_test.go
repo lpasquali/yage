@@ -8,14 +8,17 @@ import (
 	"testing"
 
 	"github.com/lpasquali/yage/internal/capi/caaph"
+	"github.com/lpasquali/yage/internal/capi/helmvalues"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/manifests"
 )
 
 // fetcher returns a Fetcher pointed at the in-package testdata fixture,
-// which mirrors the yage-manifests directory layout.
+// which mirrors the yage-manifests directory layout, with isTrue registered.
 func fetcher() *manifests.Fetcher {
-	return &manifests.Fetcher{MountRoot: "testdata"}
+	f := &manifests.Fetcher{MountRoot: "testdata"}
+	helmvalues.RegisterIsTrue(f)
+	return f
 }
 
 // defaultCfg builds a Config with the fields used by caaph renderers.

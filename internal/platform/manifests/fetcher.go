@@ -43,6 +43,9 @@ type Fetcher struct {
 	// MountRoot is the path at which the yage-repos PVC is mounted in
 	// the current pod. Empty means defaultMountRoot ("/repos").
 	MountRoot string
+
+	// funcs holds functions registered via RegisterFunc.
+	funcs template.FuncMap
 }
 
 // NewFetcher constructs a Fetcher with MountRoot left at its default
@@ -50,6 +53,17 @@ type Fetcher struct {
 // mount point may set MountRoot directly on the returned value.
 func NewFetcher() *Fetcher {
 	return &Fetcher{}
+}
+
+// RegisterFunc registers fn under name in the Fetcher's internal FuncMap.
+// The function is applied on every subsequent Render call.
+// RegisterFunc is the only permitted extension point for adding template
+// functions (ADR 0012 §4.1). Future additions require an ADR amendment.
+func (f *Fetcher) RegisterFunc(name string, fn any) {
+	if f.funcs == nil {
+		f.funcs = make(template.FuncMap)
+	}
+	f.funcs[name] = fn
 }
 
 // Render reads the .yaml.tmpl at templatePath (relative to the
@@ -67,9 +81,11 @@ func (f *Fetcher) Render(templatePath string, data any) (string, error) {
 		return "", fmt.Errorf("manifests: read template %s: %w", fullPath, err)
 	}
 
-	tmpl, err := template.New(filepath.Base(templatePath)).
-		Option("missingkey=error").
-		Parse(string(raw))
+	t := template.New(filepath.Base(templatePath)).Option("missingkey=error")
+	if len(f.funcs) > 0 {
+		t = t.Funcs(f.funcs)
+	}
+	tmpl, err := t.Parse(string(raw))
 	if err != nil {
 		return "", fmt.Errorf("manifests: parse template %s: %w", fullPath, err)
 	}

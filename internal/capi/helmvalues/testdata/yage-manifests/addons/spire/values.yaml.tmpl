@@ -1,0 +1,67 @@
+# yage-manifests/addons/spire/values.yaml.tmpl
+global:
+  spire:
+    clusterName: {{ .Cfg.WorkloadClusterName }}
+    trustDomain: k8s.{{ .Cfg.WorkloadClusterName }}.local
+{{- if not (isTrue .Cfg.SPIREHelmEnableGlobalHooks) }}
+  installAndUpgradeHooks:
+    enabled: false
+  deleteHooks:
+    enabled: false
+{{- end }}
+{{- if isTrue .Cfg.SPIRETolerateControlPlane }}
+spire-server:
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: Exists
+      effect: NoSchedule
+    - key: "node-role.kubernetes.io/master"
+      operator: Exists
+      effect: NoSchedule
+spire-controller-manager:
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: Exists
+      effect: NoSchedule
+    - key: "node-role.kubernetes.io/master"
+      operator: Exists
+      effect: NoSchedule
+spire-agent:
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: Exists
+      effect: NoSchedule
+    - key: "node-role.kubernetes.io/master"
+      operator: Exists
+      effect: NoSchedule
+spiffe-csi-driver:
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: Exists
+      effect: NoSchedule
+    - key: "node-role.kubernetes.io/master"
+      operator: Exists
+      effect: NoSchedule
+{{- end }}
+spiffe-oidc-discovery-provider:
+{{- if isTrue .Cfg.SPIRETolerateControlPlane }}
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: Exists
+      effect: NoSchedule
+    - key: "node-role.kubernetes.io/master"
+      operator: Exists
+      effect: NoSchedule
+{{- end }}
+  bundleSource: {{ .Cfg.SPIREOIDCBundleSource }}
+  config:
+{{- if .Cfg.KeycloakEnabled }}
+    setKeyUse: true
+{{- else }}
+    setKeyUse: false
+{{- end }}
+{{- if and .Cfg.KeycloakEnabled (isTrue .Cfg.SPIREOIDCInsecureHTTP) }}
+  tls:
+    spire:
+      enabled: false
+{{- end }}

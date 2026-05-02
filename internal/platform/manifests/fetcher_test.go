@@ -102,3 +102,32 @@ func TestNewFetcher_DefaultsMountRootEmpty(t *testing.T) {
 		t.Errorf("NewFetcher MountRoot = %q; want empty string (resolved at render time)", f.MountRoot)
 	}
 }
+
+func TestFetcher_RegisterFunc_AppliedOnRender(t *testing.T) {
+	f := &Fetcher{MountRoot: "testdata"}
+	f.RegisterFunc("greet", func(name string) string { return "hello-" + name })
+
+	got, err := f.Render("addons/sample/funcmap.yaml.tmpl", sampleData{Name: "world"})
+	if err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+
+	want := "# yage-manifests/addons/sample/funcmap.yaml.tmpl\nenabled: hello-world\n"
+	if got != want {
+		t.Errorf("Render output mismatch:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestFetcher_RegisterFunc_UnknownFuncFailsParse(t *testing.T) {
+	// A template referencing an unregistered function must fail at parse time.
+	f := &Fetcher{MountRoot: "testdata"}
+	// Do NOT register "greet" — parse must fail.
+
+	_, err := f.Render("addons/sample/funcmap.yaml.tmpl", sampleData{Name: "world"})
+	if err == nil {
+		t.Fatal("expected parse error for unregistered function, got nil")
+	}
+	if !strings.Contains(err.Error(), "parse template") {
+		t.Errorf("error should mention parse template stage; got: %v", err)
+	}
+}

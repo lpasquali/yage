@@ -1,0 +1,31 @@
+# yage-manifests/addons/keycloak/values.yaml.tmpl
+{{- if .Cfg.KeycloakEnabled }}
+args:
+  - start
+extraEnv: |
+  - name: KC_HOSTNAME_STRICT
+    value: "{{ .Cfg.KeycloakKcHostnameStrict }}"
+  - name: KC_HOSTNAME
+    value: "{{ .Cfg.KeycloakKcHostname }}"
+{{- if .Cfg.KeycloakKcDB }}
+  - name: KC_DB
+    value: "{{ .Cfg.KeycloakKcDB }}"
+{{- end }}
+{{- if .Cfg.SPIREEnabled }}
+{{- $oidc := printf "%s-spire-spiffe-oidc-discovery-provider.%s.svc.cluster.local" .Cfg.WorkloadClusterName .Cfg.SPIRENamespace }}
+{{- if isTrue .Cfg.SPIREOIDCInsecureHTTP }}
+  - name: SPIFFE_OIDC_WELL_KNOWN_URL
+    value: "http://{{ $oidc }}/.well-known/openid-configuration"
+  - name: SPIFFE_OIDC_ISSUER_HOST
+    value: "{{ $oidc }}"
+  - name: KEYCLOAK_SPIRE_IDP_HELP
+    value: "Add an Identity Provider (OpenID v1) in Keycloak using SPIFFE_OIDC_WELL_KNOWN_URL; map SPIFFE SVIDs to users as needed."
+{{- else }}
+  - name: SPIFFE_OIDC_WELL_KNOWN_URL
+    value: "https://{{ $oidc }}/.well-known/openid-configuration"
+  - name: SPIFFE_OIDC_ISSUER_HOST
+    value: "{{ $oidc }}"
+{{- end }}
+{{- end }}
+
+{{- end }}

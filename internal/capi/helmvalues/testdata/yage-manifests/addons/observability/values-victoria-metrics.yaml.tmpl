@@ -1,0 +1,19 @@
+# yage-manifests/addons/observability/values-victoria-metrics.yaml.tmpl
+server:
+  fullnameOverride: vmsingle
+  scrape:
+    enabled: true
+    extraScrapeConfigs:
+      - job_name: kubernetes-endpoints-metrics-ports
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - action: keep
+            source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: metrics|http-metrics
+          - action: replace
+            source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - action: replace
+            source_labels: [__meta_kubernetes_service_name]
+            target_label: service

@@ -467,15 +467,7 @@ func ApplyWorkloadArgoCDOperatorAndCR(cfg *config.Config, f *manifests.Fetcher, 
 // If WorkloadNamespace is empty, the caller (ApplyWorkloadArgoCDOperatorAndCR)
 // has already normalized it before calling; this function does not mutate cfg.
 func buildArgoCDCR(cfg *config.Config, f *manifests.Fetcher) (string, error) {
-	return f.Render("addons/argocd/argocd-cr.yaml.tmpl", templates.HelmValuesData{
-		Cfg: cfg,
-		Bools: map[string]bool{
-			"promEnabled":    sysinfo.IsTrue(cfg.ArgoCD.PrometheusEnabled),
-			"monEnabled":     sysinfo.IsTrue(cfg.ArgoCD.MonitoringEnabled),
-			"disableIngress": sysinfo.IsTrue(cfg.ArgoCD.DisableOperatorManagedIngress),
-			"serverInsecure": sysinfo.IsTrue(cfg.ArgoCD.ServerInsecure),
-		},
-	})
+	return f.Render("addons/argocd/argocd-cr.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // waitDeploymentAvailable polls until the named Deployment has at least

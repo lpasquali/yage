@@ -1,0 +1,44 @@
+# yage-manifests/addons/observability/values-grafana.yaml.tmpl
+service:
+  type: ClusterIP
+{{- if .Cfg.VictoriaMetricsEnabled }}
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: VictoriaMetrics
+        type: prometheus
+        url: http://vmsingle.{{ .Cfg.VictoriaMetricsNamespace }}.svc:8428
+        access: proxy
+        isDefault: true
+        jsonData:
+          httpMethod: POST
+          manageAlerts: true
+          prometheusType: Prometheus
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: ""
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+dashboards:
+  default:
+    k8s-cluster:
+      gnetId: 7249
+      revision: 1
+      datasource: VictoriaMetrics
+    k8s-api-server:
+      gnetId: 12006
+      revision: 1
+      datasource: VictoriaMetrics
+    victoriametrics-single:
+      gnetId: 10229
+      revision: 1
+      datasource: VictoriaMetrics
+{{- end }}

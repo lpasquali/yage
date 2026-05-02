@@ -7,26 +7,26 @@ metadata:
 spec:
   version: {{ .Cfg.ArgoCD.Version }}
   prometheus:
-    enabled: {{ index .Bools "promEnabled" }}
+    enabled: {{ isTrue .Cfg.ArgoCD.PrometheusEnabled }}
   monitoring:
-    enabled: {{ index .Bools "monEnabled" }}
+    enabled: {{ isTrue .Cfg.ArgoCD.MonitoringEnabled }}
   notifications:
     enabled: true
   server:
-{{- if and (index .Bools "disableIngress") (index .Bools "serverInsecure") }}
+{{- if and (isTrue .Cfg.ArgoCD.DisableOperatorManagedIngress) (isTrue .Cfg.ArgoCD.ServerInsecure) }}
     insecure: true
     ingress:
       enabled: false
     grpc:
       ingress:
         enabled: false
-{{- else if index .Bools "disableIngress" }}
+{{- else if isTrue .Cfg.ArgoCD.DisableOperatorManagedIngress }}
     ingress:
       enabled: false
     grpc:
       ingress:
         enabled: false
-{{- else if index .Bools "serverInsecure" }}
+{{- else if isTrue .Cfg.ArgoCD.ServerInsecure }}
     insecure: true
     grpc:
       ingress:

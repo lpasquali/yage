@@ -5,108 +5,38 @@ package helmvalues
 
 import (
 	"fmt"
-	"strings"
 
+	"github.com/lpasquali/yage/internal/capi/templates"
 	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
+	"github.com/lpasquali/yage/internal/platform/sysinfo"
 )
 
-// VictoriaMetricsValues returns the VictoriaMetrics Helm values
-// block. Static body — no config knobs.
-func VictoriaMetricsValues() string {
-	return `server:
-  fullnameOverride: vmsingle
-  scrape:
-    enabled: true
-    extraScrapeConfigs:
-      - job_name: kubernetes-endpoints-metrics-ports
-        kubernetes_sd_configs:
-          - role: endpoints
-        relabel_configs:
-          - action: keep
-            source_labels: [__meta_kubernetes_endpoint_port_name]
-            regex: metrics|http-metrics
-          - action: replace
-            source_labels: [__meta_kubernetes_namespace]
-            target_label: namespace
-          - action: replace
-            source_labels: [__meta_kubernetes_service_name]
-            target_label: service
-`
+// VictoriaMetricsValues returns the VictoriaMetrics Helm values block
+// rendered from the yage-manifests template.
+func VictoriaMetricsValues(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("addons/observability/values-victoria-metrics.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
-// OpenTelemetryValues returns the OpenTelemetry collector Helm
-// values block.
-func OpenTelemetryValues(cfg *config.Config) string {
-	mode := cfg.OTELCollectorMode
-	if mode == "" {
-		mode = "deployment"
-	}
-	img := cfg.OTELImageRepository
-	if img == "" {
-		img = "otel/opentelemetry-collector-k8s"
-	}
-	return fmt.Sprintf("mode: %s\nimage:\n  repository: %s\n", mode, img)
+// OpenTelemetryValues returns the OpenTelemetry collector Helm values
+// block rendered from the yage-manifests template.
+func OpenTelemetryValues(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("addons/opentelemetry/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
-// GrafanaValues returns the Grafana Helm values block. Two branches:
-// VictoriaMetrics disabled → service only; enabled → add a
-// VictoriaMetrics datasource + three default dashboards.
-func GrafanaValues(cfg *config.Config) string {
-	if !cfg.VictoriaMetricsEnabled {
-		return "service:\n  type: ClusterIP\n"
-	}
-	return fmt.Sprintf(`service:
-  type: ClusterIP
-datasources:
-  datasources.yaml:
-    apiVersion: 1
-    datasources:
-      - name: VictoriaMetrics
-        type: prometheus
-        url: http://vmsingle.%s.svc:8428
-        access: proxy
-        isDefault: true
-        jsonData:
-          httpMethod: POST
-          manageAlerts: true
-          prometheusType: Prometheus
-dashboardProviders:
-  dashboardproviders.yaml:
-    apiVersion: 1
-    providers:
-      - name: default
-        orgId: 1
-        folder: ""
-        type: file
-        disableDeletion: false
-        editable: true
-        options:
-          path: /var/lib/grafana/dashboards/default
-dashboards:
-  default:
-    k8s-cluster:
-      gnetId: 7249
-      revision: 1
-      datasource: VictoriaMetrics
-    k8s-api-server:
-      gnetId: 12006
-      revision: 1
-      datasource: VictoriaMetrics
-    victoriametrics-single:
-      gnetId: 10229
-      revision: 1
-      datasource: VictoriaMetrics
-`,
-		cfg.VictoriaMetricsNamespace,
-	)
+// GrafanaValues returns the Grafana Helm values block rendered from the
+// yage-manifests template.
+func GrafanaValues(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("addons/observability/values-grafana.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
 // SPIRESubchartTolerations returns the tolerations block for
 // spire-server, spire-controller-manager, spire-agent, and
 // spiffe-csi-driver — or "" when SPIRE_TOLERATE_CONTROL_PLANE is
-// false.
+// false. Kept as a pure-Go helper for backward compatibility until
+// issue #142 retires this package.
 func SPIRESubchartTolerations(cfg *config.Config) string {
-	if !isTrue(cfg.SPIRETolerateControlPlane) {
+	if !sysinfo.IsTrue(cfg.SPIRETolerateControlPlane) {
 		return ""
 	}
 	block := func(name string) string {
@@ -124,92 +54,14 @@ func SPIRESubchartTolerations(cfg *config.Config) string {
 		block("spire-agent") + block("spiffe-csi-driver")
 }
 
-// SPIREValues returns the SPIRE Helm values block.
-func SPIREValues(cfg *config.Config) string {
-	var sb strings.Builder
-	sb.WriteString("global:\n")
-	sb.WriteString("  spire:\n")
-	fmt.Fprintf(&sb, "    clusterName: %s\n", cfg.WorkloadClusterName)
-	fmt.Fprintf(&sb, "    trustDomain: k8s.%s.local\n", cfg.WorkloadClusterName)
-	if !isTrue(cfg.SPIREHelmEnableGlobalHooks) {
-		sb.WriteString("  installAndUpgradeHooks:\n    enabled: false\n")
-		sb.WriteString("  deleteHooks:\n    enabled: false\n")
-	}
-	sb.WriteString(SPIRESubchartTolerations(cfg))
-	sb.WriteString("spiffe-oidc-discovery-provider:\n")
-	if isTrue(cfg.SPIRETolerateControlPlane) {
-		sb.WriteString(`  tolerations:
-    - key: "node-role.kubernetes.io/control-plane"
-      operator: Exists
-      effect: NoSchedule
-    - key: "node-role.kubernetes.io/master"
-      operator: Exists
-      effect: NoSchedule
-`)
-	}
-	if cfg.SPIREOIDCBundleSource == "ConfigMap" {
-		sb.WriteString("  bundleSource: ConfigMap\n")
-	} else {
-		sb.WriteString("  bundleSource: CSI\n")
-	}
-	sb.WriteString("  config:\n")
-	if cfg.KeycloakEnabled {
-		sb.WriteString("    setKeyUse: true\n")
-	} else {
-		sb.WriteString("    setKeyUse: false\n")
-	}
-	if cfg.KeycloakEnabled && isTrue(cfg.SPIREOIDCInsecureHTTP) {
-		sb.WriteString("  tls:\n    spire:\n      enabled: false\n")
-	}
-	return sb.String()
+// SPIREValues returns the SPIRE Helm values block rendered from the
+// yage-manifests template.
+func SPIREValues(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("addons/spire/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }
 
-// KeycloakValues returns the Keycloak Helm values block. Returns
-// "" when KEYCLOAK_ENABLED is false.
-func KeycloakValues(cfg *config.Config) string {
-	if !cfg.KeycloakEnabled {
-		return ""
-	}
-	kcHost := cfg.KeycloakKcHostname
-	if kcHost == "" {
-		kcHost = cfg.WorkloadClusterName + "-keycloak-keycloakx." +
-			cfg.KeycloakNamespace + ".svc.cluster.local"
-	}
-	strict := cfg.KeycloakKcHostnameStrict
-	if strict == "" {
-		strict = "false"
-	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, `args:
-  - start
-extraEnv: |
-  - name: KC_HOSTNAME_STRICT
-    value: "%s"
-  - name: KC_HOSTNAME
-    value: "%s"
-`, strict, kcHost)
-	if cfg.KeycloakKcDB != "" {
-		fmt.Fprintf(&sb, "  - name: KC_DB\n    value: \"%s\"\n", cfg.KeycloakKcDB)
-	}
-	if cfg.SPIREEnabled {
-		oidc := cfg.WorkloadClusterName + "-spire-spiffe-oidc-discovery-provider." +
-			cfg.SPIRENamespace + ".svc.cluster.local"
-		if isTrue(cfg.SPIREOIDCInsecureHTTP) {
-			fmt.Fprintf(&sb, `  - name: SPIFFE_OIDC_WELL_KNOWN_URL
-    value: "http://%s/.well-known/openid-configuration"
-  - name: SPIFFE_OIDC_ISSUER_HOST
-    value: "%s"
-  - name: KEYCLOAK_SPIRE_IDP_HELP
-    value: "Add an Identity Provider (OpenID v1) in Keycloak using SPIFFE_OIDC_WELL_KNOWN_URL; map SPIFFE SVIDs to users as needed."
-`, oidc, oidc)
-		} else {
-			fmt.Fprintf(&sb, `  - name: SPIFFE_OIDC_WELL_KNOWN_URL
-    value: "https://%s/.well-known/openid-configuration"
-  - name: SPIFFE_OIDC_ISSUER_HOST
-    value: "%s"
-`, oidc, oidc)
-		}
-	}
-	sb.WriteString("\n")
-	return sb.String()
+// KeycloakValues returns the Keycloak Helm values block rendered from
+// the yage-manifests template.
+func KeycloakValues(f *manifests.Fetcher, cfg *config.Config) (string, error) {
+	return f.Render("addons/keycloak/values.yaml.tmpl", templates.HelmValuesData{Cfg: cfg})
 }

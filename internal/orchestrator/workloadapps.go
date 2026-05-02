@@ -15,6 +15,7 @@ import (
 
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/capi/helmvalues"
+	"github.com/lpasquali/yage/internal/platform/manifests"
 	"github.com/lpasquali/yage/internal/csi/proxmoxcsi"
 	"github.com/lpasquali/yage/internal/cost"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
@@ -45,7 +46,7 @@ func cnpgSuppressedByManagedPG(cfg *config.Config) bool {
 // spire-crds+spire, victoriametrics, otel, grafana, backstage,
 // keycloak, keycloak-realm-operator) into a single multi-doc YAML
 // and applies it to the workload via its kubeconfig.
-func ApplyWorkloadArgoCDApplications(cfg *config.Config) {
+func ApplyWorkloadArgoCDApplications(cfg *config.Config, f *manifests.Fetcher) {
 	if !cfg.ArgoCD.Enabled || !cfg.ArgoCD.WorkloadEnabled {
 		return
 	}
@@ -63,7 +64,13 @@ func ApplyWorkloadArgoCDApplications(cfg *config.Config) {
 			cfg.WorkloadClusterName+"-metrics-server", "kube-system",
 			"https://github.com/kubernetes-sigs/metrics-server",
 			"charts/metrics-server", cfg.MetricsServerGitChartTag,
-			"-3", helmvalues.MetricsServerValues(cfg),
+			"-3", func() string {
+				v, err := helmvalues.MetricsServerValues(f, cfg)
+				if err != nil {
+					logx.Die("metrics-server values: %v", err)
+				}
+				return v
+			}(),
 			"metrics-server", "metrics-server",
 		))
 	}
@@ -160,25 +167,49 @@ storageClass:
 		sb.WriteString(wlargocd.Helm(cfg,
 			cfg.WorkloadClusterName+"-spire", cfg.SPIRENamespace,
 			cfg.SPIREChartRepoURL, cfg.SPIREChartName, cfg.SPIREChartVersion,
-			"5", helmvalues.SPIREValues(cfg), "spire"))
+			"5", func() string {
+				v, err := helmvalues.SPIREValues(f, cfg)
+				if err != nil {
+					logx.Die("spire values: %v", err)
+				}
+				return v
+			}(), "spire"))
 	}
 	if cfg.VictoriaMetricsEnabled {
 		sb.WriteString(wlargocd.Helm(cfg,
 			cfg.WorkloadClusterName+"-victoria-metrics-single", cfg.VictoriaMetricsNamespace,
 			cfg.VictoriaMetricsChartRepoURL, cfg.VictoriaMetricsChartName, cfg.VictoriaMetricsChartVersion,
-			"6", helmvalues.VictoriaMetricsValues(), "victoria-metrics"))
+			"6", func() string {
+				v, err := helmvalues.VictoriaMetricsValues(f, cfg)
+				if err != nil {
+					logx.Die("victoria-metrics values: %v", err)
+				}
+				return v
+			}(), "victoria-metrics"))
 	}
 	if cfg.OTELEnabled {
 		sb.WriteString(wlargocd.Helm(cfg,
 			cfg.WorkloadClusterName+"-opentelemetry-collector", cfg.OTELNamespace,
 			cfg.OTELChartRepoURL, cfg.OTELChartName, cfg.OTELChartVersion,
-			"6", helmvalues.OpenTelemetryValues(cfg), "opentelemetry"))
+			"6", func() string {
+				v, err := helmvalues.OpenTelemetryValues(f, cfg)
+				if err != nil {
+					logx.Die("opentelemetry values: %v", err)
+				}
+				return v
+			}(), "opentelemetry"))
 	}
 	if cfg.GrafanaEnabled {
 		sb.WriteString(wlargocd.Helm(cfg,
 			cfg.WorkloadClusterName+"-grafana", cfg.GrafanaNamespace,
 			cfg.GrafanaChartRepoURL, "grafana", cfg.GrafanaChartVersion,
-			"6", helmvalues.GrafanaValues(cfg), "grafana"))
+			"6", func() string {
+				v, err := helmvalues.GrafanaValues(f, cfg)
+				if err != nil {
+					logx.Die("grafana values: %v", err)
+				}
+				return v
+			}(), "grafana"))
 	}
 	if cfg.BackstageEnabled {
 		if cfg.BackstageChartRepoURL == "" {
@@ -194,7 +225,13 @@ storageClass:
 		sb.WriteString(wlargocd.Helm(cfg,
 			cfg.WorkloadClusterName+"-keycloak", cfg.KeycloakNamespace,
 			cfg.KeycloakChartRepoURL, cfg.KeycloakChartName, cfg.KeycloakChartVersion,
-			"8", helmvalues.KeycloakValues(cfg), "keycloak"))
+			"8", func() string {
+				v, err := helmvalues.KeycloakValues(f, cfg)
+				if err != nil {
+					logx.Die("keycloak values: %v", err)
+				}
+				return v
+			}(), "keycloak"))
 	}
 	if cfg.KeycloakOperatorEnabled && cfg.KeycloakEnabled {
 		if cfg.KeycloakOperatorGitURL == "" {

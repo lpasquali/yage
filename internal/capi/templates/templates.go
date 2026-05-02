@@ -23,14 +23,8 @@ import "github.com/lpasquali/yage/internal/config"
 
 // HelmValuesData is passed to addons/<addon>/values.yaml.tmpl,
 // csi/<driver>/values.yaml.tmpl, and addons/<addon>/argocd-cr.yaml.tmpl.
-//
-// Bools carries pre-computed boolean flags for templates that branch on
-// config fields stored as string (e.g. ArgoCD.PrometheusEnabled). Callers
-// populate only the keys their template references; missingkey=error catches
-// any key the template expects but the caller omits.
 type HelmValuesData struct {
-	Cfg  *config.Config
-	Bools map[string]bool
+	Cfg *config.Config
 }
 
 // ArgoApplicationData is passed to addons/<addon>/application.yaml.tmpl.

@@ -1,0 +1,13 @@
+# yage-manifests/postsync/_partials/job-image-override.kustomize.tmpl
+    kustomize:
+      namespace: {{ .Namespace }}
+      patches:
+        - target:
+            group: batch
+            version: v1
+            kind: Job
+            name: {{ .JobName }}
+          patch: |
+            - op: replace
+              path: /spec/template/spec/containers/0/image
+              value: '{{ .KubectlImage }}'

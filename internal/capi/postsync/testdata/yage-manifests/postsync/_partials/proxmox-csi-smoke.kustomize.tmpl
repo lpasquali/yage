@@ -1,0 +1,19 @@
+# yage-manifests/postsync/_partials/proxmox-csi-smoke.kustomize.tmpl
+    kustomize:
+      namespace: {{ .Namespace }}
+      patches:
+        - target:
+            group: batch
+            version: v1
+            kind: Job
+            name: {{ .JobName }}
+          patch: |
+            - op: replace
+              path: /spec/template/spec/containers/0/image
+              value: '{{ .KubectlImage }}'
+            - op: replace
+              path: /spec/template/spec/containers/0/env/0/value
+              value: "{{ .Namespace }}"
+            - op: replace
+              path: /spec/template/spec/containers/0/env/1/value
+              value: "{{ index .Extra "storageClass" }}"

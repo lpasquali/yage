@@ -111,8 +111,15 @@ storageClass:
 		if cfg.Providers.Proxmox.CSISmokeEnabled && cfg.ArgoCD.PostsyncHooksEnabled {
 			h1P = postsync.FullRelpath(cfg, "proxmox-csi-pvc")
 			h2P = postsync.FullRelpath(cfg, "proxmox-csi-rollout")
-			h1K = postsync.SmokeRenderKustomizeBlock(cfg)
-			h2K = postsync.KustomizeBlockForJob(cfg, "proxmox-csi-rollout-smoketest")
+			var kErr error
+			h1K, kErr = postsync.SmokeRenderKustomizeBlockTemplate(f, cfg)
+			if kErr != nil {
+				logx.Die("postsync: proxmox-csi-smoke kustomize block: %v", kErr)
+			}
+			h2K, kErr = postsync.KustomizeBlockForJobTemplate(f, cfg, "proxmox-csi-rollout-smoketest")
+			if kErr != nil {
+				logx.Die("postsync: proxmox-csi-rollout kustomize block: %v", kErr)
+			}
 		}
 		sb.WriteString(wlargocd.HelmOCI(cfg,
 			cfg.WorkloadClusterName+"-proxmox-csi", cfg.Providers.Proxmox.CSINamespace,

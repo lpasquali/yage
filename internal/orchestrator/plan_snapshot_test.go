@@ -14,6 +14,7 @@ import (
 	// Provider self-registrations for tests.
 	_ "github.com/lpasquali/yage/internal/provider/aws"
 	_ "github.com/lpasquali/yage/internal/provider/hetzner"
+	_ "github.com/lpasquali/yage/internal/provider/linode"
 	_ "github.com/lpasquali/yage/internal/provider/proxmox"
 )
 
@@ -102,6 +103,40 @@ func TestPlanDelegation_Hetzner(t *testing.T) {
 	}
 	if !sliceEq(cw.Sections(), wantSec) {
 		t.Fatalf("Hetzner sections:\n got:  %v\n want: %v", cw.Sections(), wantSec)
+	}
+}
+
+// TestPlanDelegation_Linode confirms the Linode provider emits its
+// own named sections (not Proxmox-shaped) and that the pivot section
+// is a Skip (no PivotTarget yet).
+func TestPlanDelegation_Linode(t *testing.T) {
+	cfg := minCfg()
+	cfg.InfraProvider = "linode"
+	cfg.Providers.Linode.Region = "us-east"
+	cfg.Providers.Linode.ControlPlaneType = "g6-standard-4"
+	cfg.Providers.Linode.NodeType = "g6-standard-2"
+	cw := plan.NewCapturingWriter()
+	prov, err := provider.For(cfg)
+	if err != nil {
+		t.Fatalf("provider.For: %v", err)
+	}
+	prov.DescribeIdentity(cw, cfg)
+	prov.DescribeWorkload(cw, cfg)
+	prov.DescribePivot(cw, cfg)
+
+	wantSec := []string{
+		"Identity bootstrap — Linode",
+		"Workload Cluster — Linode",
+		"Pivot to managed mgmt cluster",
+	}
+	if !sliceEq(cw.Sections(), wantSec) {
+		t.Fatalf("Linode sections:\n got:  %v\n want: %v", cw.Sections(), wantSec)
+	}
+
+	for _, e := range cw.Events {
+		if e.Kind == plan.EventSection && strings.Contains(e.Text, "Proxmox") {
+			t.Fatalf("Linode plan contains Proxmox-shaped section: %q", e.Text)
+		}
 	}
 }
 

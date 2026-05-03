@@ -27,16 +27,15 @@ func (m dashModel) updateCostsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Intercept [ / ] before any inner form so they always navigate the
 	// timeframe window — even when the credential form is active (#154).
+	// Wrap at both ends so repeated presses always step (#196): the previous
+	// clamp made the keys read as "broken" once the user hit either boundary
+	// (default idx=6 → one press of ] reaches end, further presses no-op).
 	switch keyStr {
 	case "[":
-		if m.costPeriodIdx > 0 {
-			m.costPeriodIdx--
-		}
+		m.costPeriodIdx = (m.costPeriodIdx - 1 + len(costWindows)) % len(costWindows)
 		return m, nil
 	case "]":
-		if m.costPeriodIdx < len(costWindows)-1 {
-			m.costPeriodIdx++
-		}
+		m.costPeriodIdx = (m.costPeriodIdx + 1) % len(costWindows)
 		return m, nil
 	}
 

@@ -410,3 +410,81 @@ func TestRenderField_SecretFieldsNeverLeakValue(t *testing.T) {
 		})
 	}
 }
+
+// TestCostTab_TimeframeBracketStepping verifies that `[` and `]` cycle
+// m.costPeriodIdx through the costWindows preset list AND wrap at both
+// boundaries — pressing `]` past the last entry returns to index 0, and
+// pressing `[` from index 0 goes to the last entry. Regression guard for
+// #196: the previous implementation clamped at the boundaries, which read
+// as "the keys do nothing" from the default position (idx=6 = "1 month")
+// after one `]` press reached the end of the list.
+//
+// Also asserts the credential form does not swallow the keys (the original
+// PR #156 fix path) and that the rendered cost suffix changes once the
+// window changes — the only externally observable signal that step + render
+// are both wired.
+func TestCostTab_TimeframeBracketStepping(t *testing.T) {
+	cfg := &config.Config{}
+	s := newState(&bytes.Buffer{}, cfg)
+	m := newDashModel(cfg, s)
+	m.cfgSelected = true
+	m.cfgLoading = false
+	m.activeTab = tabCosts
+
+	pressBracket := func(mm dashModel, r rune) dashModel {
+		t.Helper()
+		next, _ := mm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		nm, ok := next.(dashModel)
+		if !ok {
+			t.Fatalf("Update returned %T, want dashModel", next)
+		}
+		return nm
+	}
+
+	// Default starting index is costDefaultPeriodIdx (6 = 1 month).
+	if m.costPeriodIdx != costDefaultPeriodIdx {
+		t.Fatalf("starting costPeriodIdx = %d, want %d", m.costPeriodIdx, costDefaultPeriodIdx)
+	}
+	startSuffix := m.formatCost(100.0)
+
+	// `]` from default advances by one (the easy case).
+	m1 := pressBracket(m, ']')
+	if m1.costPeriodIdx != costDefaultPeriodIdx+1 {
+		t.Errorf("after one `]` costPeriodIdx = %d, want %d", m1.costPeriodIdx, costDefaultPeriodIdx+1)
+	}
+
+	// Walk to the last index, then press `]` again — must wrap to 0, not
+	// stay clamped at the last entry. This is the #196 regression case.
+	mLast := m
+	mLast.costPeriodIdx = len(costWindows) - 1
+	mWrap := pressBracket(mLast, ']')
+	if mWrap.costPeriodIdx != 0 {
+		t.Errorf("`]` at last index did not wrap: got %d, want 0 (#196 — clamping reads as broken keys)", mWrap.costPeriodIdx)
+	}
+
+	// `[` from index 0 must wrap to the last entry — symmetric guard.
+	mFirst := m
+	mFirst.costPeriodIdx = 0
+	mWrapBack := pressBracket(mFirst, '[')
+	if mWrapBack.costPeriodIdx != len(costWindows)-1 {
+		t.Errorf("`[` at index 0 did not wrap: got %d, want %d", mWrapBack.costPeriodIdx, len(costWindows)-1)
+	}
+
+	// `[` and `]` must work even when the credential form is active — that
+	// was the PR #156 fix path; this guards against re-regressing it.
+	mCreds := m
+	mCreds.costCredsMode = true
+	beforeIdx := mCreds.costPeriodIdx
+	mCredsAfter := pressBracket(mCreds, ']')
+	if mCredsAfter.costPeriodIdx == beforeIdx {
+		t.Error("`]` was swallowed while credential form active (#154 regression)")
+	}
+
+	// The rendered cost suffix must reflect the new window. Without this,
+	// a future regression that updates the index but breaks the renderer
+	// would still pass the index assertions above.
+	endSuffix := mWrap.formatCost(100.0)
+	if startSuffix == endSuffix {
+		t.Errorf("formatCost suffix did not change after stepping window: start=%q end=%q", startSuffix, endSuffix)
+	}
+}

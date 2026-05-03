@@ -4,6 +4,7 @@
 package aws
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -29,7 +30,8 @@ import (
 //   - "unmanaged" (default): self-managed Kubernetes on EC2.
 //   - "eks": EKS-managed control plane (live priced) + EC2 workers.
 //   - "eks-fargate": EKS CP + Fargate workers (live vCPU/GB-hour).
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(ctx context.Context, cfg *config.Config) (provider.CostEstimate, error) {
+	pf := pricing.FetcherFrom(ctx)
 	region := orDefault(cfg.Providers.AWS.Region, "us-east-1")
 	mode := orDefault(cfg.Providers.AWS.Mode, "unmanaged")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
@@ -40,7 +42,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	cpDiskGB := atoiOr(cfg.Providers.Proxmox.ControlPlaneBootVolumeSize, 30)
 	wkDiskGB := atoiOr(cfg.Providers.Proxmox.WorkerBootVolumeSize, 40)
 
-	gp3GB, err := pricing.Fetch("aws", "ebs:gp3", region)
+	gp3GB, err := pf.Fetch(ctx, "aws", "ebs:gp3", region)
 	if err != nil {
 		return provider.CostEstimate{}, fmt.Errorf("%w: aws ebs gp3 %s: %v", provider.ErrNotApplicable, region, err)
 	}
@@ -63,7 +65,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		})
 	default: // unmanaged
 		if cp > 0 {
-			cpPrice, err := liveEC2Monthly(cpType, region)
+			cpPrice, err := liveEC2Monthly(ctx, pf, cpType, region)
 			if err != nil {
 				return provider.CostEstimate{}, fmt.Errorf("%w: aws cp %s/%s: %v", provider.ErrNotApplicable, cpType, region, err)
 			}
@@ -100,7 +102,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 			SubtotalUSD:    perPod * float64(pods),
 		})
 	} else if wk > 0 {
-		wkPrice, err := liveEC2Monthly(wkType, region)
+		wkPrice, err := liveEC2Monthly(ctx, pf, wkType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: aws worker %s/%s: %v", provider.ErrNotApplicable, wkType, region, err)
 		}
@@ -125,7 +127,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	if cfg.Pivot.Enabled {
 		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mgmtType := "t3.medium"
-		mgmtPrice, err := liveEC2Monthly(mgmtType, region)
+		mgmtPrice, err := liveEC2Monthly(ctx, pf, mgmtType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: aws mgmt %s/%s: %v", provider.ErrNotApplicable, mgmtType, region, err)
 		}
@@ -231,8 +233,8 @@ func pgTierFromEnv(env string) cost.PostgresTier {
 	}
 }
 
-func liveEC2Monthly(instanceType, region string) (float64, error) {
-	it, err := pricing.Fetch("aws", instanceType, region)
+func liveEC2Monthly(ctx context.Context, pf pricing.Fetcher, instanceType, region string) (float64, error) {
+	it, err := pf.Fetch(ctx, "aws", instanceType, region)
 	if err != nil {
 		return 0, err
 	}

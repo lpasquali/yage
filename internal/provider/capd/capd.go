@@ -23,6 +23,8 @@
 package capd
 
 import (
+	"context"
+
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/provider"
 )
@@ -41,7 +43,9 @@ func (p *Provider) EnsureIdentity(cfg *config.Config) error { return provider.Er
 func (p *Provider) Inventory(cfg *config.Config) (*provider.Inventory, error) {
 	return nil, provider.ErrNotApplicable
 }
-func (p *Provider) EnsureGroup(cfg *config.Config, name string) error { return provider.ErrNotApplicable }
+func (p *Provider) EnsureGroup(cfg *config.Config, name string) error {
+	return provider.ErrNotApplicable
+}
 func (p *Provider) ClusterctlInitArgs(cfg *config.Config) []string {
 	return []string{"--infrastructure", "docker"}
 }
@@ -163,6 +167,6 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 // (Proxmox), private (vSphere), or pricing-too-variable (OpenStack)
 // providers return ErrNotApplicable; the orchestrator displays the
 // estimate only when it's available.
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(_ context.Context, cfg *config.Config) (provider.CostEstimate, error) {
 	return provider.CostEstimate{}, provider.ErrNotApplicable
 }

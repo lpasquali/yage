@@ -40,6 +40,8 @@
 package openstack
 
 import (
+	"context"
+
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/provider"
 )
@@ -235,6 +237,6 @@ func (p *Provider) K3sTemplate(cfg *config.Config, mgmt bool) (string, error) {
 // (Proxmox), private (vSphere), or pricing-too-variable (OpenStack)
 // providers return ErrNotApplicable; the orchestrator displays the
 // estimate only when it's available.
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(_ context.Context, cfg *config.Config) (provider.CostEstimate, error) {
 	return provider.CostEstimate{}, provider.ErrNotApplicable
 }

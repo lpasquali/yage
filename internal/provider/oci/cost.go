@@ -4,6 +4,7 @@
 package oci
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,7 +19,8 @@ import (
 // auth-free Cost Estimator JSON. Flex shapes (VM.Standard.E4.Flex)
 // are priced per-OCPU + per-GB-hour and we model them at the user-
 // supplied OCPU/memory; fixed shapes price per-hour.
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(ctx context.Context, cfg *config.Config) (provider.CostEstimate, error) {
+	pf := pricing.FetcherFrom(ctx)
 	region := orDefault(cfg.Providers.OCI.Region, "us-ashburn-1")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
@@ -27,7 +29,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 	items := []provider.CostItem{}
 	if cp > 0 {
-		price, err := liveOCIShapeMonthly(cpShape, region)
+		price, err := liveOCIShapeMonthly(ctx, pf, cpShape, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: oci cp %s/%s: %v",
 				provider.ErrNotApplicable, cpShape, region, err)
@@ -40,7 +42,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		})
 	}
 	if wk > 0 {
-		price, err := liveOCIShapeMonthly(wkShape, region)
+		price, err := liveOCIShapeMonthly(ctx, pf, wkShape, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: oci worker %s/%s: %v",
 				provider.ErrNotApplicable, wkShape, region, err)
@@ -115,8 +117,8 @@ func pgTierFromEnv(env string) cost.PostgresTier {
 	}
 }
 
-func liveOCIShapeMonthly(shape, region string) (float64, error) {
-	it, err := pricing.Fetch("oci", shape, region)
+func liveOCIShapeMonthly(ctx context.Context, pf pricing.Fetcher, shape, region string) (float64, error) {
+	it, err := pf.Fetch(ctx, "oci", shape, region)
 	if err != nil {
 		return 0, err
 	}

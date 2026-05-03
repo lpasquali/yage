@@ -4,6 +4,7 @@
 package digitalocean
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,7 +19,8 @@ import (
 // live /v2/sizes data via internal/pricing. Block storage and load
 // balancers are not folded in yet (overhead-tier wiring would mirror
 // AWS/Azure/GCP — TODO when needed).
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(ctx context.Context, cfg *config.Config) (provider.CostEstimate, error) {
+	pf := pricing.FetcherFrom(ctx)
 	region := orDefault(cfg.Providers.DigitalOcean.Region, "nyc3")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
@@ -27,7 +29,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 	items := []provider.CostItem{}
 	if cp > 0 {
-		price, err := liveDropletMonthly(cpType, region)
+		price, err := liveDropletMonthly(ctx, pf, cpType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: digitalocean cp %s/%s: %v",
 				provider.ErrNotApplicable, cpType, region, err)
@@ -40,7 +42,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		})
 	}
 	if wk > 0 {
-		price, err := liveDropletMonthly(wkType, region)
+		price, err := liveDropletMonthly(ctx, pf, wkType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: digitalocean worker %s/%s: %v",
 				provider.ErrNotApplicable, wkType, region, err)
@@ -116,8 +118,8 @@ func pgTierFromEnv(env string) cost.PostgresTier {
 	}
 }
 
-func liveDropletMonthly(slug, region string) (float64, error) {
-	it, err := pricing.Fetch("digitalocean", slug, region)
+func liveDropletMonthly(ctx context.Context, pf pricing.Fetcher, slug, region string) (float64, error) {
+	it, err := pf.Fetch(ctx, "digitalocean", slug, region)
 	if err != nil {
 		return 0, err
 	}

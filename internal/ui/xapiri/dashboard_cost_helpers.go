@@ -11,6 +11,7 @@ package xapiri
 // tab_costs.go can reference them without a circular dependency.
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -39,7 +40,7 @@ var costWindows = []costWindowPreset{
 	{8 * time.Hour, "8 hours", "/8h"},
 	{24 * time.Hour, "1 day", "/day"},
 	{7 * 24 * time.Hour, "1 week", "/wk"},
-	{30 * 24 * time.Hour, "1 month", "/mo"},   // default (index 6)
+	{30 * 24 * time.Hour, "1 month", "/mo"}, // default (index 6)
 	{365 * 24 * time.Hour, "1 year", "/yr"},
 }
 
@@ -47,7 +48,6 @@ const costDefaultPeriodIdx = 6 // 1 month
 
 // costMonthSecs is the number of seconds in the reference month (30 days).
 const costMonthSecs = 30 * 24 * 3600.0
-
 
 // kickRefreshCmd launches streaming cost fetches and returns a cmd that
 // delivers the first result. Subsequent results chain via waitForCostRowCmd.
@@ -111,7 +111,11 @@ func (m dashModel) kickRefreshCmd() tea.Cmd {
 		}
 
 		ch := make(chan cost.CloudCost, 64)
-		cost.StreamWithRegions(&snap, cost.ScopeCloudOnly, regionsByProvider, globalLogRing, ch)
+		// Background context: production hits the live catalog. The
+		// xapiri test harness installs a pricing.Fetcher via
+		// pricing.WithFetcher when scenarios need a frozen catalog
+		// (ADR 0016 §"Pricing seam").
+		cost.StreamWithRegions(context.Background(), &snap, cost.ScopeCloudOnly, regionsByProvider, globalLogRing, ch)
 		row, ok := <-ch
 		return costRowMsg{row: row, ch: ch, done: !ok}
 	}

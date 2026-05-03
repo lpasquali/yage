@@ -73,7 +73,7 @@ func (r *Runner) Start(ctx context.Context) error {
 func (r *Runner) runOnce(ctx context.Context) {
 	cfg := r.resolveConfig(ctx)
 	r.Log.Info("polling pricing APIs", "interval", r.Interval)
-	results := cost.CompareWithFilter(cfg, cost.ScopeAll, nil)
+	results := cost.CompareWithFilter(ctx, cfg, cost.ScopeAll, nil)
 	ok := 0
 	for _, row := range results {
 		if row.Err != nil {

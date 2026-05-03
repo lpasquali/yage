@@ -4,6 +4,7 @@
 package linode
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,7 +19,8 @@ import (
 // /v4/linode/types data. Type IDs look like "g6-standard-2".
 // Region availability is global for compute (region only matters
 // for transfer pricing); we ignore region in the catalog lookup.
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(ctx context.Context, cfg *config.Config) (provider.CostEstimate, error) {
+	pf := pricing.FetcherFrom(ctx)
 	region := orDefault(cfg.Providers.Linode.Region, "us-east")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
@@ -27,7 +29,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 	items := []provider.CostItem{}
 	if cp > 0 {
-		price, err := liveLinodeMonthly(cpType, region)
+		price, err := liveLinodeMonthly(ctx, pf, cpType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: linode cp %s: %v",
 				provider.ErrNotApplicable, cpType, err)
@@ -40,7 +42,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		})
 	}
 	if wk > 0 {
-		price, err := liveLinodeMonthly(wkType, region)
+		price, err := liveLinodeMonthly(ctx, pf, wkType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: linode worker %s: %v",
 				provider.ErrNotApplicable, wkType, err)
@@ -115,8 +117,8 @@ func pgTierFromEnv(env string) cost.PostgresTier {
 	}
 }
 
-func liveLinodeMonthly(typeID, region string) (float64, error) {
-	it, err := pricing.Fetch("linode", typeID, region)
+func liveLinodeMonthly(ctx context.Context, pf pricing.Fetcher, typeID, region string) (float64, error) {
+	it, err := pf.Fetch(ctx, "linode", typeID, region)
 	if err != nil {
 		return 0, err
 	}

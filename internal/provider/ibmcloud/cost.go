@@ -4,6 +4,7 @@
 package ibmcloud
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,7 +18,8 @@ import (
 // EstimateMonthlyCostUSD computes an IBM Cloud VPC Gen2 bill from
 // live Global Catalog data. Profile IDs look like "bx2-2x8" (general
 // purpose, 2 vCPU, 8 GB) or "cx2-4x8" (compute optimised).
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(ctx context.Context, cfg *config.Config) (provider.CostEstimate, error) {
+	pf := pricing.FetcherFrom(ctx)
 	region := orDefault(cfg.Providers.IBMCloud.Region, "us-south")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
@@ -26,7 +28,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 	items := []provider.CostItem{}
 	if cp > 0 {
-		price, err := liveIBMMonthly(cpProfile, region)
+		price, err := liveIBMMonthly(ctx, pf, cpProfile, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: ibmcloud cp %s/%s: %v",
 				provider.ErrNotApplicable, cpProfile, region, err)
@@ -39,7 +41,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		})
 	}
 	if wk > 0 {
-		price, err := liveIBMMonthly(wkProfile, region)
+		price, err := liveIBMMonthly(ctx, pf, wkProfile, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: ibmcloud worker %s/%s: %v",
 				provider.ErrNotApplicable, wkProfile, region, err)
@@ -114,8 +116,8 @@ func pgTierFromEnv(env string) cost.PostgresTier {
 	}
 }
 
-func liveIBMMonthly(profile, region string) (float64, error) {
-	it, err := pricing.Fetch("ibmcloud", profile, region)
+func liveIBMMonthly(ctx context.Context, pf pricing.Fetcher, profile, region string) (float64, error) {
+	it, err := pf.Fetch(ctx, "ibmcloud", profile, region)
 	if err != nil {
 		return 0, err
 	}

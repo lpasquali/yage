@@ -28,6 +28,10 @@ type HelmValuesData struct {
 }
 
 // ArgoApplicationData is passed to addons/<addon>/application.yaml.tmpl.
+//
+// PostSyncs is a slice rather than a single block: HelmOCI's proxmox-csi
+// smoke variant attaches two PostSync hooks together, single-hook flows
+// use one entry, and the no-hook case is nil/empty.
 type ArgoApplicationData struct {
 	Cfg         *config.Config
 	Name        string
@@ -40,7 +44,7 @@ type ArgoApplicationData struct {
 	ReleaseName string
 	ValuesYAML  string
 	Annotations map[string]string
-	PostSync    PostSyncBlock
+	PostSyncs   []PostSyncBlock
 }
 
 // PostSyncBlock is the second-source git+kustomize fields for an Argo

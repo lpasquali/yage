@@ -13,10 +13,10 @@ import (
 )
 
 // TestArgoApplicationData_AllFieldsRendered exercises every ADR 0012 §3
-// field on ArgoApplicationData, including the embedded PostSyncBlock
-// reached through the .PostSync path. Fixture template references
-// every leaf field; missingkey=error turns any rename into a render
-// failure.
+// field on ArgoApplicationData, including a populated PostSyncs slice
+// (issue #138 extends ADR 0012 §3 from a single PostSync block to a
+// slice — see PR body). Fixture template references every leaf field;
+// missingkey=error turns any rename into a render failure.
 func TestArgoApplicationData_AllFieldsRendered(t *testing.T) {
 	f := &manifests.Fetcher{MountRoot: "testdata"}
 
@@ -34,11 +34,13 @@ func TestArgoApplicationData_AllFieldsRendered(t *testing.T) {
 		Annotations: map[string]string{
 			"argocd.argoproj.io/compare-options": "ServerSideDiff=true",
 		},
-		PostSync: templates.PostSyncBlock{
-			URL:              "https://github.com/lpasquali/workload-smoketests",
-			Path:             "kustomize/proxmox-csi",
-			Ref:              "main",
-			KustomizePartial: "  patches:\n    - path: image-override.yaml",
+		PostSyncs: []templates.PostSyncBlock{
+			{
+				URL:              "https://github.com/lpasquali/workload-smoketests",
+				Path:             "kustomize/proxmox-csi",
+				Ref:              "main",
+				KustomizePartial: "  patches:\n    - path: image-override.yaml",
+			},
 		},
 	}
 

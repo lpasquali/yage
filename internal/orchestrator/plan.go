@@ -15,6 +15,7 @@
 package orchestrator
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -25,10 +26,10 @@ import (
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/cost"
 	"github.com/lpasquali/yage/internal/platform/k8sclient"
+	"github.com/lpasquali/yage/internal/platform/shell"
 	"github.com/lpasquali/yage/internal/pricing"
 	"github.com/lpasquali/yage/internal/provider"
 	"github.com/lpasquali/yage/internal/ui/plan"
-	"github.com/lpasquali/yage/internal/platform/shell"
 )
 
 // PrintPlan writes a structured "would do" plan to stdout based on cfg.
@@ -71,9 +72,13 @@ func PrintPlanTo(w io.Writer, cfg *config.Config) {
 	planFinal(w, cfg)
 	planCapacity(w, cfg)
 	planAllocations(w, cfg)
-	planMonthlyCost(w, cfg)
-	planCostCompare(w, cfg)
-	planRetention(w, cfg)
+	// Cost / pricing sections route through pricing.FetcherFrom(ctx)
+	// per ADR 0016 §"Pricing seam". The dry-run uses a background ctx
+	// (no override) so production hits the live catalog as before.
+	ctx := context.Background()
+	planMonthlyCost(ctx, w, cfg)
+	planCostCompare(ctx, w, cfg)
+	planRetention(ctx, w, cfg)
 
 	fmt.Fprintln(w, hr)
 	fmt.Fprintln(w, "✅ Dry run complete — NO state was changed.")
@@ -407,12 +412,12 @@ func planAllocations(w io.Writer, cfg *config.Config) {
 // providers (Proxmox, vSphere, CAPD) and ones with too-variable
 // pricing (OpenStack) return ErrNotApplicable and the section is
 // skipped silently — see docs/aws-cost-tiers.md for the AWS table.
-func planMonthlyCost(w io.Writer, cfg *config.Config) {
+func planMonthlyCost(ctx context.Context, w io.Writer, cfg *config.Config) {
 	p, err := provider.For(cfg)
 	if err != nil {
 		return
 	}
-	est, err := p.EstimateMonthlyCostUSD(cfg)
+	est, err := p.EstimateMonthlyCostUSD(ctx, cfg)
 	if err != nil {
 		if errors.Is(err, provider.ErrNotApplicable) {
 			// Even when the provider opted out, surface the
@@ -449,17 +454,17 @@ func planMonthlyCost(w io.Writer, cfg *config.Config) {
 // rightmost column shows what the same total budget would buy as
 // persistent block storage on each cloud — handy for picking where
 // observability + DB go when storage is the dominant cost driver.
-func planCostCompare(w io.Writer, cfg *config.Config) {
+func planCostCompare(ctx context.Context, w io.Writer, cfg *config.Config) {
 	if !cfg.CostCompare {
 		return
 	}
-	cost.PrintComparison(w, cfg)
+	cost.PrintComparison(ctx, w, cfg)
 }
 
 // planRetention prints how many GB of cheap-tier block storage the
 // user's budget buys AFTER paying for compute on the active provider.
 // No-op when --budget-usd-month is unset.
-func planRetention(w io.Writer, cfg *config.Config) {
+func planRetention(ctx context.Context, w io.Writer, cfg *config.Config) {
 	if cfg.BudgetUSDMonth <= 0 {
 		return
 	}
@@ -467,13 +472,13 @@ func planRetention(w io.Writer, cfg *config.Config) {
 	if err != nil {
 		return
 	}
-	est, err := p.EstimateMonthlyCostUSD(cfg)
+	est, err := p.EstimateMonthlyCostUSD(ctx, cfg)
 	if err != nil {
 		return
 	}
 	budgetStr := pricing.FormatTaller(cfg.BudgetUSDMonth, "USD")
 	section(w, fmt.Sprintf("Storage retention at %s / month budget (%s)", budgetStr, p.Name()))
-	gb, note := cost.RetentionAtBudget(p.Name(), cfg, cfg.BudgetUSDMonth, est.TotalUSDMonthly)
+	gb, note := cost.RetentionAtBudget(ctx, p.Name(), cfg, cfg.BudgetUSDMonth, est.TotalUSDMonthly)
 	if note != "" {
 		bullet(w, "❌ %s", note)
 		bullet(w, "   compute estimate (%s): %s / month", p.Name(), pricing.FormatTaller(est.TotalUSDMonthly, "USD"))
@@ -481,7 +486,7 @@ func planRetention(w io.Writer, cfg *config.Config) {
 		return
 	}
 	leftover := cfg.BudgetUSDMonth - est.TotalUSDMonthly
-	label := cost.LiveBlockStorageLabel(p.Name(), cfg)
+	label := cost.LiveBlockStorageLabel(ctx, p.Name(), cfg)
 	bullet(w, "compute estimate:        %s / month", pricing.FormatTaller(est.TotalUSDMonthly, "USD"))
 	bullet(w, "leftover for storage:    %s / month", pricing.FormatTaller(leftover, "USD"))
 	if gb >= 1024 {

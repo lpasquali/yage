@@ -12,6 +12,8 @@
 package proxmox
 
 import (
+	"context"
+
 	"github.com/lpasquali/yage/internal/capi/manifest"
 	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/platform/opentofux"
@@ -92,6 +94,6 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 // rate-usd / --hardware-support-usd-month; without those, returns
 // ErrNotApplicable and the orchestrator surfaces "estimate
 // unavailable" rather than fabricate.
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(_ context.Context, cfg *config.Config) (provider.CostEstimate, error) {
 	return provider.TCOEstimate(cfg, "proxmox")
 }

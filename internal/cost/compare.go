@@ -17,6 +17,7 @@
 package cost
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sort"
@@ -35,21 +36,23 @@ import (
 // hosted, sunk cost) or when the live API is unreachable.
 //
 // Provider → SKU mapping (cheap tier only):
-//   aws     → "ebs:gp3"  (live Bulk Pricing JSON, region from cfg.Providers.AWS.Region)
-//   azure   → "Standard SSD Managed Disks" (live Retail Prices API,
-//                                            region from cfg.Providers.Azure.Location)
-//   gcp     → "pd:balanced" (live Cloud Billing Catalog,
-//                            region from cfg.Providers.GCP.Region; needs API key)
-//   hetzner → live volume rate from /v1/pricing
-//   anything else → 0, ErrNotApplicable
-func liveBlockStorageUSDPerGBMonth(provName string, cfg *config.Config) (float64, error) {
+//
+//	aws     → "ebs:gp3"  (live Bulk Pricing JSON, region from cfg.Providers.AWS.Region)
+//	azure   → "Standard SSD Managed Disks" (live Retail Prices API,
+//	                                         region from cfg.Providers.Azure.Location)
+//	gcp     → "pd:balanced" (live Cloud Billing Catalog,
+//	                         region from cfg.Providers.GCP.Region; needs API key)
+//	hetzner → live volume rate from /v1/pricing
+//	anything else → 0, ErrNotApplicable
+func liveBlockStorageUSDPerGBMonth(ctx context.Context, provName string, cfg *config.Config) (float64, error) {
+	pf := pricing.FetcherFrom(ctx)
 	switch provName {
 	case "aws":
 		region := cfg.Providers.AWS.Region
 		if region == "" {
 			region = "us-east-1"
 		}
-		it, err := pricing.Fetch("aws", "ebs:gp3", region)
+		it, err := pf.Fetch(ctx, "aws", "ebs:gp3", region)
 		if err != nil {
 			return 0, err
 		}
@@ -65,7 +68,7 @@ func liveBlockStorageUSDPerGBMonth(provName string, cfg *config.Config) (float64
 		if region == "" {
 			region = "us-central1"
 		}
-		it, err := pricing.Fetch("gcp", "pd:balanced", region)
+		it, err := pf.Fetch(ctx, "gcp", "pd:balanced", region)
 		if err != nil {
 			return 0, err
 		}
@@ -80,12 +83,12 @@ func liveBlockStorageUSDPerGBMonth(provName string, cfg *config.Config) (float64
 // provider's cheap-tier block storage. Used by plan.go in the
 // retention section. Live $/GB-month is queried per call and
 // converted into the active taller for display.
-func LiveBlockStorageLabel(provName string, cfg *config.Config) string {
+func LiveBlockStorageLabel(ctx context.Context, provName string, cfg *config.Config) string {
 	tier := blockStorageTierName(provName)
 	if tier == "" {
 		return ""
 	}
-	price, err := liveBlockStorageUSDPerGBMonth(provName, cfg)
+	price, err := liveBlockStorageUSDPerGBMonth(ctx, provName, cfg)
 	if err != nil || price <= 0 {
 		return tier + " (live price unavailable)"
 	}
@@ -114,7 +117,7 @@ func blockStorageTierName(provName string) string {
 // CloudCost is one row in the multi-cloud comparison table.
 type CloudCost struct {
 	ProviderName         string
-	Region               string  // region estimated; empty for on-prem or single-region flows
+	Region               string // region estimated; empty for on-prem or single-region flows
 	Estimate             provider.CostEstimate
 	Err                  error
 	StorageUSDPerGBMonth float64 // 0 when not fetchable
@@ -131,8 +134,8 @@ type CloudCost struct {
 // Skips providers that explicitly disable themselves via
 // ErrNotApplicable in the cost path; surfaces real errors so the
 // user can see missing config or unreachable APIs.
-func CompareClouds(cfg *config.Config, progress io.Writer) []CloudCost {
-	return CompareWithFilter(cfg, ScopeAll, progress)
+func CompareClouds(ctx context.Context, cfg *config.Config, progress io.Writer) []CloudCost {
+	return CompareWithFilter(ctx, cfg, ScopeAll, progress)
 }
 
 // Scope narrows the provider set CompareWithFilter iterates over.
@@ -143,9 +146,9 @@ func CompareClouds(cfg *config.Config, progress io.Writer) []CloudCost {
 type Scope int
 
 const (
-	ScopeAll       Scope = iota // every registered provider (subject to airgap filter)
-	ScopeCloudOnly              // hyperscale + managed-cloud providers only
-	ScopeOnPremOnly             // proxmox / vsphere / openstack / docker (CAPD)
+	ScopeAll        Scope = iota // every registered provider (subject to airgap filter)
+	ScopeCloudOnly               // hyperscale + managed-cloud providers only
+	ScopeOnPremOnly              // proxmox / vsphere / openstack / docker (CAPD)
 )
 
 // StreamWithFilter fans out provider cost fetches in parallel and sends each
@@ -157,7 +160,7 @@ const (
 //
 // Progress is written before any goroutines launch (count header) and after
 // each result arrives (per-provider tick line).
-func StreamWithFilter(cfg *config.Config, scope Scope, progress io.Writer, ch chan<- CloudCost) {
+func StreamWithFilter(ctx context.Context, cfg *config.Config, scope Scope, progress io.Writer, ch chan<- CloudCost) {
 	names := provider.AirgapFilter(provider.Registered(), cfg.Airgapped)
 	names = filterEphemeralTestProviders(names)
 	switch scope {
@@ -199,8 +202,8 @@ func StreamWithFilter(cfg *config.Config, scope Scope, progress io.Writer, ch ch
 			if err != nil {
 				return // skip unknown/unregistered — no send
 			}
-			est, estErr := p.EstimateMonthlyCostUSD(cfg)
-			storagePrice, storageErr := liveBlockStorageUSDPerGBMonth(name, cfg)
+			est, estErr := p.EstimateMonthlyCostUSD(ctx, cfg)
+			storagePrice, storageErr := liveBlockStorageUSDPerGBMonth(ctx, name, cfg)
 			ch <- CloudCost{
 				ProviderName:         name,
 				Estimate:             est,
@@ -251,7 +254,7 @@ func withProviderRegion(cfg *config.Config, provName, region string) config.Conf
 // list) the provider's current region from cfg is used (single estimate).
 // CloudCost.Region is set for every result. Provider / scope filtering is
 // identical to StreamWithFilter.
-func StreamWithRegions(cfg *config.Config, scope Scope, regionsByProvider map[string][]string, progress io.Writer, ch chan<- CloudCost) {
+func StreamWithRegions(ctx context.Context, cfg *config.Config, scope Scope, regionsByProvider map[string][]string, progress io.Writer, ch chan<- CloudCost) {
 	names := provider.AirgapFilter(provider.Registered(), cfg.Airgapped)
 	names = filterEphemeralTestProviders(names)
 	switch scope {
@@ -289,8 +292,8 @@ func StreamWithRegions(cfg *config.Config, scope Scope, regionsByProvider map[st
 				} else {
 					cfgCopy = *cfg
 				}
-				est, estErr := p.EstimateMonthlyCostUSD(&cfgCopy)
-				storagePrice, storageErr := liveBlockStorageUSDPerGBMonth(name, &cfgCopy)
+				est, estErr := p.EstimateMonthlyCostUSD(ctx, &cfgCopy)
+				storagePrice, storageErr := liveBlockStorageUSDPerGBMonth(ctx, name, &cfgCopy)
 				ch <- CloudCost{
 					ProviderName:         name,
 					Region:               region,
@@ -312,9 +315,9 @@ func StreamWithRegions(cfg *config.Config, scope Scope, regionsByProvider map[st
 // provider) is dropped at every scope: it's an ephemeral test path,
 // not a deployment target — pricing it would just confuse the
 // table.
-func CompareWithFilter(cfg *config.Config, scope Scope, progress io.Writer) []CloudCost {
+func CompareWithFilter(ctx context.Context, cfg *config.Config, scope Scope, progress io.Writer) []CloudCost {
 	ch := make(chan CloudCost, 32)
-	StreamWithFilter(cfg, scope, progress, ch)
+	StreamWithFilter(ctx, cfg, scope, progress, ch)
 	var out []CloudCost
 	for r := range ch {
 		out = append(out, r)
@@ -340,8 +343,8 @@ func CompareWithFilter(cfg *config.Config, scope Scope, progress io.Writer) []Cl
 // PrintComparison writes a human-readable comparison table to w.
 // Each row: provider | monthly | live $/GB-mo | retention budget.
 // Footer notes which providers were unpriced or had API failures.
-func PrintComparison(w io.Writer, cfg *config.Config) {
-	rows := CompareClouds(cfg, nil)
+func PrintComparison(ctx context.Context, w io.Writer, cfg *config.Config) {
+	rows := CompareClouds(ctx, cfg, nil)
 	hr := func() {
 		fmt.Fprintln(w, "─────────────────────────────────────────────────────────────────────────────")
 	}
@@ -511,8 +514,8 @@ func retentionDescription(budgetUSD, pricePerGBMonth float64) string {
 // When the cloud's compute estimate exceeds the budget, returns
 // 0 + a "compute alone is over budget" note so the dry-run can
 // warn the user before they think they have storage room.
-func RetentionAtBudget(provName string, cfg *config.Config, budgetUSD, computeUSD float64) (gb float64, note string) {
-	price, err := liveBlockStorageUSDPerGBMonth(provName, cfg)
+func RetentionAtBudget(ctx context.Context, provName string, cfg *config.Config, budgetUSD, computeUSD float64) (gb float64, note string) {
+	price, err := liveBlockStorageUSDPerGBMonth(ctx, provName, cfg)
 	if err != nil || price <= 0 {
 		if err != nil {
 			return 0, "live storage price unavailable: " + err.Error()

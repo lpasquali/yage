@@ -4,6 +4,7 @@
 package gcp
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -30,7 +31,8 @@ import (
 //   - "unmanaged" (default): self-managed Kubernetes on GCE.
 //   - "gke": GKE Standard managed control plane (live-priced) +
 //     GCE worker nodes.
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(ctx context.Context, cfg *config.Config) (provider.CostEstimate, error) {
+	pf := pricing.FetcherFrom(ctx)
 	region := orDefault(cfg.Providers.GCP.Region, "us-central1")
 	mode := orDefault(cfg.Providers.GCP.Mode, "unmanaged")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
@@ -41,7 +43,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	cpDiskGB := atoiOr(cfg.Providers.Proxmox.ControlPlaneBootVolumeSize, 30)
 	wkDiskGB := atoiOr(cfg.Providers.Proxmox.WorkerBootVolumeSize, 40)
 
-	pdBalanced, err := pricing.Fetch("gcp", "pd:balanced", region)
+	pdBalanced, err := pf.Fetch(ctx, "gcp", "pd:balanced", region)
 	if err != nil {
 		return provider.CostEstimate{}, fmt.Errorf("%w: gcp pd-balanced %s: %v", provider.ErrNotApplicable, region, err)
 	}
@@ -64,7 +66,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		})
 	default: // unmanaged
 		if cp > 0 {
-			cpPrice, err := liveGCEMonthly(cpType, region)
+			cpPrice, err := liveGCEMonthly(ctx, pf, cpType, region)
 			if err != nil {
 				return provider.CostEstimate{}, fmt.Errorf("%w: gcp cp %s/%s: %v", provider.ErrNotApplicable, cpType, region, err)
 			}
@@ -84,7 +86,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	}
 
 	if wk > 0 {
-		wkPrice, err := liveGCEMonthly(wkType, region)
+		wkPrice, err := liveGCEMonthly(ctx, pf, wkType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: gcp worker %s/%s: %v", provider.ErrNotApplicable, wkType, region, err)
 		}
@@ -109,7 +111,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	if cfg.Pivot.Enabled {
 		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mgmtType := "e2-medium"
-		mgmtPrice, err := liveGCEMonthly(mgmtType, region)
+		mgmtPrice, err := liveGCEMonthly(ctx, pf, mgmtType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: gcp mgmt %s/%s: %v", provider.ErrNotApplicable, mgmtType, region, err)
 		}
@@ -206,8 +208,8 @@ func pgTierFromEnv(env string) cost.PostgresTier {
 	}
 }
 
-func liveGCEMonthly(machineType, region string) (float64, error) {
-	it, err := pricing.Fetch("gcp", machineType, region)
+func liveGCEMonthly(ctx context.Context, pf pricing.Fetcher, machineType, region string) (float64, error) {
+	it, err := pf.Fetch(ctx, "gcp", machineType, region)
 	if err != nil {
 		return 0, err
 	}

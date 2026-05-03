@@ -29,6 +29,7 @@
 package provider
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -141,7 +142,16 @@ type Provider interface {
 	// (private OpenStack, on-prem vSphere). Wrap ErrNotApplicable
 	// when a live API is unreachable so callers can surface "estimate
 	// unavailable" instead of fabricating a number.
-	EstimateMonthlyCostUSD(cfg *config.Config) (CostEstimate, error)
+	//
+	// ctx carries the active pricing.Fetcher (per ADR 0016 §"Pricing
+	// seam"). Implementations that consult internal/pricing should
+	// route through pricing.FetcherFrom(ctx).Fetch(...) so deterministic
+	// test harnesses can pin a frozen catalog. Calls that go through
+	// the bespoke per-vendor helpers (AWSEKSControlPlaneUSDPerMonth,
+	// AzureManagedDiskUSDPerGBMonth, …) continue to hit the package
+	// globals; full migration of those helpers onto Fetcher is tracked
+	// as follow-up.
+	EstimateMonthlyCostUSD(ctx context.Context, cfg *config.Config) (CostEstimate, error)
 
 	// PlanDescriber emits the provider-specific dry-run plan
 	// sections via plan.Writer. Three hooks because the orchestrator
@@ -382,10 +392,10 @@ type CostEstimate struct {
 
 // CostItem is one line in the cost breakdown.
 type CostItem struct {
-	Name            string  // "workload control-plane (3× t3.medium)"
-	UnitUSDMonthly  float64 // per-replica per-month cost
-	Qty             int
-	SubtotalUSD     float64
+	Name           string  // "workload control-plane (3× t3.medium)"
+	UnitUSDMonthly float64 // per-replica per-month cost
+	Qty            int
+	SubtotalUSD    float64
 }
 
 // --- registry ---

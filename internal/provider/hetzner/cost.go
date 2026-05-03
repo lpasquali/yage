@@ -4,6 +4,7 @@
 package hetzner
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -75,7 +76,8 @@ func hetznerOverheadDefaults(tier string) hetznerOverheadCounts {
 //
 // CAPHV is unmanaged-only (no Hetzner-managed Kubernetes today),
 // so there's no managed-mode switch.
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(ctx context.Context, cfg *config.Config) (provider.CostEstimate, error) {
+	pf := pricing.FetcherFrom(ctx)
 	region := orDefault(cfg.Providers.Hetzner.Location, "fsn1")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
 	wk := atoiOr(cfg.WorkerMachineCount, 0)
@@ -86,7 +88,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 	// Control plane: Hetzner servers (boot disk bundled).
 	if cp > 0 {
-		cpPrice, err := liveServerMonthly(cpType, region)
+		cpPrice, err := liveServerMonthly(ctx, pf, cpType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: hetzner: %v", provider.ErrNotApplicable, err)
 		}
@@ -100,7 +102,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 	// Workers: Hetzner servers (boot disk bundled).
 	if wk > 0 {
-		wkPrice, err := liveServerMonthly(wkType, region)
+		wkPrice, err := liveServerMonthly(ctx, pf, wkType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: hetzner: %v", provider.ErrNotApplicable, err)
 		}
@@ -116,7 +118,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	if cfg.Pivot.Enabled {
 		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mgmtType := "cx23"
-		mgmtPrice, err := liveServerMonthly(mgmtType, region)
+		mgmtPrice, err := liveServerMonthly(ctx, pf, mgmtType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: hetzner: %v", provider.ErrNotApplicable, err)
 		}
@@ -170,8 +172,8 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 // liveServerMonthly hits the live Hetzner pricing fetcher. Returns
 // the monthly cap (USD) for the (server_type, location) pair.
-func liveServerMonthly(sku, region string) (float64, error) {
-	it, err := pricing.Fetch("hetzner", sku, region)
+func liveServerMonthly(ctx context.Context, pf pricing.Fetcher, sku, region string) (float64, error) {
+	it, err := pf.Fetch(ctx, "hetzner", sku, region)
 	if err != nil {
 		return 0, err
 	}

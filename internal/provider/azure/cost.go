@@ -4,6 +4,7 @@
 package azure
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -30,7 +31,8 @@ import (
 //   - "unmanaged" (default): self-managed Kubernetes on Azure VMs.
 //   - "aks": AKS-managed control plane (priced as a flat-fee SKU
 //     in the Retail Prices catalog) plus worker VMs.
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(ctx context.Context, cfg *config.Config) (provider.CostEstimate, error) {
+	pf := pricing.FetcherFrom(ctx)
 	region := orDefault(cfg.Providers.Azure.Location, "eastus")
 	mode := orDefault(cfg.Providers.Azure.Mode, "unmanaged")
 	cp := atoiOr(cfg.ControlPlaneMachineCount, 1)
@@ -71,7 +73,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 		})
 	default: // unmanaged
 		if cp > 0 {
-			cpPrice, err := liveVMMonthly(cpType, region)
+			cpPrice, err := liveVMMonthly(ctx, pf, cpType, region)
 			if err != nil {
 				return provider.CostEstimate{}, fmt.Errorf("%w: azure cp %s/%s: %v", provider.ErrNotApplicable, cpType, region, err)
 			}
@@ -92,7 +94,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 
 	// Workers.
 	if wk > 0 {
-		wkPrice, err := liveVMMonthly(wkType, region)
+		wkPrice, err := liveVMMonthly(ctx, pf, wkType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: azure worker %s/%s: %v", provider.ErrNotApplicable, wkType, region, err)
 		}
@@ -117,7 +119,7 @@ func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEsti
 	if cfg.Pivot.Enabled {
 		mcp := atoiOr(cfg.Mgmt.ControlPlaneMachineCount, 1)
 		mgmtType := "Standard_B2s"
-		mgmtPrice, err := liveVMMonthly(mgmtType, region)
+		mgmtPrice, err := liveVMMonthly(ctx, pf, mgmtType, region)
 		if err != nil {
 			return provider.CostEstimate{}, fmt.Errorf("%w: azure mgmt %s/%s: %v", provider.ErrNotApplicable, mgmtType, region, err)
 		}
@@ -215,8 +217,8 @@ func pgTierFromEnv(env string) cost.PostgresTier {
 	}
 }
 
-func liveVMMonthly(sku, region string) (float64, error) {
-	it, err := pricing.Fetch("azure", sku, region)
+func liveVMMonthly(ctx context.Context, pf pricing.Fetcher, sku, region string) (float64, error) {
+	it, err := pf.Fetch(ctx, "azure", sku, region)
 	if err != nil {
 		return 0, err
 	}

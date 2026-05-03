@@ -27,6 +27,7 @@
 package vsphere
 
 import (
+	"context"
 	"os"
 	"regexp"
 	"strings"
@@ -256,10 +257,10 @@ func (p *Provider) PatchManifest(cfg *config.Config, manifestPath string, mgmt b
 	vs := cfg.Providers.Vsphere
 
 	type sizing struct {
-		numCPUs          string
+		numCPUs           string
 		numCoresPerSocket string
-		memoryMiB        string
-		diskGiB          string
+		memoryMiB         string
+		diskGiB           string
 	}
 	cp := sizing{vs.ControlPlaneNumCPUs, vs.ControlPlaneNumCoresPerSocket, vs.ControlPlaneMemoryMiB, vs.ControlPlaneDiskGiB}
 	wk := sizing{vs.WorkerNumCPUs, vs.WorkerNumCoresPerSocket, vs.WorkerMemoryMiB, vs.WorkerDiskGiB}
@@ -342,6 +343,6 @@ func replaceFirstField(doc, key, value string) string {
 // (and optionally --hardware-watts / --hardware-kwh-rate-usd /
 // --hardware-support-usd-month for vSphere licensing/support).
 // Without those, returns ErrNotApplicable.
-func (p *Provider) EstimateMonthlyCostUSD(cfg *config.Config) (provider.CostEstimate, error) {
+func (p *Provider) EstimateMonthlyCostUSD(_ context.Context, cfg *config.Config) (provider.CostEstimate, error) {
 	return provider.TCOEstimate(cfg, "vsphere")
 }

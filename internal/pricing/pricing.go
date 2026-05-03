@@ -8,18 +8,19 @@
 // stale fabricated number.
 //
 // Each vendor implementation lives in its own file:
-//   aws.go      — AWS Bulk Pricing JSON. Files are hosted on the
-//                 pricing.us-east-1.amazonaws.com bucket, but the
-//                 path encodes the priced region:
-//                   /offers/v1.0/aws/AmazonEC2/current/<region>/index.json
-//                 e.g. .../eu-west-1/index.json returns Frankfurt
-//                 prices, .../us-east-1/index.json returns N.Virginia
-//                 prices. The host being us-east-1 is just where the
-//                 static JSON lives; it does NOT constrain priced region.
-//   azure.go    — Azure Retail Prices API (unauth, region in $filter)
-//   gcp.go      — GCP Cloud Billing Catalog API (needs API key)
-//   hetzner.go  — Hetzner Cloud API server_types (unauth, region in
-//                 prices[] array per server type)
+//
+//	aws.go      — AWS Bulk Pricing JSON. Files are hosted on the
+//	              pricing.us-east-1.amazonaws.com bucket, but the
+//	              path encodes the priced region:
+//	                /offers/v1.0/aws/AmazonEC2/current/<region>/index.json
+//	              e.g. .../eu-west-1/index.json returns Frankfurt
+//	              prices, .../us-east-1/index.json returns N.Virginia
+//	              prices. The host being us-east-1 is just where the
+//	              static JSON lives; it does NOT constrain priced region.
+//	azure.go    — Azure Retail Prices API (unauth, region in $filter)
+//	gcp.go      — GCP Cloud Billing Catalog API (needs API key)
+//	hetzner.go  — Hetzner Cloud API server_types (unauth, region in
+//	              prices[] array per server type)
 //
 // Pricing tiers (dev / prod / enterprise) describing service-overhead
 // SHAPE (NAT count, LB count, egress GB, log GB) live in each
@@ -65,25 +66,31 @@ const DefaultTTL = 24 * time.Hour
 // taller — that avoids a round-trip through FX and surfaces the
 // vendor's published list price exactly.
 type Item struct {
-	Vendor          string    // "aws", "azure", "gcp", "hetzner"
-	SKU             string    // "t3.medium", "Standard_D2s_v3", "n2-standard-2", "cx23"
-	Region          string    // "us-east-1", "eastus", "us-central1", "fsn1"
-	USDPerHour      float64   // 0 when only monthly is meaningful
-	USDPerMonth     float64   // = USDPerHour × 730 unless the vendor caps differently (Hetzner)
-	NativeCurrency  string    // ISO-4217 code of the vendor's datacenter currency; "" treated as "USD"
-	NativeAmount    float64   // monthly amount in NativeCurrency; 0 when not separately tracked
-	FetchedAt       time.Time
+	Vendor         string  // "aws", "azure", "gcp", "hetzner"
+	SKU            string  // "t3.medium", "Standard_D2s_v3", "n2-standard-2", "cx23"
+	Region         string  // "us-east-1", "eastus", "us-central1", "fsn1"
+	USDPerHour     float64 // 0 when only monthly is meaningful
+	USDPerMonth    float64 // = USDPerHour × 730 unless the vendor caps differently (Hetzner)
+	NativeCurrency string  // ISO-4217 code of the vendor's datacenter currency; "" treated as "USD"
+	NativeAmount   float64 // monthly amount in NativeCurrency; 0 when not separately tracked
+	FetchedAt      time.Time
 }
 
-// Fetcher fetches a single SKU's price from a vendor API. Each
-// vendor implements this — the package's Fetch() routes by Vendor.
-type Fetcher interface {
+// VendorFetcher fetches a single SKU's price from one vendor's
+// API. Each per-vendor implementation lives in its own file
+// (aws.go, azure.go, gcp.go, …) and self-registers via Register().
+//
+// VendorFetcher is the *vendor-level* plug, not the public ctx-scoped
+// pricing seam — see the package-level [Fetcher] interface and
+// [WithFetcher] / [FetcherFrom] for the ADR 0016 §"Pricing seam"
+// determinism contract used by the xapiri test harness.
+type VendorFetcher interface {
 	Fetch(sku, region string) (Item, error)
 }
 
 var (
 	mu       sync.RWMutex
-	fetchers = map[string]Fetcher{}
+	fetchers = map[string]VendorFetcher{}
 	// disabled toggles all live fetches off; useful for tests + CI
 	// where reaching the public APIs is undesirable.
 	disabled = os.Getenv("YAGE_PRICING_DISABLED") == "true"
@@ -91,7 +98,7 @@ var (
 
 // Register makes a vendor fetcher available to Fetch().
 // Implementations call this from init().
-func Register(vendor string, f Fetcher) {
+func Register(vendor string, f VendorFetcher) {
 	mu.Lock()
 	defer mu.Unlock()
 	fetchers[vendor] = f

@@ -10,7 +10,9 @@ syncWave: {{ .SyncWave }}
 releaseName: {{ .ReleaseName }}
 valuesYAML: {{ .ValuesYAML }}
 annotation: {{ index .Annotations "argocd.argoproj.io/compare-options" }}
-postSyncURL: {{ .PostSync.URL }}
-postSyncPath: {{ .PostSync.Path }}
-postSyncRef: {{ .PostSync.Ref }}
-postSyncPartial: {{ .PostSync.KustomizePartial }}
+{{- range $h := .PostSyncs }}
+postSyncURL: {{ $h.URL }}
+postSyncPath: {{ $h.Path }}
+postSyncRef: {{ $h.Ref }}
+postSyncPartial: {{ $h.KustomizePartial }}
+{{- end }}

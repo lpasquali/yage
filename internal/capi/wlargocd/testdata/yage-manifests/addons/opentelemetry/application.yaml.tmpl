@@ -1,0 +1,55 @@
+{{- /*
+yage-manifests/addons/opentelemetry/application.yaml.tmpl
+Helm-repo Argo CD Application for opentelemetry.
+ValuesYAML and PostSyncs[].KustomizePartial are pre-indented Go-side.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Cfg.ArgoCD.WorkloadNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ printf "%q" .SyncWave }}
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .DestNS }}
+{{- if .PostSyncs }}
+  sources:
+    - repoURL: {{ .RepoURL }}
+      chart: {{ .Chart }}
+      targetRevision: {{ printf "%q" .Ref }}
+      helm:
+        valuesObject:
+{{- if .ValuesYAML }}
+{{ .ValuesYAML -}}
+{{- else }}
+          {}
+{{ end -}}
+{{- range $h := .PostSyncs }}
+    - repoURL: {{ $h.URL }}
+      path: {{ $h.Path }}
+      targetRevision: '{{ $h.Ref }}'
+{{ $h.KustomizePartial -}}
+{{- end }}
+{{- else }}
+  source:
+    repoURL: {{ .RepoURL }}
+    chart: {{ .Chart }}
+    targetRevision: {{ printf "%q" .Ref }}
+    helm:
+      valuesObject:
+{{- if .ValuesYAML }}
+{{ .ValuesYAML -}}
+{{- else }}
+        {}
+{{ end -}}
+{{- end }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

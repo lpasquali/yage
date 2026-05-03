@@ -1,0 +1,62 @@
+{{- /*
+yage-manifests/addons/metrics-server/application.yaml.tmpl
+HelmGit-shape Argo CD Application: chart pulled from a Git source.
+ValuesYAML and PostSyncs[].KustomizePartial are pre-indented Go-side.
+Ref is shell-quote-escaped Go-side and emitted single-quoted.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Cfg.ArgoCD.WorkloadNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ printf "%q" .SyncWave }}
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .DestNS }}
+{{- if .PostSyncs }}
+  sources:
+    - repoURL: {{ .RepoURL }}
+      path: {{ .Path }}
+      targetRevision: '{{ .Ref }}'
+      helm:
+{{- if .ReleaseName }}
+        releaseName: {{ .ReleaseName }}
+{{- end }}
+        valuesObject:
+{{- if .ValuesYAML }}
+{{ .ValuesYAML -}}
+{{ else }}
+          {}
+{{ end -}}
+{{- range $h := .PostSyncs }}
+    - repoURL: {{ $h.URL }}
+      path: {{ $h.Path }}
+      targetRevision: '{{ $h.Ref }}'
+{{ $h.KustomizePartial -}}
+{{- end }}
+{{- else }}
+  source:
+    repoURL: {{ .RepoURL }}
+    path: {{ .Path }}
+    targetRevision: '{{ .Ref }}'
+    helm:
+{{- if .ReleaseName }}
+      releaseName: {{ .ReleaseName }}
+{{- end }}
+      valuesObject:
+{{- if .ValuesYAML }}
+{{ .ValuesYAML -}}
+{{ else }}
+        {}
+{{ end -}}
+{{- end }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -1,0 +1,103 @@
+{{- /*
+yage-manifests/addons/kyverno/application.yaml.tmpl
+Kyverno Argo CD Application — a Helm-shape source plus Kyverno-specific
+extras: the `compare-options: ServerSideDiff=true,IncludeMutationWebhook=true`
+annotation, the structured valuesObject (config + tolerations +
+4 controller replicas), and the ignoreDifferences for caBundle drift.
+The KyvernoTolerateControlPlane string is read via the isTrue FuncMap;
+the caller (orchestrator) registers isTrue on the Fetcher.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Cfg.ArgoCD.WorkloadNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ printf "%q" .SyncWave }}
+    argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .DestNS }}
+{{- if .PostSyncs }}
+  sources:
+    - repoURL: {{ .RepoURL }}
+      chart: {{ .Chart }}
+      targetRevision: {{ printf "%q" .Ref }}
+      helm:
+        valuesObject:
+          config:
+            preserve: false
+            webhookLabels:
+              app.kubernetes.io/managed-by: argocd
+{{- if isTrue .Cfg.KyvernoTolerateControlPlane }}
+          global:
+            tolerations:
+              - key: "node-role.kubernetes.io/control-plane"
+                operator: Exists
+                effect: NoSchedule
+              - key: "node-role.kubernetes.io/master"
+                operator: Exists
+                effect: NoSchedule
+{{- end }}
+          admissionController:
+            replicas: 1
+          backgroundController:
+            replicas: 1
+          cleanupController:
+            replicas: 1
+          reportsController:
+            replicas: 1
+{{- range $h := .PostSyncs }}
+    - repoURL: {{ $h.URL }}
+      path: {{ $h.Path }}
+      targetRevision: '{{ $h.Ref }}'
+{{ $h.KustomizePartial -}}
+{{- end }}
+{{- else }}
+  source:
+    repoURL: {{ .RepoURL }}
+    chart: {{ .Chart }}
+    targetRevision: {{ printf "%q" .Ref }}
+    helm:
+      valuesObject:
+        config:
+          preserve: false
+          webhookLabels:
+            app.kubernetes.io/managed-by: argocd
+{{- if isTrue .Cfg.KyvernoTolerateControlPlane }}
+        global:
+          tolerations:
+            - key: "node-role.kubernetes.io/control-plane"
+              operator: Exists
+              effect: NoSchedule
+            - key: "node-role.kubernetes.io/master"
+              operator: Exists
+              effect: NoSchedule
+{{- end }}
+        admissionController:
+          replicas: 1
+        backgroundController:
+          replicas: 1
+        cleanupController:
+          replicas: 1
+        reportsController:
+          replicas: 1
+{{- end }}
+  ignoreDifferences:
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[]?.clientConfig.caBundle
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[]?.clientConfig.caBundle
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

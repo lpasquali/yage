@@ -1,0 +1,57 @@
+{{- /*
+yage-manifests/addons/proxmox-csi/application.yaml.tmpl
+HelmOCI-shape Argo CD Application: chart from an OCI Helm registry.
+PostSyncs slice carries 0, 1, or 2 hooks (the proxmox-csi smoke variant
+uses 2 hooks together: pvc + rollout). The chart is encoded in the OCI
+URL; the template emits `path: "."`.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Cfg.ArgoCD.WorkloadNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ printf "%q" .SyncWave }}
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .DestNS }}
+{{- if .PostSyncs }}
+  sources:
+    - repoURL: {{ .RepoURL }}
+      path: {{ .Path }}
+      targetRevision: {{ printf "%q" .Ref }}
+      helm:
+        valuesObject:
+{{- if .ValuesYAML }}
+{{ .ValuesYAML -}}
+{{ else }}
+          {}
+{{ end -}}
+{{- range $h := .PostSyncs }}
+    - repoURL: {{ $h.URL }}
+      path: {{ $h.Path }}
+      targetRevision: '{{ $h.Ref }}'
+{{ $h.KustomizePartial -}}
+{{- end }}
+{{- else }}
+  source:
+    repoURL: {{ .RepoURL }}
+    path: {{ .Path }}
+    targetRevision: {{ printf "%q" .Ref }}
+    helm:
+      valuesObject:
+{{- if .ValuesYAML }}
+{{ .ValuesYAML -}}
+{{ else }}
+        {}
+{{ end -}}
+{{- end }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

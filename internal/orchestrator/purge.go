@@ -302,14 +302,28 @@ func PurgeGeneratedArtifacts(cfg *config.Config) {
 	// registry module's tofu state lives in a Kubernetes Secret in yage-system
 	// on the kind management cluster. Silently skipped when cfg.RegistryNode
 	// is empty (no registry was provisioned).
+	//
+	// Issuing-CA tofu destroy follows the same ordering rule: its state Secret
+	// (tfstate-default-issuing-ca) lives in yage-system on the management
+	// cluster, so destroy must run before the kind cluster is torn down.
+	// Silently skipped when IssuingCARootCert/IssuingCARootKey are empty
+	// (no issuing CA was provisioned).
 	kindCtx := "kind-" + cfg.KindClusterName
-	if registryCli, err := k8sclient.ForContext(kindCtx); err == nil {
+	if mgmtCli, err := k8sclient.ForContext(kindCtx); err == nil {
 		purgeCtx := context.Background()
-		if err := opentofux.DestroyRegistry(purgeCtx, registryCli, cfg); err != nil && !errors.Is(err, opentofux.ErrNotApplicable) {
+		if err := opentofux.DestroyRegistry(purgeCtx, mgmtCli, cfg); err != nil && !errors.Is(err, opentofux.ErrNotApplicable) {
 			logx.Warn("DestroyRegistry: %v (continuing — operator may need to run tofu destroy manually)", err)
 		}
-	} else if cfg.RegistryNode != "" {
-		logx.Warn("DestroyRegistry: cannot connect to %s: %v (registry tofu state may be orphaned)", kindCtx, err)
+		if err := opentofux.DestroyIssuingCA(purgeCtx, mgmtCli, cfg); err != nil && !errors.Is(err, opentofux.ErrNotApplicable) {
+			logx.Warn("DestroyIssuingCA: %v (continuing — operator may need to run tofu destroy manually)", err)
+		}
+	} else {
+		if cfg.RegistryNode != "" {
+			logx.Warn("DestroyRegistry: cannot connect to %s: %v (registry tofu state may be orphaned)", kindCtx, err)
+		}
+		if cfg.IssuingCARootCert != "" && cfg.IssuingCARootKey != "" {
+			logx.Warn("DestroyIssuingCA: cannot connect to %s: %v (issuing-ca tofu state may be orphaned)", kindCtx, err)
+		}
 	}
 
 	// Provider-specific cleanup (§11). For Proxmox this runs
@@ -516,4 +530,3 @@ func nonEmptyLines(s string) []string {
 	}
 	return out
 }
-

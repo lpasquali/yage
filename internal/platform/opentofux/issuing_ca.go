@@ -4,11 +4,21 @@
 package opentofux
 
 // EnsureIssuingCA provisions an intermediate/issuing CA for the workload cluster
-// (ADR 0009 §2, Phase H gap 2). It generates an intermediate CA certificate
-// signed by the operator-supplied root CA (cfg.IssuingCARootCert +
-// cfg.IssuingCARootKey), stores the material as a Secret in yage-system on the
-// management cluster, and applies a cert-manager ClusterIssuer to the workload
-// cluster.
+// (ADR 0009 §3, Phase H gap 2). It applies the yage-tofu/issuing-ca/ module via
+// JobRunner against the management cluster, reads back the intermediate cert /
+// key from `tofu output -json`, stores the material as a Secret in yage-system
+// on the management cluster, and applies a cert-manager ClusterIssuer to the
+// workload cluster.
+//
+// The offline-root boundary (ADR 0009 §4) is preserved: cfg.IssuingCARootCert
+// and cfg.IssuingCARootKey are operator-supplied and passed into the module as
+// TF_VAR_* values via the JobRunner credentials Secret. The root key never
+// leaves the management cluster — the module signs the intermediate inside the
+// pod and only the intermediate cert/key are read back as outputs.
+//
+// State storage uses the kubernetes backend per ADR 0011 §1 (Secret
+// tfstate-default-issuing-ca in yage-system, copied across the kind→mgmt
+// pivot via the label-based handoff in HandOffBootstrapSecretsToManagement).
 //
 // ErrNotApplicable is returned when either IssuingCARootCert or
 // IssuingCARootKey is empty, so the orchestrator can call this function
@@ -22,15 +32,8 @@ package opentofux
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"fmt"
-	"math/big"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -48,18 +51,26 @@ import (
 var ErrNotApplicable = errors.New("issuing CA: not applicable")
 
 const (
-	issuingCASecretName      = "yage-issuing-ca"
-	issuingCANamespace       = "yage-system"
-	issuingCACertManagerNS   = "cert-manager"
-	issuingCAClusterIssuer   = "yage-ca-issuer"
-	issuingCAValidityDays    = 365
-	issuingCAApplyTimeout    = 30 * time.Second
+	issuingCASecretName    = "yage-issuing-ca"
+	issuingCANamespace     = "yage-system"
+	issuingCACertManagerNS = "cert-manager"
+	issuingCAClusterIssuer = "yage-ca-issuer"
+	issuingCAModule        = "issuing-ca"
+	issuingCAApplyTimeout  = 30 * time.Second
 )
 
-// EnsureIssuingCA generates an intermediate CA cert signed by the operator's
-// root CA (cfg.IssuingCARootCert + cfg.IssuingCARootKey), stores the
-// intermediate cert+key as a Secret in yage-system on the management cluster,
-// and applies the cert-manager ClusterIssuer manifest to the workload cluster.
+// IssuingCAOutputs holds the structured outputs consumed from the
+// yage-tofu/issuing-ca/ module after a successful apply.
+type IssuingCAOutputs struct {
+	IntermediateCertPEM string
+	IntermediateKeyPEM  string
+	CAChainPEM          string
+}
+
+// EnsureIssuingCA applies the yage-tofu/issuing-ca/ module via a JobRunner on
+// the management cluster, reads back the intermediate cert+key, stores them
+// as a Secret in yage-system on the management cluster, and applies the
+// cert-manager Secret + ClusterIssuer to the workload cluster.
 // Returns ErrNotApplicable when IssuingCARootCert or IssuingCARootKey is empty.
 //
 // The management cluster client is derived from cfg: cfg.MgmtKubeconfigPath when
@@ -73,27 +84,33 @@ func EnsureIssuingCA(ctx context.Context, workloadKubeconfigPath string, cfg *co
 	}
 
 	// Build the management cluster client fresh, honouring post-pivot path.
-	var mgmtCli *k8sclient.Client
-	var err error
-	if cfg.MgmtKubeconfigPath != "" {
-		mgmtCli, err = k8sclient.ForKubeconfigFile(cfg.MgmtKubeconfigPath)
-		if err != nil {
-			return fmt.Errorf("EnsureIssuingCA: load mgmt kubeconfig %s: %w", cfg.MgmtKubeconfigPath, err)
-		}
-	} else {
-		kindCtx := "kind-" + cfg.KindClusterName
-		mgmtCli, err = k8sclient.ForContext(kindCtx)
-		if err != nil {
-			return fmt.Errorf("EnsureIssuingCA: connect to %s: %w", kindCtx, err)
-		}
+	mgmtCli, err := mgmtClientForIssuingCA(cfg)
+	if err != nil {
+		return err
 	}
 
-	// Step 1: Generate intermediate CA material.
-	intermediateCertPEM, intermediateKeyPEM, err := generateIntermediateCA(cfg)
+	// Step 1: Apply yage-tofu/issuing-ca/ module via JobRunner and read outputs.
+	runner := &JobRunner{cfg: cfg, client: mgmtCli}
+	vars := issuingCAVars(cfg)
+
+	logx.Log("EnsureIssuingCA: applying yage-tofu/%s module (cluster_name=%s) ...",
+		issuingCAModule, cfg.WorkloadClusterName)
+	if err := runner.Apply(ctx, issuingCAModule, vars); err != nil {
+		return fmt.Errorf("EnsureIssuingCA: tofu apply: %w", err)
+	}
+
+	rawOutputs, err := runner.Output(ctx, issuingCAModule)
 	if err != nil {
-		return fmt.Errorf("EnsureIssuingCA: generate intermediate CA: %w", err)
+		return fmt.Errorf("EnsureIssuingCA: tofu output: %w", err)
+	}
+	outputs, err := parseIssuingCAOutputs(rawOutputs)
+	if err != nil {
+		return fmt.Errorf("EnsureIssuingCA: parse outputs: %w", err)
 	}
 	logx.Log("EnsureIssuingCA: intermediate CA generated (CN=yage-issuing-ca-%s)", cfg.WorkloadClusterName)
+
+	intermediateCertPEM := []byte(outputs.IntermediateCertPEM)
+	intermediateKeyPEM := []byte(outputs.IntermediateKeyPEM)
 
 	// Step 2: Store in yage-system on the management cluster.
 	if err := applyIssuingCASecretToMgmt(ctx, mgmtCli, intermediateCertPEM, intermediateKeyPEM, cfg); err != nil {
@@ -118,102 +135,87 @@ func EnsureIssuingCA(ctx context.Context, workloadKubeconfigPath string, cfg *co
 	return nil
 }
 
-// generateIntermediateCA creates an ECDSA P-256 intermediate CA key, signs a
-// cert against the operator-supplied root CA, and returns (certPEM, keyPEM).
-func generateIntermediateCA(cfg *config.Config) (certPEM, keyPEM []byte, err error) {
-	// Parse root CA cert.
-	rootCertBlock, _ := pem.Decode([]byte(cfg.IssuingCARootCert))
-	if rootCertBlock == nil {
-		return nil, nil, fmt.Errorf("IssuingCARootCert: not a valid PEM block")
+// DestroyIssuingCA tears down the issuing-CA module by running tofu destroy
+// against yage-tofu/issuing-ca/. It is called by PurgeGeneratedArtifacts
+// before the kind cluster is deleted so the kubernetes-backend state Secret
+// (tfstate-default-issuing-ca in yage-system) is still reachable.
+//
+// Returns ErrNotApplicable when IssuingCARootCert or IssuingCARootKey is empty
+// (no issuing CA was provisioned, so there is no module state to destroy).
+func DestroyIssuingCA(ctx context.Context, cli *k8sclient.Client, cfg *config.Config) error {
+	if cfg.IssuingCARootCert == "" || cfg.IssuingCARootKey == "" {
+		return ErrNotApplicable
 	}
-	rootCert, err := x509.ParseCertificate(rootCertBlock.Bytes)
-	if err != nil {
-		return nil, nil, fmt.Errorf("IssuingCARootCert: parse certificate: %w", err)
+	runner := &JobRunner{cfg: cfg, client: cli}
+	logx.Log("DestroyIssuingCA: running tofu destroy on issuing-ca module ...")
+	if err := runner.Destroy(ctx, issuingCAModule); err != nil {
+		return fmt.Errorf("DestroyIssuingCA: tofu destroy: %w", err)
 	}
-
-	// Parse root CA key. Support both RSA and ECDSA.
-	rootKeyBlock, _ := pem.Decode([]byte(cfg.IssuingCARootKey))
-	if rootKeyBlock == nil {
-		return nil, nil, fmt.Errorf("IssuingCARootKey: not a valid PEM block")
-	}
-	rootKey, err := parsePrivateKey(rootKeyBlock)
-	if err != nil {
-		return nil, nil, fmt.Errorf("IssuingCARootKey: %w", err)
-	}
-
-	// Generate intermediate private key (ECDSA P-256).
-	intermediateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, fmt.Errorf("generate intermediate key: %w", err)
-	}
-
-	// Derive a cluster-name-qualified CN.
-	cn := "yage-issuing-ca"
-	if cfg.WorkloadClusterName != "" {
-		cn = "yage-issuing-ca-" + cfg.WorkloadClusterName
-	}
-
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return nil, nil, fmt.Errorf("generate serial: %w", err)
-	}
-
-	now := time.Now().UTC()
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: cn},
-		NotBefore:    now.Add(-5 * time.Minute), // small skew buffer
-		NotAfter:     now.Add(issuingCAValidityDays * 24 * time.Hour),
-		IsCA:         true,
-		// MaxPathLen: 0 requires MaxPathLenZero: true for Go to honour the
-		// constraint ("leaf issuer — cannot sign further CAs").
-		MaxPathLen:            0,
-		MaxPathLenZero:        true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-	}
-
-	// Sign with the root CA key.
-	certDER, err := x509.CreateCertificate(rand.Reader, template, rootCert, &intermediateKey.PublicKey, rootKey)
-	if err != nil {
-		return nil, nil, fmt.Errorf("sign intermediate certificate: %w", err)
-	}
-
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-
-	keyDER, err := x509.MarshalECPrivateKey(intermediateKey)
-	if err != nil {
-		return nil, nil, fmt.Errorf("marshal intermediate key: %w", err)
-	}
-	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-
-	return certPEM, keyPEM, nil
+	logx.Log("DestroyIssuingCA: issuing-ca module destroyed.")
+	return nil
 }
 
-// parsePrivateKey accepts either PKCS#8 or traditional RSA/EC PEM blocks.
-func parsePrivateKey(block *pem.Block) (any, error) {
-	switch block.Type {
-	case "PRIVATE KEY":
-		k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+// mgmtClientForIssuingCA builds a fresh management-cluster client honouring
+// post-pivot kubeconfig paths. Extracted for clarity and to keep
+// EnsureIssuingCA focused on the orchestration steps.
+func mgmtClientForIssuingCA(cfg *config.Config) (*k8sclient.Client, error) {
+	if cfg.MgmtKubeconfigPath != "" {
+		cli, err := k8sclient.ForKubeconfigFile(cfg.MgmtKubeconfigPath)
 		if err != nil {
-			return nil, fmt.Errorf("parse PKCS#8 private key: %w", err)
+			return nil, fmt.Errorf("EnsureIssuingCA: load mgmt kubeconfig %s: %w", cfg.MgmtKubeconfigPath, err)
 		}
-		return k, nil
-	case "RSA PRIVATE KEY":
-		k, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("parse RSA private key: %w", err)
-		}
-		return k, nil
-	case "EC PRIVATE KEY":
-		k, err := x509.ParseECPrivateKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("parse EC private key: %w", err)
-		}
-		return k, nil
-	default:
-		return nil, fmt.Errorf("unsupported PEM block type %q (want PRIVATE KEY, RSA PRIVATE KEY, or EC PRIVATE KEY)", block.Type)
+		return cli, nil
 	}
+	kindCtx := "kind-" + cfg.KindClusterName
+	cli, err := k8sclient.ForContext(kindCtx)
+	if err != nil {
+		return nil, fmt.Errorf("EnsureIssuingCA: connect to %s: %w", kindCtx, err)
+	}
+	return cli, nil
+}
+
+// issuingCAVars builds the var map passed to the yage-tofu/issuing-ca/ module.
+// Sensitive values (root cert + key) flow through TF_VAR_* env vars in the
+// JobRunner credentials Secret and are never logged.
+func issuingCAVars(cfg *config.Config) map[string]string {
+	return map[string]string{
+		"cluster_name": cfg.WorkloadClusterName,
+		"root_ca_cert": cfg.IssuingCARootCert,
+		"root_ca_key":  cfg.IssuingCARootKey,
+	}
+}
+
+// parseIssuingCAOutputs decodes the structured tofu output map into IssuingCAOutputs.
+// Mirrors parseRegistryOutputs: handles both the wrapped {"value": ..., "type": ...}
+// form and bare-string form that `tofu output -json` may emit.
+func parseIssuingCAOutputs(raw map[string]any) (IssuingCAOutputs, error) {
+	get := func(key string) string {
+		v, ok := raw[key]
+		if !ok {
+			return ""
+		}
+		// Bare string (tofu -json sometimes omits the wrapper for simple types).
+		if s, ok := v.(string); ok {
+			return s
+		}
+		// Wrapped: {"value": "...", "type": "string", "sensitive": true}
+		if m, ok := v.(map[string]any); ok {
+			if s, ok := m["value"].(string); ok {
+				return s
+			}
+		}
+		return fmt.Sprintf("%v", v)
+	}
+
+	out := IssuingCAOutputs{
+		IntermediateCertPEM: get("intermediate_cert_pem"),
+		IntermediateKeyPEM:  get("intermediate_key_pem"),
+		CAChainPEM:          get("ca_chain_pem"),
+	}
+	if out.IntermediateCertPEM == "" || out.IntermediateKeyPEM == "" {
+		return out, fmt.Errorf("issuing-ca tofu outputs missing required fields (intermediate_cert_pem and/or intermediate_key_pem empty)")
+	}
+	return out, nil
 }
 
 // applyIssuingCASecretToMgmt applies the yage-issuing-ca Secret to yage-system

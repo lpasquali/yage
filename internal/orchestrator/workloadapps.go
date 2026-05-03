@@ -13,16 +13,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/lpasquali/yage/internal/config"
 	"github.com/lpasquali/yage/internal/capi/helmvalues"
-	"github.com/lpasquali/yage/internal/platform/manifests"
-	"github.com/lpasquali/yage/internal/csi/proxmoxcsi"
-	"github.com/lpasquali/yage/internal/cost"
-	"github.com/lpasquali/yage/internal/platform/k8sclient"
-	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/capi/postsync"
-	"github.com/lpasquali/yage/internal/provider/proxmox/api"
 	"github.com/lpasquali/yage/internal/capi/wlargocd"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/cost"
+	"github.com/lpasquali/yage/internal/csi/proxmoxcsi"
+	"github.com/lpasquali/yage/internal/platform/k8sclient"
+	"github.com/lpasquali/yage/internal/platform/manifests"
+	"github.com/lpasquali/yage/internal/provider/proxmox/api"
+	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
 // argoAppGVR is reused by waiters and renderers when reaching for the
@@ -59,18 +59,26 @@ func ApplyWorkloadArgoCDApplications(cfg *config.Config, f *manifests.Fetcher) {
 
 	var sb strings.Builder
 
+	mustWrite := func(out string, err error) {
+		if err != nil {
+			logx.Die("workload Argo Application render: %v", err)
+		}
+		sb.WriteString(out)
+	}
+	mustValues := func(label string, fn func() (string, error)) string {
+		v, err := fn()
+		if err != nil {
+			logx.Die("%s values: %v", label, err)
+		}
+		return v
+	}
+
 	if cfg.EnableWorkloadMetricsServer {
-		sb.WriteString(wlargocd.HelmGit(cfg,
+		mustWrite(wlargocd.HelmGit(f, cfg, "metrics-server",
 			cfg.WorkloadClusterName+"-metrics-server", "kube-system",
 			"https://github.com/kubernetes-sigs/metrics-server",
 			"charts/metrics-server", cfg.MetricsServerGitChartTag,
-			"-3", func() string {
-				v, err := helmvalues.MetricsServerValues(f, cfg)
-				if err != nil {
-					logx.Die("metrics-server values: %v", err)
-				}
-				return v
-			}(),
+			"-3", mustValues("metrics-server", func() (string, error) { return helmvalues.MetricsServerValues(f, cfg) }),
 			"metrics-server", "metrics-server",
 		))
 	}
@@ -121,25 +129,25 @@ storageClass:
 				logx.Die("postsync: proxmox-csi-rollout kustomize block: %v", kErr)
 			}
 		}
-		sb.WriteString(wlargocd.HelmOCI(cfg,
+		mustWrite(wlargocd.HelmOCI(f, cfg, "proxmox-csi",
 			cfg.WorkloadClusterName+"-proxmox-csi", cfg.Providers.Proxmox.CSINamespace,
 			oci, cfg.Providers.Proxmox.CSIChartVersion, "-2", csiValues,
 			h1P, h1K, h2P, h2K))
 	}
 
 	if cfg.KyvernoEnabled {
-		sb.WriteString(wlargocd.Kyverno(cfg,
+		mustWrite(wlargocd.Kyverno(f, cfg, "kyverno",
 			cfg.WorkloadClusterName+"-kyverno", cfg.KyvernoNamespace,
 			cfg.KyvernoChartRepoURL, "kyverno", cfg.KyvernoChartVersion, "0", "kyverno"))
 	}
 	if cfg.CertManagerEnabled {
-		sb.WriteString(wlargocd.Helm(cfg,
+		mustWrite(wlargocd.Helm(f, cfg, "cert-manager",
 			cfg.WorkloadClusterName+"-cert-manager", cfg.CertManagerNamespace,
 			cfg.CertManagerChartRepoURL, "cert-manager", cfg.CertManagerChartVersion,
 			"1", "crds:\n  enabled: true\n", "cert-manager"))
 	}
 	if cfg.CrossplaneEnabled {
-		sb.WriteString(wlargocd.Helm(cfg,
+		mustWrite(wlargocd.Helm(f, cfg, "crossplane",
 			cfg.WorkloadClusterName+"-crossplane", cfg.CrossplaneNamespace,
 			cfg.CrossplaneChartRepoURL, "crossplane", cfg.CrossplaneChartVersion,
 			"2", "", "crossplane"))
@@ -148,103 +156,73 @@ storageClass:
 		if cnpgSuppressedByManagedPG(cfg) {
 			logx.Log("cnpg skipped: managed Postgres on %s selected (--no-managed-postgres to keep in-cluster cnpg).", cfg.InfraProvider)
 		} else {
-			sb.WriteString(wlargocd.Helm(cfg,
+			mustWrite(wlargocd.Helm(f, cfg, "cloudnativepg",
 				cfg.WorkloadClusterName+"-cnpg", cfg.CNPGNamespace,
 				cfg.CNPGChartRepoURL, cfg.CNPGChartName, cfg.CNPGChartVersion,
 				"2", "", "cnpg"))
 		}
 	}
 	if cfg.ExternalSecretsEnabled {
-		sb.WriteString(wlargocd.Helm(cfg,
+		mustWrite(wlargocd.Helm(f, cfg, "external-secrets",
 			cfg.WorkloadClusterName+"-external-secrets", cfg.ExternalSecretsNamespace,
 			cfg.ExternalSecretsChartRepoURL, "external-secrets", cfg.ExternalSecretsChartVersion,
 			"3", "", "external-secrets"))
 	}
 	if cfg.InfisicalOperatorEnabled {
-		sb.WriteString(wlargocd.Helm(cfg,
+		mustWrite(wlargocd.Helm(f, cfg, "infisical",
 			cfg.WorkloadClusterName+"-infisical-secrets-operator", cfg.InfisicalNamespace,
 			cfg.InfisicalChartRepoURL, cfg.InfisicalChartName, cfg.InfisicalChartVersion,
 			"4", "", "infisical"))
 	}
 	if cfg.SPIREEnabled {
-		sb.WriteString(wlargocd.Helm(cfg,
+		mustWrite(wlargocd.Helm(f, cfg, "spire",
 			cfg.WorkloadClusterName+"-spire-crds", cfg.SPIRENamespace,
 			cfg.SPIREChartRepoURL, cfg.SPIRECRDsChartName, cfg.SPIRECRDsChartVersion,
 			"-3", "", ""))
-		sb.WriteString(wlargocd.Helm(cfg,
+		mustWrite(wlargocd.Helm(f, cfg, "spire",
 			cfg.WorkloadClusterName+"-spire", cfg.SPIRENamespace,
 			cfg.SPIREChartRepoURL, cfg.SPIREChartName, cfg.SPIREChartVersion,
-			"5", func() string {
-				v, err := helmvalues.SPIREValues(f, cfg)
-				if err != nil {
-					logx.Die("spire values: %v", err)
-				}
-				return v
-			}(), "spire"))
+			"5", mustValues("spire", func() (string, error) { return helmvalues.SPIREValues(f, cfg) }), "spire"))
 	}
 	if cfg.VictoriaMetricsEnabled {
-		sb.WriteString(wlargocd.Helm(cfg,
+		mustWrite(wlargocd.Helm(f, cfg, "observability",
 			cfg.WorkloadClusterName+"-victoria-metrics-single", cfg.VictoriaMetricsNamespace,
 			cfg.VictoriaMetricsChartRepoURL, cfg.VictoriaMetricsChartName, cfg.VictoriaMetricsChartVersion,
-			"6", func() string {
-				v, err := helmvalues.VictoriaMetricsValues(f, cfg)
-				if err != nil {
-					logx.Die("victoria-metrics values: %v", err)
-				}
-				return v
-			}(), "victoria-metrics"))
+			"6", mustValues("victoria-metrics", func() (string, error) { return helmvalues.VictoriaMetricsValues(f, cfg) }), "victoria-metrics"))
 	}
 	if cfg.OTELEnabled {
-		sb.WriteString(wlargocd.Helm(cfg,
+		mustWrite(wlargocd.Helm(f, cfg, "opentelemetry",
 			cfg.WorkloadClusterName+"-opentelemetry-collector", cfg.OTELNamespace,
 			cfg.OTELChartRepoURL, cfg.OTELChartName, cfg.OTELChartVersion,
-			"6", func() string {
-				v, err := helmvalues.OpenTelemetryValues(f, cfg)
-				if err != nil {
-					logx.Die("opentelemetry values: %v", err)
-				}
-				return v
-			}(), "opentelemetry"))
+			"6", mustValues("opentelemetry", func() (string, error) { return helmvalues.OpenTelemetryValues(f, cfg) }), "opentelemetry"))
 	}
 	if cfg.GrafanaEnabled {
-		sb.WriteString(wlargocd.Helm(cfg,
+		mustWrite(wlargocd.Helm(f, cfg, "observability",
 			cfg.WorkloadClusterName+"-grafana", cfg.GrafanaNamespace,
 			cfg.GrafanaChartRepoURL, "grafana", cfg.GrafanaChartVersion,
-			"6", func() string {
-				v, err := helmvalues.GrafanaValues(f, cfg)
-				if err != nil {
-					logx.Die("grafana values: %v", err)
-				}
-				return v
-			}(), "grafana"))
+			"6", mustValues("grafana", func() (string, error) { return helmvalues.GrafanaValues(f, cfg) }), "grafana"))
 	}
 	if cfg.BackstageEnabled {
 		if cfg.BackstageChartRepoURL == "" {
 			logx.Warn("BACKSTAGE_ENABLED but BACKSTAGE_CHART_REPO_URL is empty — set a Helm repo and chart name, or set BACKSTAGE_ENABLED=false. Skipping Backstage.")
 		} else {
-			sb.WriteString(wlargocd.Helm(cfg,
+			mustWrite(wlargocd.Helm(f, cfg, "backstage",
 				cfg.WorkloadClusterName+"-backstage", cfg.BackstageNamespace,
 				cfg.BackstageChartRepoURL, cfg.BackstageChartName, cfg.BackstageChartVersion,
 				"7", "", "backstage"))
 		}
 	}
 	if cfg.KeycloakEnabled {
-		sb.WriteString(wlargocd.Helm(cfg,
+		mustWrite(wlargocd.Helm(f, cfg, "keycloak",
 			cfg.WorkloadClusterName+"-keycloak", cfg.KeycloakNamespace,
 			cfg.KeycloakChartRepoURL, cfg.KeycloakChartName, cfg.KeycloakChartVersion,
-			"8", func() string {
-				v, err := helmvalues.KeycloakValues(f, cfg)
-				if err != nil {
-					logx.Die("keycloak values: %v", err)
-				}
-				return v
-			}(), "keycloak"))
+			"8", mustValues("keycloak", func() (string, error) { return helmvalues.KeycloakValues(f, cfg) }), "keycloak"))
 	}
 	if cfg.KeycloakOperatorEnabled && cfg.KeycloakEnabled {
 		if cfg.KeycloakOperatorGitURL == "" {
 			logx.Warn("KEYCLOAK_OPERATOR_ENABLED but KEYCLOAK_OPERATOR_GIT_URL is empty — skipping Keycloak operator Application.")
 		} else {
-			sb.WriteString(wlargocd.KustomizeGit(cfg,
+			mustWrite(wlargocd.KustomizeGit(f, cfg, "keycloak-realm-operator",
 				cfg.WorkloadClusterName+"-keycloak-realm-operator", cfg.KeycloakOperatorNS,
 				cfg.KeycloakOperatorGitURL, cfg.KeycloakOperatorGitPath, cfg.KeycloakOperatorGitRef,
 				"9", "    kustomize: {}\n", ""))

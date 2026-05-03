@@ -2,249 +2,130 @@
 // Copyright 2026 Luca Pasquali
 
 // Package wlargocd renders workload Argo CD Application YAML.
-// Each renderer emits a complete `---`-prefixed Application
-// document the orchestrator concatenates into one kubectl-apply
-// stream.
+//
+// Each renderer emits a complete `---`-prefixed Application document
+// the orchestrator concatenates into one kubectl-apply stream.
+// Bodies are produced by yage-manifests templates resolved through
+// internal/platform/manifests.Fetcher (ADR 0008, ADR 0012). The
+// indent / shell-quote / postsync-derivation helpers stay Go-side
+// per ADR 0012 §wlargocd: they prepare the data passed into the
+// wrapper struct, they are not template-shaped.
 package wlargocd
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/lpasquali/yage/internal/config"
-	"github.com/lpasquali/yage/internal/ui/logx"
 	"github.com/lpasquali/yage/internal/capi/postsync"
+	"github.com/lpasquali/yage/internal/capi/templates"
+	"github.com/lpasquali/yage/internal/config"
+	"github.com/lpasquali/yage/internal/platform/manifests"
+	"github.com/lpasquali/yage/internal/ui/logx"
 )
 
-// PostSyncBlock holds the optional second-source fields for a
-// PostSync-hook git repo + kustomize patch. Zero value means "no
-// PostSync hook attached".
-type PostSyncBlock struct {
-	URL   string
-	Path  string
-	Ref   string
-	Kz    string // kustomize block (already indented for the `sources:` array)
-}
-
-// Derive PostSyncBlock from the config for a given hook short name.
-// Returns a zero block when hooks are disabled, no short name, or the
-// git URL cannot be discovered.
-func derivePostSync(cfg *config.Config, hookShort string) PostSyncBlock {
+// derivePostSync builds the single-hook PostSyncBlock for hookShort,
+// or returns a zero block when hooks are disabled, the short name is
+// empty, or the git URL cannot be discovered. The kustomize partial
+// is pre-indented by 2 (depth 6 inside `sources:`) so the template
+// can splice it without further indentation.
+func derivePostSync(f *manifests.Fetcher, cfg *config.Config, hookShort string) (templates.PostSyncBlock, error) {
 	if !cfg.ArgoCD.PostsyncHooksEnabled || hookShort == "" {
-		return PostSyncBlock{}
+		return templates.PostSyncBlock{}, nil
 	}
 	url := postsync.DiscoverURL(cfg)
 	if url == "" {
 		logx.Warn("ARGO_WORKLOAD_POSTSYNC_HOOKS: no git URL; skipping PostSync hook for %s (set ARGO_WORKLOAD_POSTSYNC_HOOKS_GIT_URL).", hookShort)
-		return PostSyncBlock{}
+		return templates.PostSyncBlock{}, nil
 	}
-	return PostSyncBlock{
-		URL:  url,
-		Path: postsync.FullRelpath(cfg, hookShort),
-		Ref:  shellQuoteEscape(postsync.DiscoverRef(cfg)),
-		Kz:   postsync.KustomizeBlockForJob(cfg, hookShort+"-smoketest"),
+	kz, err := postsync.KustomizeBlockForJobTemplate(f, cfg, hookShort+"-smoketest")
+	if err != nil {
+		return templates.PostSyncBlock{}, fmt.Errorf("postsync kustomize block for %s: %w", hookShort, err)
 	}
+	return templates.PostSyncBlock{
+		URL:              url,
+		Path:             postsync.FullRelpath(cfg, hookShort),
+		Ref:              shellQuoteEscape(postsync.DiscoverRef(cfg)),
+		KustomizePartial: indent(kz, "  "),
+	}, nil
 }
 
 // HelmGit renders an Argo CD Application that pulls a Helm chart from
-// a Git source. releaseName and hookShort are optional — pass "" to
-// skip them.
-func HelmGit(cfg *config.Config, name, destNS, repoURL, relPath, ref, syncWave, valuesYAML, releaseName, hookShort string) string {
-	safeRef := shellQuoteEscape(ref)
+// a Git source. addonDir is the addons/<addonDir>/ subdirectory that
+// holds application.yaml.tmpl. releaseName and hookShort are optional
+// — pass "" to skip them.
+func HelmGit(f *manifests.Fetcher, cfg *config.Config, addonDir, name, destNS, repoURL, relPath, ref, syncWave, valuesYAML, releaseName, hookShort string) (string, error) {
+	hook, err := derivePostSync(f, cfg, hookShort)
+	if err != nil {
+		return "", err
+	}
 	indented, indentedMS := indentValuesBoth(valuesYAML)
-	hook := derivePostSync(cfg, hookShort)
-	var sb strings.Builder
+	values := indented
+	var hooks []templates.PostSyncBlock
 	if hook.URL != "" {
-		sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave, ""))
-		fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n  sources:\n", destNS)
-		fmt.Fprintf(&sb, "    - repoURL: %s\n", repoURL)
-		fmt.Fprintf(&sb, "      path: %s\n", relPath)
-		fmt.Fprintf(&sb, "      targetRevision: '%s'\n", safeRef)
-		fmt.Fprintln(&sb, "      helm:")
-		if releaseName != "" {
-			fmt.Fprintf(&sb, "        releaseName: %s\n", releaseName)
-		}
-		fmt.Fprintln(&sb, "        valuesObject:")
-		if indentedMS != "" {
-			sb.WriteString(indentedMS)
-		} else {
-			fmt.Fprintln(&sb, "          {}")
-		}
-		fmt.Fprintf(&sb, "    - repoURL: %s\n", hook.URL)
-		fmt.Fprintf(&sb, "      path: %s\n", hook.Path)
-		fmt.Fprintf(&sb, "      targetRevision: '%s'\n", hook.Ref)
-		sb.WriteString(indent(hook.Kz, "  "))
-		sb.WriteString(syncPolicyTail())
-	} else {
-		sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave, ""))
-		fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n  source:\n", destNS)
-		fmt.Fprintf(&sb, "    repoURL: %s\n", repoURL)
-		fmt.Fprintf(&sb, "    path: %s\n", relPath)
-		fmt.Fprintf(&sb, "    targetRevision: '%s'\n", safeRef)
-		fmt.Fprintln(&sb, "    helm:")
-		if releaseName != "" {
-			fmt.Fprintf(&sb, "      releaseName: %s\n", releaseName)
-		}
-		fmt.Fprintln(&sb, "      valuesObject:")
-		if indented != "" {
-			sb.WriteString(indented)
-		} else {
-			fmt.Fprintln(&sb, "        {}")
-		}
-		sb.WriteString(syncPolicyTail())
+		values = indentedMS
+		hooks = []templates.PostSyncBlock{hook}
 	}
-	return sb.String()
-}
-
-// kyvernoTolerationFragment returns the Kyverno control-plane
-// toleration fragment, pre-indented with 8 spaces.
-func kyvernoTolerationFragment(cfg *config.Config) string {
-	if !isTrue(cfg.KyvernoTolerateControlPlane) {
-		return ""
+	data := templates.ArgoApplicationData{
+		Cfg:         cfg,
+		Name:        name,
+		DestNS:      destNS,
+		RepoURL:     repoURL,
+		Path:        relPath,
+		Ref:         shellQuoteEscape(ref),
+		SyncWave:    syncWave,
+		ReleaseName: releaseName,
+		ValuesYAML:  values,
+		PostSyncs:   hooks,
 	}
-	return `        global:
-          tolerations:
-            - key: "node-role.kubernetes.io/control-plane"
-              operator: Exists
-              effect: NoSchedule
-            - key: "node-role.kubernetes.io/master"
-              operator: Exists
-              effect: NoSchedule
-`
-}
-
-// Kyverno renders the Kyverno workload Argo CD Application YAML.
-func Kyverno(cfg *config.Config, name, ns, repoURL, chart, version, syncWave, hookShort string) string {
-	target := version
-	if target == "" {
-		target = "*"
+	body, err := f.Render("addons/"+addonDir+"/application.yaml.tmpl", data)
+	if err != nil {
+		return "", err
 	}
-	hook := derivePostSync(cfg, hookShort)
-	tolFragment := kyvernoTolerationFragment(cfg)
-
-	var sb strings.Builder
-	sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave,
-		`argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true`))
-	fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n", ns)
-	if hook.URL != "" {
-		sb.WriteString("  sources:\n")
-		fmt.Fprintf(&sb, "    - repoURL: %s\n", repoURL)
-		fmt.Fprintf(&sb, "      chart: %s\n", chart)
-		fmt.Fprintf(&sb, "      targetRevision: %q\n", target)
-		sb.WriteString("      helm:\n")
-		sb.WriteString("        valuesObject:\n")
-		sb.WriteString("          config:\n")
-		sb.WriteString("            preserve: false\n")
-		sb.WriteString("            webhookLabels:\n")
-		sb.WriteString("              app.kubernetes.io/managed-by: argocd\n")
-		sb.WriteString(indent(tolFragment, "  ")) // bump 8→10 spaces via extra 2
-		sb.WriteString(kyvernoReplicasBlock(false))
-		fmt.Fprintf(&sb, "    - repoURL: %s\n", hook.URL)
-		fmt.Fprintf(&sb, "      path: %s\n", hook.Path)
-		fmt.Fprintf(&sb, "      targetRevision: '%s'\n", hook.Ref)
-		sb.WriteString(indent(hook.Kz, "  "))
-	} else {
-		sb.WriteString("  source:\n")
-		fmt.Fprintf(&sb, "    repoURL: %s\n", repoURL)
-		fmt.Fprintf(&sb, "    chart: %s\n", chart)
-		fmt.Fprintf(&sb, "    targetRevision: %q\n", target)
-		sb.WriteString("    helm:\n")
-		sb.WriteString("      valuesObject:\n")
-		sb.WriteString("        config:\n")
-		sb.WriteString("          preserve: false\n")
-		sb.WriteString("          webhookLabels:\n")
-		sb.WriteString("            app.kubernetes.io/managed-by: argocd\n")
-		sb.WriteString(tolFragment)
-		sb.WriteString(kyvernoReplicasBlock(true))
-	}
-	sb.WriteString(kyvernoIgnoreDiffs())
-	sb.WriteString(syncPolicyTail())
-	return sb.String()
-}
-
-// kyvernoReplicasBlock: ms=true returns the deeper-indented variant
-// (inside `sources:` array).
-func kyvernoReplicasBlock(singleSource bool) string {
-	var i string
-	if singleSource {
-		i = "        "
-	} else {
-		i = "          "
-	}
-	return fmt.Sprintf(`%sadmissionController:
-%s  replicas: 1
-%sbackgroundController:
-%s  replicas: 1
-%scleanupController:
-%s  replicas: 1
-%sreportsController:
-%s  replicas: 1
-`, i, i, i, i, i, i, i, i)
-}
-
-func kyvernoIgnoreDiffs() string {
-	return `  ignoreDifferences:
-    - group: admissionregistration.k8s.io
-      kind: MutatingWebhookConfiguration
-      jqPathExpressions:
-        - .webhooks[]?.clientConfig.caBundle
-    - group: admissionregistration.k8s.io
-      kind: ValidatingWebhookConfiguration
-      jqPathExpressions:
-        - .webhooks[]?.clientConfig.caBundle
-`
+	return "---\n" + body, nil
 }
 
 // Helm renders an Argo CD Application that pulls a chart from an HTTP
 // Helm repository.
-func Helm(cfg *config.Config, name, ns, repoURL, chart, version, syncWave, valuesYAML, hookShort string) string {
+func Helm(f *manifests.Fetcher, cfg *config.Config, addonDir, name, ns, repoURL, chart, version, syncWave, valuesYAML, hookShort string) (string, error) {
 	target := version
 	if target == "" {
 		target = "*"
 	}
 	repoURL = strings.TrimSuffix(repoURL, "/")
-	indented, indentedMS := indentValuesBoth(valuesYAML)
-	hook := derivePostSync(cfg, hookShort)
-
-	var sb strings.Builder
-	sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave, ""))
-	if hook.URL != "" {
-		fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n  sources:\n", ns)
-		fmt.Fprintf(&sb, "    - repoURL: %s\n", repoURL)
-		fmt.Fprintf(&sb, "      chart: %s\n", chart)
-		fmt.Fprintf(&sb, "      targetRevision: %q\n", target)
-		fmt.Fprintln(&sb, "      helm:")
-		fmt.Fprintln(&sb, "        valuesObject:")
-		if indentedMS != "" {
-			sb.WriteString(indentedMS)
-		} else {
-			fmt.Fprintln(&sb, "          {}")
-		}
-		fmt.Fprintf(&sb, "    - repoURL: %s\n", hook.URL)
-		fmt.Fprintf(&sb, "      path: %s\n", hook.Path)
-		fmt.Fprintf(&sb, "      targetRevision: '%s'\n", hook.Ref)
-		sb.WriteString(indent(hook.Kz, "  "))
-	} else {
-		fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n  source:\n", ns)
-		fmt.Fprintf(&sb, "    repoURL: %s\n", repoURL)
-		fmt.Fprintf(&sb, "    chart: %s\n", chart)
-		fmt.Fprintf(&sb, "    targetRevision: %q\n", target)
-		fmt.Fprintln(&sb, "    helm:")
-		fmt.Fprintln(&sb, "      valuesObject:")
-		if indented != "" {
-			sb.WriteString(indented)
-		} else {
-			fmt.Fprintln(&sb, "        {}")
-		}
+	hook, err := derivePostSync(f, cfg, hookShort)
+	if err != nil {
+		return "", err
 	}
-	sb.WriteString(syncPolicyTail())
-	return sb.String()
+	indented, indentedMS := indentValuesBoth(valuesYAML)
+	values := indented
+	var hooks []templates.PostSyncBlock
+	if hook.URL != "" {
+		values = indentedMS
+		hooks = []templates.PostSyncBlock{hook}
+	}
+	data := templates.ArgoApplicationData{
+		Cfg:        cfg,
+		Name:       name,
+		DestNS:     ns,
+		RepoURL:    repoURL,
+		Chart:      chart,
+		Ref:        target,
+		SyncWave:   syncWave,
+		ValuesYAML: values,
+		PostSyncs:  hooks,
+	}
+	body, err := f.Render("addons/"+addonDir+"/application.yaml.tmpl", data)
+	if err != nil {
+		return "", err
+	}
+	return "---\n" + body, nil
 }
 
 // HelmOCI renders an Argo CD Application that pulls an OCI Helm chart.
 // Optional PostSync hooks: both kustomize blocks must be non-empty for
-// the sources/ multi-source to activate.
-func HelmOCI(cfg *config.Config, name, ns, ociURL, version, syncWave, valuesYAML, hook1Path, hook1Kz, hook2Path, hook2Kz string) string {
+// the multi-source variant to activate, and both hooks are emitted
+// together (slice of length 2).
+func HelmOCI(f *manifests.Fetcher, cfg *config.Config, addonDir, name, ns, ociURL, version, syncWave, valuesYAML, hook1Path, hook1Kz, hook2Path, hook2Kz string) (string, error) {
 	target := version
 	if target == "" {
 		target = "*"
@@ -264,110 +145,106 @@ func HelmOCI(cfg *config.Config, name, ns, ociURL, version, syncWave, valuesYAML
 		}
 	}
 
-	var sb strings.Builder
-	sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave, ""))
+	values := indented
+	var hooks []templates.PostSyncBlock
 	if useMulti {
-		fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n  sources:\n", ns)
-		fmt.Fprintf(&sb, "    - repoURL: %s\n", ociURL)
-		fmt.Fprintln(&sb, `      path: "."`)
-		fmt.Fprintf(&sb, "      targetRevision: %q\n", target)
-		fmt.Fprintln(&sb, "      helm:")
-		fmt.Fprintln(&sb, "        valuesObject:")
-		if indentedMS != "" {
-			sb.WriteString(indentedMS)
-		} else {
-			fmt.Fprintln(&sb, "          {}")
-		}
-		fmt.Fprintf(&sb, "    - repoURL: %s\n", hURL)
-		fmt.Fprintf(&sb, "      path: %s\n", hook1Path)
-		fmt.Fprintf(&sb, "      targetRevision: '%s'\n", sref)
-		sb.WriteString(indent(hook1Kz, "  "))
-		fmt.Fprintf(&sb, "    - repoURL: %s\n", hURL)
-		fmt.Fprintf(&sb, "      path: %s\n", hook2Path)
-		fmt.Fprintf(&sb, "      targetRevision: '%s'\n", sref)
-		sb.WriteString(indent(hook2Kz, "  "))
-	} else {
-		fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n  source:\n", ns)
-		fmt.Fprintf(&sb, "    repoURL: %s\n", ociURL)
-		fmt.Fprintln(&sb, `    path: "."`)
-		fmt.Fprintf(&sb, "    targetRevision: %q\n", target)
-		fmt.Fprintln(&sb, "    helm:")
-		fmt.Fprintln(&sb, "      valuesObject:")
-		if indented != "" {
-			sb.WriteString(indented)
-		} else {
-			fmt.Fprintln(&sb, "        {}")
+		values = indentedMS
+		hooks = []templates.PostSyncBlock{
+			{URL: hURL, Path: hook1Path, Ref: sref, KustomizePartial: indent(hook1Kz, "  ")},
+			{URL: hURL, Path: hook2Path, Ref: sref, KustomizePartial: indent(hook2Kz, "  ")},
 		}
 	}
-	sb.WriteString(syncPolicyTail())
-	return sb.String()
+
+	data := templates.ArgoApplicationData{
+		Cfg:        cfg,
+		Name:       name,
+		DestNS:     ns,
+		RepoURL:    ociURL,
+		Path:       `"."`,
+		Ref:        target,
+		SyncWave:   syncWave,
+		ValuesYAML: values,
+		PostSyncs:  hooks,
+	}
+	body, err := f.Render("addons/"+addonDir+"/application.yaml.tmpl", data)
+	if err != nil {
+		return "", err
+	}
+	return "---\n" + body, nil
+}
+
+// Kyverno renders the Kyverno workload Argo CD Application YAML.
+// Kyverno-specific body shape (extra annotation, valuesObject layout,
+// replicas, ignoreDifferences) lives in addons/kyverno/application.yaml.tmpl.
+// The KyvernoTolerateControlPlane string field is read template-side
+// via the isTrue FuncMap; callers must register isTrue on f before
+// the first Kyverno call (helmvalues.RegisterIsTrue).
+func Kyverno(f *manifests.Fetcher, cfg *config.Config, addonDir, name, ns, repoURL, chart, version, syncWave, hookShort string) (string, error) {
+	target := version
+	if target == "" {
+		target = "*"
+	}
+	hook, err := derivePostSync(f, cfg, hookShort)
+	if err != nil {
+		return "", err
+	}
+	var hooks []templates.PostSyncBlock
+	if hook.URL != "" {
+		hooks = []templates.PostSyncBlock{hook}
+	}
+	data := templates.ArgoApplicationData{
+		Cfg:       cfg,
+		Name:      name,
+		DestNS:    ns,
+		RepoURL:   repoURL,
+		Chart:     chart,
+		Ref:       target,
+		SyncWave:  syncWave,
+		PostSyncs: hooks,
+	}
+	body, err := f.Render("addons/"+addonDir+"/application.yaml.tmpl", data)
+	if err != nil {
+		return "", err
+	}
+	return "---\n" + body, nil
 }
 
 // KustomizeGit renders an Argo CD Application that pulls a kustomize
 // tree from a Git source. kustomizeBlock is expected pre-indented for
-// a `source:` child (4-space indent) — the multi-source branch
-// re-indents it by 2.
-func KustomizeGit(cfg *config.Config, name, destNS, repoURL, relPath, ref, syncWave, kustomizeBlock, hookShort string) string {
-	safeRef := shellQuoteEscape(ref)
-	hook := derivePostSync(cfg, hookShort)
-	var sb strings.Builder
-	sb.WriteString(headerAnnot(name, cfg.ArgoCD.WorkloadNamespace, syncWave, ""))
-	fmt.Fprintf(&sb, "spec:\n  project: default\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: %s\n", destNS)
+// a `source:` child (4-space indent); the multi-source branch
+// re-indents it by 2 here before passing it to the template via
+// ArgoApplicationData.ValuesYAML.
+func KustomizeGit(f *manifests.Fetcher, cfg *config.Config, addonDir, name, destNS, repoURL, relPath, ref, syncWave, kustomizeBlock, hookShort string) (string, error) {
+	hook, err := derivePostSync(f, cfg, hookShort)
+	if err != nil {
+		return "", err
+	}
+	var hooks []templates.PostSyncBlock
+	primaryKz := kustomizeBlock
 	if hook.URL != "" {
-		sb.WriteString("  sources:\n")
-		fmt.Fprintf(&sb, "    - repoURL: %s\n", repoURL)
-		fmt.Fprintf(&sb, "      path: %s\n", relPath)
-		fmt.Fprintf(&sb, "      targetRevision: '%s'\n", safeRef)
-		sb.WriteString(indent(kustomizeBlock, "  "))
-		fmt.Fprintf(&sb, "    - repoURL: %s\n", hook.URL)
-		fmt.Fprintf(&sb, "      path: %s\n", hook.Path)
-		fmt.Fprintf(&sb, "      targetRevision: '%s'\n", hook.Ref)
-		sb.WriteString(indent(hook.Kz, "  "))
-	} else {
-		sb.WriteString("  source:\n")
-		fmt.Fprintf(&sb, "    repoURL: %s\n", repoURL)
-		fmt.Fprintf(&sb, "    path: %s\n", relPath)
-		fmt.Fprintf(&sb, "    targetRevision: '%s'\n", safeRef)
-		sb.WriteString(kustomizeBlock)
+		primaryKz = indent(kustomizeBlock, "  ")
+		hooks = []templates.PostSyncBlock{hook}
 	}
-	sb.WriteString(syncPolicyTail())
-	return sb.String()
-}
-
-// --- helpers ---
-
-// headerAnnot emits the Application header, optionally with an extra
-// annotation line (whole line including the key).
-func headerAnnot(name, ns, wave, extraAnnot string) string {
-	var sb strings.Builder
-	sb.WriteString("---\n")
-	sb.WriteString("apiVersion: argoproj.io/v1alpha1\n")
-	sb.WriteString("kind: Application\n")
-	sb.WriteString("metadata:\n")
-	fmt.Fprintf(&sb, "  name: %s\n", name)
-	fmt.Fprintf(&sb, "  namespace: %s\n", ns)
-	sb.WriteString("  annotations:\n")
-	fmt.Fprintf(&sb, "    argocd.argoproj.io/sync-wave: %q\n", wave)
-	if extraAnnot != "" {
-		fmt.Fprintf(&sb, "    %s\n", extraAnnot)
+	data := templates.ArgoApplicationData{
+		Cfg:        cfg,
+		Name:       name,
+		DestNS:     destNS,
+		RepoURL:    repoURL,
+		Path:       relPath,
+		Ref:        shellQuoteEscape(ref),
+		SyncWave:   syncWave,
+		ValuesYAML: primaryKz,
+		PostSyncs:  hooks,
 	}
-	return sb.String()
-}
-
-func syncPolicyTail() string {
-	return `  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-      - ServerSideApply=true
-`
+	body, err := f.Render("addons/"+addonDir+"/application.yaml.tmpl", data)
+	if err != nil {
+		return "", err
+	}
+	return "---\n" + body, nil
 }
 
 // indentValuesBoth returns (8-space-indent, 10-space-indent) copies of
-// valuesYAML or empty strings when valuesYAML is empty. Matches bash
-// indented_values and indented_values_ms.
+// valuesYAML or empty strings when valuesYAML is empty.
 func indentValuesBoth(values string) (string, string) {
 	if values == "" {
 		return "", ""
@@ -375,7 +252,7 @@ func indentValuesBoth(values string) (string, string) {
 	return indent(values, "        "), indent(values, "          ")
 }
 
-// indent prefixes every non-empty line of s with `prefix`, preserving a
+// indent prefixes every non-empty line of s with prefix, preserving a
 // trailing newline.
 func indent(s, prefix string) string {
 	if s == "" {
@@ -397,14 +274,5 @@ func indent(s, prefix string) string {
 }
 
 func shellQuoteEscape(s string) string {
-	// bash: sed "s/'/'\"'\"'/g" — replace ' with '"'"'
 	return strings.ReplaceAll(s, `'`, `'"'"'`)
-}
-
-func isTrue(s string) bool {
-	switch s {
-	case "true", "1", "yes", "y", "on", "TRUE":
-		return true
-	}
-	return false
 }

@@ -1,0 +1,44 @@
+{{- /*
+yage-manifests/addons/keycloak-realm-operator/application.yaml.tmpl
+KustomizeGit-shape Argo CD Application: kustomize tree from a Git source.
+.ValuesYAML carries the pre-indented kustomize block (depth 4 single,
+depth 6 multi-source — Go-side picks the correct depth).
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Cfg.ArgoCD.WorkloadNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ printf "%q" .SyncWave }}
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .DestNS }}
+{{- if .PostSyncs }}
+  sources:
+    - repoURL: {{ .RepoURL }}
+      path: {{ .Path }}
+      targetRevision: '{{ .Ref }}'
+{{ .ValuesYAML -}}
+{{- range $h := .PostSyncs }}
+    - repoURL: {{ $h.URL }}
+      path: {{ $h.Path }}
+      targetRevision: '{{ $h.Ref }}'
+{{ $h.KustomizePartial -}}
+{{- end }}
+{{- else }}
+  source:
+    repoURL: {{ .RepoURL }}
+    path: {{ .Path }}
+    targetRevision: '{{ .Ref }}'
+{{ .ValuesYAML -}}
+{{- end }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
